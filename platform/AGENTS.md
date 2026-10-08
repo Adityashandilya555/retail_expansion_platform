@@ -73,13 +73,16 @@ The working prototype is `github.com/Shrey2149/outpost` (a fork of `Adityashandi
 
 ## Target layout (created by Sprint 1 issues)
 ```
-platform/apps/web/            React shell (Vercel, root directory = platform/apps/web)
+platform/apps/web/            client app: landing (workspace code) → login → shell drawn from the client's release (Vercel)
+platform/apps/console/        owner console: clients, provisioning, agent, publish, change-request review, account counts (Vercel, separate project/domain)
 platform/apps/api/            FastAPI platform API incl. agent loop + typed draft tools (Railway)
 platform/apps/worker/         provisioning (Supabase Management API + Railway API), reconciler, notifications (Railway)
 platform/packages/compiler/   workflow.json → BPMN/DMN + form/UI specs → release on the client's Operaton (from matrix.py)
 platform/packages/schema/     workflow.json JSON Schema v1 + Pydantic; TS types generated
 platform/packages/zm-tokens|zm-ui|zm-forms/   TypeScript design system (installed once)
 platform/packages/zm-blocks/  blocks + manifest.json each (name, description, allowed props) — what the agent can place
+platform/packages/zm-themes/  theme packs (tokens + styled components), each with DESIGN.md; built/audited with Impeccable
+platform/packages/zm-layouts/ fixed layouts (screen types) with named regions
 platform/packages/templates/  starter workflow.json per template (QSR, Café, Gated retail) + department catalogue
 platform/infra/operaton/      Dockerfile (official image or fork build), railway.json, health check
 platform/infra/supabase/      supabase CLI: platform/ migrations (control plane) and client/ migrations (app + operaton roles) applied by the worker
