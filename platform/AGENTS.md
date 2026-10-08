@@ -47,7 +47,7 @@ Who builds what: **we** (developers with Claude) build the packages — tokens, 
 - Disable Operaton's webapps for clients (`run.sh --rest`; check `distro/run/assembly/resources/default.yml` for the exact properties). Built-in auth stays on; only the API and worker hold the service account.
 - Operaton connects to Supabase through the **session pooler on port 5432** (prepared statements), schema `operaton`.
 - Pin versions: the fork's `pom.xml` is `2.2.0-SNAPSHOT`; deployed images use a released tag, never `latest`.
-- Before designing anything engine-related, **map it to Operaton source** (Sourcegraph MCP `repo:^github.com/operaton/operaton$` or `repo:retail_expansion_platform`, the `operaton-researcher` subagent, or `../operaton`) and cite paths/endpoints in the issue or PR.
+- Before designing anything engine-related, **map it to Operaton source** (Sourcegraph MCP `repo:^github.com/operaton/operaton$` or `repo:^github.com/Adityashandilya555/retail_expansion_platform$ fork:yes` — **`fork:yes` is required**, Sourcegraph hides forks otherwise; the `operaton-researcher` subagent, or `../operaton`) and cite paths/endpoints in the issue or PR.
 
 ### Blueprint → Operaton map (starting points; verify before relying on them)
 | Blueprint concept | Operaton mechanism | Where to look |
