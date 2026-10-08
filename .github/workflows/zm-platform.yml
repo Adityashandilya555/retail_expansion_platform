@@ -1,5 +1,5 @@
 # Z-Matrix platform CI (fork-only). Operaton itself is covered by build.yml / pr-build.yml.
-# Jobs switch on as code appears: Python when platform/**/pyproject.toml exists, web when platform/**/package.json exists.
+# Jobs switch on as code appears (detected by the guard job): Python when platform/**/pyproject.toml exists, web when platform/**/package.json exists.
 name: Z-Matrix Platform
 
 on:
@@ -23,8 +23,11 @@ concurrency:
 
 jobs:
   guard:
-    name: Guard (platform/ only touches our code)
+    name: Guard + detect projects
     runs-on: ubuntu-24.04
+    outputs:
+      python: ${{ steps.detect.outputs.python }}
+      web: ${{ steps.detect.outputs.web }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,11 +36,16 @@ jobs:
         run: |
           if git ls-files platform | grep -E '(^|/)\.env($|\.)' | grep -v '\.env\.example$'; then
             echo "::error::.env file committed under platform/"; exit 1; fi
+      - name: Detect Python / web projects
+        id: detect
+        run: |
+          echo "python=$( [ -n "$(git ls-files 'platform/**/pyproject.toml')" ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
+          echo "web=$( [ -n "$(git ls-files 'platform/**/package.json')" ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
 
   python:
     name: Python (ruff + pytest)
     needs: guard
-    if: hashFiles('platform/**/pyproject.toml') != ''
+    if: needs.guard.outputs.python == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,7 +66,7 @@ jobs:
   web:
     name: Web (tsc + eslint + vitest)
     needs: guard
-    if: hashFiles('platform/**/package.json') != ''
+    if: needs.guard.outputs.web == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
