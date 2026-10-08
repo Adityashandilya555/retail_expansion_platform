@@ -1,0 +1,55 @@
+name: Z-Matrix spec task
+description: A spec-driven task an agent or person can implement end to end
+labels: []
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why this exists. Cite the blueprint section (§NN) and sprint task id (S1-xx / S2-xx).
+    validations: {required: true}
+  - type: textarea
+    id: spec
+    attributes:
+      label: Spec
+      description: Interfaces, data model, API contract (method, path, request/response), files to create or change, config shape.
+    validations: {required: true}
+  - type: textarea
+    id: how
+    attributes:
+      label: How
+      description: Ordered steps. Name the MCP/CLI for each platform step (Supabase / Railway / Vercel / GitHub). Mark human-only steps with "HUMAN:".
+    validations: {required: true}
+  - type: textarea
+    id: operaton
+    attributes:
+      label: Operaton references
+      description: REST endpoints and source paths in operaton/operaton this relies on. "n/a" if none.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Given / When / Then, each one testable.
+      value: |
+        - [ ] Given … When … Then …
+    validations: {required: true}
+  - type: textarea
+    id: tests
+    attributes:
+      label: Test plan
+      description: Unit / integration / e2e tests to add, and the command that runs them.
+    validations: {required: true}
+  - type: textarea
+    id: oos
+    attributes:
+      label: Out of scope
+  - type: input
+    id: deps
+    attributes:
+      label: Depends on
+      description: "#issue numbers, or —"
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment variables
+      description: Variables added or read, and which platform holds them. "none" if none.

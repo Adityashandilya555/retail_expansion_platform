@@ -1,0 +1,27 @@
+- {name: "sprint:1", color: "0F5D5C", description: "Sprint 1 — Foundation"}
+- {name: "sprint:2", color: "B0712E", description: "Sprint 2 — Configure and run"}
+- {name: "area:infra", color: "6B4789", description: "Supabase, Railway, Vercel, CI, environments"}
+- {name: "area:engine", color: "2A4FA0", description: "Operaton image, config, REST integration"}
+- {name: "area:backend", color: "1D76DB", description: "Platform API, worker, compiler"}
+- {name: "area:frontend", color: "0E8A16", description: "Z-Matrix shell, tokens, ui, forms"}
+- {name: "area:agent", color: "8A3FFC", description: "Admin configurator agent"}
+- {name: "area:qa", color: "2F7A4A", description: "Tests, isolation suite, e2e, evals"}
+- {name: "area:design", color: "D4C5F9", description: "Design QA against Z-Matrix kit"}
+- {name: "type:feature", color: "A2EEEF", description: "New capability"}
+- {name: "type:chore", color: "EDEDED", description: "Setup, config, refactor"}
+- {name: "type:spike", color: "FBCA04", description: "Time-boxed investigation with a written outcome"}
+- {name: "type:test", color: "C2E0C6", description: "Test-only work"}
+- {name: "type:docs", color: "0075CA", description: "Documentation"}
+- {name: "priority:P0", color: "9B2A2A", description: "Blocks the sprint goal"}
+- {name: "priority:P1", color: "E58585", description: "Needed for the sprint demo"}
+- {name: "priority:P2", color: "F9D0C4", description: "Nice to have this sprint"}
+- {name: "size:S", color: "C5DEF5", description: "≤ half a day"}
+- {name: "size:M", color: "8EA9F0", description: "1–2 days"}
+- {name: "size:L", color: "2A4FA0", description: "~3 days; split anything bigger"}
+- {name: "via:supabase-mcp", color: "3ECF8E", description: "Do the platform steps through the Supabase MCP/CLI"}
+- {name: "via:railway-mcp", color: "853BCE", description: "Do the platform steps through the Railway MCP/CLI"}
+- {name: "via:vercel-mcp", color: "000000", description: "Do the platform steps through the Vercel MCP/CLI"}
+- {name: "via:github-mcp", color: "24292F", description: "Do the GitHub steps through the GitHub MCP/gh"}
+- {name: "needs:human", color: "D93F0B", description: "Has a step only a person can do (billing, OAuth, secrets)"}
+- {name: "blocked", color: "B60205", description: "Waiting on a dependency"}
+- {name: "good-first-agent-task", color: "7057FF", description: "Self-contained, well-specified, safe for an agent end to end"}

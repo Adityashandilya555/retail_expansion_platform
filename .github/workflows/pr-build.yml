@@ -12,6 +12,9 @@ on:
       - release/**
       - staging/**
     paths-ignore:
+      # fork: Z-Matrix platform code has its own CI (zm-platform.yml)
+      - 'platform/**'
+      - '.mcp.json'
       - '.github/workflows/**'
       - '!.github/workflows/pr-build.yml'
       - '.github/jreleaser/changelog.tpl'
@@ -256,7 +259,7 @@ jobs:
     permissions:
       contents: read
     needs: build
-    if: github.event.pull_request.head.repo.fork == false
+    if: vars.SONAR_ENABLED == 'true' && github.event.pull_request.head.repo.fork == false
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
