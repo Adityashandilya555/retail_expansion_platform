@@ -1,17 +1,18 @@
 # Z-Matrix Platform Blueprint (text copy)
 
 > Source of truth with diagrams: https://claude.ai/artifact/5wzWQ8tFq6bTyjENpmLJe3
-> This is a text extraction for agents (diagrams omitted). Section numbers (§01–§18) and task ids (S1-xx, S2-xx) match the artifact.
-> **POC scope overrides** live in `platform/AGENTS.md` → "POC scope": one pilot client, one Supabase project, one Operaton on Railway.
+> Text extraction for agents; the text inside the diagrams is under "Diagram notes" at the end. Section numbers (§01–§18) and task ids (S1-xx, S2-xx) match the artifact.
+> **POC scope overrides** live in `platform/AGENTS.md` → "POC scope" and the scope note: one pilot client provisioned by the worker — Supabase platform project + one client project (2 projects), one Operaton on Railway.
+> **Repos:** the blueprint names the prototype `Adityashandilya555/operaton-plat`; we use its fork **`Shrey2149/outpost`** as the prototype reference, and all new code + issues live in **`Adityashandilya555/retail_expansion_platform`** (our Operaton fork, code under `platform/`).
 
 ## Decisions already made
-- IsolationEach client gets its own Operaton server and its own Supabase project.
-- HierarchyDepartment level ladders, defined by each client.
-- App shapeOne shell. Department apps live inside it.
-- AgentAdmin configurator first. Form pre-fill later.
-- OnboardingSign up, we approve, the workspace builds itself.
-- Live sitesAdmin chooses stay or migrate at every publish.
-- HostingSupabase now. AWS-ready: the database stores keys, not URLs.
+- **Isolation:** Each client gets its own Operaton server and its own Supabase project.
+- **Hierarchy:** Department level ladders, defined by each client.
+- **App shape:** One shell. Department apps live inside it.
+- **Agent:** Admin configurator first. Form pre-fill later.
+- **Onboarding:** Sign up, we approve, the workspace builds itself.
+- **Live sites:** Admin chooses stay or migrate at every publish.
+- **Hosting:** Supabase now. AWS-ready: the database stores keys, not URLs.
 
 # Part 1
 How, what, why
@@ -54,7 +55,7 @@ Observerreads everything, changes nothing
 ## № 03 · How Operaton works
 How Operaton handles workflows and forms
 Operaton has no config.json or workflow.json. Those come from our prototype. Operaton reads BPMN, DMN and form files, nothing else.
-The prototype (github.com/Adityashandilya555/operaton-plat) writes JSON. Its compiler turns that JSON into the three file types Operaton understands and sends them in one request.
+The prototype (github.com/Adityashandilya555/operaton-plat; we use its fork Shrey2149/outpost) writes JSON. Its compiler turns that JSON into the three file types Operaton understands and sends them in one request.
 What the compiler emits · BPMN
 <userTask id="lg_licences"
 name="Statutory licences"
@@ -575,3 +576,82 @@ Something only one client needs: build the block once in the shared library and 
 One rule: clients sit on different releases, so the shell must keep drawing every block version any live client uses. A breaking block change ships with a config migration, run one client at a time.
 Checked against: the Operaton source (engine, webapps, webapps-neo), the operaton-plat prototype and its docs, the Matrix-bd repository, Supabase documentation, and customer_store_launch_flows.md.
 Prepared October 2026. This page describes a plan; no code has been written for it yet.
+
+
+## Diagram notes (text inside the artifact's diagrams)
+
+> Extracted from the SVG diagrams of the artifact. Each entry: the diagram's description, then its labels in reading order.
+
+### why — Every rule lives in code today
+**What it shows:** Today one Matrix-bd codebase holds every rule and serves all clients the same flow. Next, each client has its own flow, levels and database, described as configuration.
+
+Labels: TODAY · MATRIX-BD · Burger King · Starbucks · Blue Tokai · same flow for all · One codebase holds every rule · state_machine.py · BD transitions · workflow_unlocks.py · department gates · 11 budget lines · 5 licences · 9 DD items · module lists in 12 frontend registries · (rent+CAM)×1.18 · BT-CITY-XXXX · 3 fixed levels: Executive → Supervisor → Business admin · rules move · into config · NEXT · Z-MATRIX PLATFORM · Burger King · release v3 · 3 levels in Legal · BD → Legal || Design → Budget → BA+HSO → Launch · Starbucks · release v7 · own NSO track · BD → Legal || Design → Budget → NSO → Audit → CFO · Matrix Retail · release v2 · 4 levels in Design · 8 gated phases · Recce → 2D → 3D → GFC → BOQ · Each client: own flow, own levels, own screens, own database
+
+### operaton — How Operaton handles workflows and forms
+**What it shows:** Our prototype JSON files are compiled by matrix.py into BPMN, DMN and form files. They are sent to Operaton in one deployment, which becomes an immutable release. The engine runs sites and Tasklist loads each task's form from the same release.
+
+Labels: WE WRITE · PROTOTYPE JSON · OPERATON UNDERSTANDS · WHAT OPERATON DOES · catalogue.json · department presets · workspace.json · a.k.a. workflow.json · tasks · fields · roles · order · compile · matrix.py · validate → generate · emits · .bpmn · the flow · XML: tasks, gateways, timers · .dmn · rule tables · optional · forms · 3 styles · embedded .html (cam-variable-*) · Camunda Form .form (formRef) · generated (operaton:formData) · each client's release carries its own forms · POST · Deployment = release vN · immutable · versioned per key · POST /deployment/create · ACT_RE_DEPLOYMENT · BYTEARRAY · parse · Engine runs a site · token waits at a user task · GET /task/{id}/form · Tasklist shows the form · formKey = embedded: · deployment:forms/x.html · read from the same release · application.yaml · engine-wide: database, history, security, job executor · one per Operaton server · same template for every client
+
+### operaton-ui — Can Operaton's screens be changed per client?
+**What it shows:** Operaton's apps give every client the same screens because config, CSS and plugins are installed once per server. The Z-Matrix shell reads each client's release and draws a different arrangement for each client from the same design system.
+
+Labels: OPERATON'S OWN APPS · Burger King · Starbucks · Matrix · log in · Tasklist · Cockpit · one config.js · one CSS · one plugin set · same look for every client · Z-MATRIX SHELL · Burger King · Starbucks · Matrix · BK v3 · Sbux v7 · Matrix v2 · UI config · One shell · Z-Matrix packages installed · one design system, a different arrangement per client
+
+### interface — How every user gets their own interface
+**What it shows:** Three layers. Installed once: tokens, components, blocks with manifests and layout templates. Per client: each release holds pages, forms, navigation and accent written by the admin with the agent. Per user: the release is filtered by department, level and scope into what each person sees.
+
+Labels: 1 · INSTALLED ONCE IN THE SHELL · ours · the same for every client · ships with platform releases · Tokens · colours · type · spacing · @zm/tokens · Components · Button · Field · Table · @zm/ui · Blocks + manifests · TaskInbox · KpiTile · @zm/blocks · Layout templates · home · department · site · regions: hero · main · the agent picks and arranges these · manifests only · 2 · PER CLIENT · WRITTEN BY THE ADMIN WITH THE AGENT · stored inside each client's release · Burger King · release v3 · pages · forms · nav · accent · home.hero = [kpi_tile, kpi_tile] · Starbucks · release v7 · pages · forms · nav · accent · legal.main = [task_inbox] · Matrix Retail · release v2 · pages · forms · nav · accent · design.main = [stage_tracker] · 3 · PER USER · AUTOMATIC · filtered by department, level and scope · BK release v3 + who is logged in · Legal executive · L1 · my tasks · rent and budget hidden · Head of Legal · L3 · team queue · L3 approvals · KPIs · Business admin · every app · agent dock · Publish
+
+### architecture — The system in one picture
+**What it shows:** The browser talks only to the Platform API. The API calls Claude for the agent and the platform project for the client registry. For each client it calls that client's own Operaton container over a private connection and that client's Supabase project with its own pool. Each Operaton container connects only to its own client's project.
+
+Labels: Browser · Z-Matrix shell · home · department apps · studio · HTTPS + JWT (client id) · Platform API · FastAPI · login · client lookup · tasks · files · KPIs · studio · agent · publish · Claude API · agent loop (configurator) · agent · Worker · provisioning · notifications · warehouse relay · reconciler · same codebase · zm-platform · Supabase · platform: clients · requests · client → Operaton address · wh: warehouse facts · control-plane SQL · provisions · private REST · per-client service account · client SQL · own pool · ONE OPERATON PER CLIENT · ONE SUPABASE PROJECT PER CLIENT · Operaton · bk · own container · REST only · JDBC :5432 · zm-bk · Supabase · app · operaton · files · Operaton · sbux · own container · REST only · zm-sbux · Supabase · app · operaton · files · Operaton · matrix · own container · REST only · zm-matrix · Supabase · app · operaton · files · Users log in only to the platform. Each request is bound to one client: its Operaton, its database pool, its bucket.
+
+### isolation — Each client in its own vault, with a clean exit to AWS
+**What it shows:** The Platform API opens a separate connection to each client's vault. Each vault is that client's own Operaton server plus its Supabase project with the app schema, the operaton schema and a private file bucket, with no path between vaults. Moving one client to AWS takes four steps: dump, restore, sync the bucket, switch URLs.
+
+Labels: Platform API · separate links per client · separate · zm-bk · Burger King · API off · RLS deny · Operaton · own server · app · our data · operaton · engine data · files · private · no path between clients · zm-sbux · Starbucks · API off · RLS deny · Operaton · own server · app · our data · operaton · engine data · files · private · zm-matrix · Matrix Retail · API off · RLS deny · Operaton · own server · app · our data · operaton · engine data · files · private · EXIT ONE CLIENT TO AWS · 4 STEPS · 1 · pg_dump · copy the database · 2 · pg_restore → RDS · same tables, same rows · 3 · rclone --checksum · bucket → S3, verified · 4 · switch URLs · registry + Operaton env
+
+### levels — Departments, levels and approvals
+**What it shows:** The Legal department has three levels. A licence task done by L1 goes to L2 for approval and L3 for sign-off, then hands off to Budget. L2 can send it back with a comment; L3 can reject and close the site.
+
+Labels: LEGAL · LEVELS SET BY THE CLIENT · L3 · Head of Legal · L2 · Legal Supervisor · L1 · Legal Executive · names and number of levels · are the client's choice · Statutory licences · done by legal.L1 · submit · L2 approves · legal.L2 · approve · L3 signs off · legal.L3 · hand off · Budget · finance.L1 · send back · comment required · reject · Close site · reason chips · legal.L2 → BPMN candidate group legal__L2
+
+### agent — The admin's agent edits a draft, a person publishes
+**What it shows:** The admin sends a message to the Platform API, which gives Claude the prompt and tools. Claude calls typed tools that only change the draft; validation errors go back to Claude. When the draft is ready the admin previews it and a person clicks Publish, which compiles and deploys a release.
+
+Labels: Admin · agent dock · types a request · message · Platform API · fixes the client · AGENT CAN ONLY TOUCH THE DRAFT · prompt + tools · claude-opus-5-5 · plans the change · tool calls · Typed tools · strict schemas · apply · Draft config · JSON patch + log · validate · errors back · ready · Preview · draft in the shell · looks right · Publish · a person clicks · deploy · Release vN · client's Operaton · Publish and migration are buttons a person presses. The model has no tool for them.
+
+### live — Changing a flow while sites are running
+**What it shows:** Sites A, B and C start on v1. When v2 is published the admin either lets them finish on v1, which is the default, or migrates them after an impact screen shows which sites move cleanly and which need a decision.
+
+Labels: v1 published · sites A · B · C start on v1 · v2 published · Stay (default) · A · B · C finish on v1 · new sites start on v2 · Migrate · Impact screen · A: moves cleanly · B: step removed → choose · 3 open tasks affected · Batch migration · A and B now on v2 · Rollback = publish v1's config again as v3. Adding or moving people never needs a publish.
+
+### kpis — KPIs inside each vault, benchmarks outside
+**What it shows:** Inside each client's database, SQL views over engine history and app tables feed KPI definitions that draw tiles and charts. A relay copies sanitized facts into the platform warehouse for benchmarks, usage and billing.
+
+Labels: Client database · operaton.act_hi_* · app.submissions · app.decisions · stays in the project · read · SQL views · v_stage_spans · v_task_spans · v_sla · v_decisions · SQL · KPI definitions · config · agent can add · duration · count · ratio · sum · sla · draw · Tiles and charts · 12.4 · days/dept · 7 · SLA misses · relay · read-only · incremental · sanitized · Warehouse · zm-platform.wh · facts only: no names, files or free text · Platform view · benchmarks · usage · billing
+
+### team — 28 days, two demos
+**What it shows:** Sprint 1 runs from day 1 to day 14 and ends with a demo of two isolated clients. Sprint 2 runs from day 15 to day 28 and ends with a demo of sign-up, agent configuration and a site moving through the flow.
+
+Labels: Sprint 1 · days 1–14 · foundation · Sprint 2 · days 15–28 · configure and run · Day 1 · Day 8 · Day 15 · Day 22 · Day 28 · Demo 1: two isolated clients · Demo 2: sign up → agent → run a site
+
+### ui-shell — One shell, three clients
+**What it shows:** One Z-Matrix shell serves all clients. After login the Platform API finds the client and filters by level. Each client has its own UI config stored in its own database, its own Operaton for tasks, and its own database and bucket for answers and documents. The shell draws a different screen for Burger King, Starbucks and Matrix Retail.
+
+Labels: One Z-Matrix shell · the same code for every client · tokens · components · blocks · layout templates · built and deployed once · after login: GET /api/ui · Platform API · finds the client · filters by level · Burger King · QSR launch · UI config · release v3 · stored in BK's own database · Operaton · bk · open tasks · who acts · formKey · Database + bucket · answers · documents · decisions · Starbucks · Café launch · UI config · release v7 · stored in Starbucks' own database · Operaton · sbux · open tasks · who acts · formKey · Database + bucket · answers · documents · decisions · Matrix Retail · Gated retail · UI config · release v2 · stored in Matrix's own database · Operaton · matrix · open tasks · who acts · formKey · Database + bucket · answers · documents · decisions · drawn by the shell · Home · KPIs, flow map, my tasks · NSO · bar readiness pipeline · Design · stages and L3 sign-offs
+
+### ui-build — How a Burger King screen is built
+**What it shows:** Sequence: the shell logs the user in through the Platform API; the API looks up Burger King in the registry, reads Burger King's active UI config from its database and returns the version filtered for this user's level; the shell draws the template and blocks; each block asks the API for data, which comes from Burger King's Operaton for open tasks and from its database for form answers and file links.
+
+Labels: Shell (browser) · Platform API · BK database · BK Operaton · 1 · log in: workspace, email, password · 2 · look up BK in the registry · Operaton address · DB · bucket · 3 · read the active UI config · release v3 · pages · forms · nav · 4 · this person's UI, filtered to legal.L2 · draws template + blocks · 5 · each block asks for its data · open tasks for legal__L2 · form answers · file links · 6 · data back; formKey picks the form
+
+### ui-changes — Two ways the screens change
+**What it shows:** Two paths. Platform release: change a component or add a block, test it against every client's live config, deploy the shell once, and every client gets it. Client publish: the admin asks the agent, previews the draft, publishes a new release into that client's database, and only that client changes, with no deploy.
+
+Labels: PLATFORM RELEASE · OURS · ALL CLIENTS AT ONCE · Change a component · or add a new block · Test every live config · all clients' releases · Deploy the shell once · one frontend deploy · Every client gets it · same day, same look · CLIENT PUBLISH · THEIRS · ONE CLIENT ONLY · Admin asks the agent · “show licences pending” · Draft and preview · same shell, draft config · Publish release vN · into that client's database · Only that client changes · no deploy, others untouched
+
+
+
+Related: the scope note · [[PLATFORM]] · [[HOW-OPERATON-WORKS]]
