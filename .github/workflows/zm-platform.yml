@@ -1,0 +1,75 @@
+# Z-Matrix platform CI (fork-only). Operaton itself is covered by build.yml / pr-build.yml.
+# Jobs switch on as code appears: Python when platform/**/pyproject.toml exists, web when platform/**/package.json exists.
+name: Z-Matrix Platform
+
+on:
+  pull_request:
+    paths:
+      - 'platform/**'
+      - '.github/workflows/zm-*.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'platform/**'
+      - '.github/workflows/zm-*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zm-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Guard (platform/ only touches our code)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: No secrets committed
+        run: |
+          if git ls-files platform | grep -E '(^|/)\.env($|\.)' | grep -v '\.env\.example$'; then
+            echo "::error::.env file committed under platform/"; exit 1; fi
+
+  python:
+    name: Python (ruff + pytest)
+    needs: guard
+    if: hashFiles('platform/**/pyproject.toml') != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        run: python3 -m pip install --user uv && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Lint
+        working-directory: platform
+        run: uvx ruff check . && uvx ruff format --check .
+      - name: Test
+        working-directory: platform
+        run: |
+          for p in $(git ls-files '**/pyproject.toml' | xargs -n1 dirname); do
+            echo "::group::pytest $p"; (cd "$p" && uv run --all-extras pytest -q) || exit 1; echo "::endgroup::"
+          done
+
+  web:
+    name: Web (tsc + eslint + vitest)
+    needs: guard
+    if: hashFiles('platform/**/package.json') != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Install, typecheck, lint, test
+        working-directory: platform
+        run: |
+          corepack enable
+          if [ -f pnpm-workspace.yaml ]; then pnpm install --frozen-lockfile && pnpm -r run --if-present typecheck && pnpm -r run --if-present lint && pnpm -r run --if-present test
+          else for p in $(git ls-files '**/package.json' | grep -v node_modules | xargs -n1 dirname); do (cd "$p" && npm ci && npm run --if-present typecheck && npm run --if-present lint && npm run --if-present test) || exit 1; done; fi
