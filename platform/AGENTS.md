@@ -52,19 +52,23 @@ Who builds what: **we** (developers with Claude) build the packages — tokens, 
 ### Blueprint → Operaton map (starting points; verify before relying on them)
 | Blueprint concept | Operaton mechanism | Where to look |
 |---|---|---|
-| Release vN (§03, §11) | Deployment, immutable, versioned per process key | `engine-rest/engine-rest/.../rest/DeploymentRestService.java` (`POST /deployment/create`); `engine/.../repository/` |
+| Release vN (§03, §11) | Deployment, immutable, versioned per process key | `engine-rest/.../rest/DeploymentRestService.java:45-49` (`POST /deployment/create`) → `rest/impl/DeploymentRestServiceImpl.java`; engine side `engine/.../impl/repository/DeploymentBuilderImpl.java` |
 | Steps, parallel departments | BPMN user tasks, parallel gateways, call activities | `engine/.../bpmn/parser/BpmnParse.java`, `model-api/bpmn-model` |
-| Levels, approval chains (§08) | `candidateGroups` per level (`legal__L1`), task outcomes as variables + gateways | `engine/.../task/`, `TaskRestService` |
-| Forms (§09) | `operaton:formKey` = `zm:<form>`; our shell renders it | `engine/.../form/`, `GET /task/{id}/form` |
+| Levels, approval chains (§08) | `candidateGroups` per level (`legal__L1`), task outcomes as variables + gateways — see *Engine constraints* below | `BpmnParse.java` (candidateGroups parsing), `TaskRestService.java` (task queries), `SaveGroupCmd.java` |
+| Forms (§09) | `operaton:formKey="zm:<task_id>"` (not `embedded:deployment:forms/…`); the form is a JSON Schema in the client's release, rendered by our shell — UI config never goes into the BPMN | `engine/.../impl/form/`, `GET /task/{id}/form` |
 | Users, levels, scope | Identity service + authorizations | `IdentityRestService`, `AuthorizationRestService`, `engine/.../identity/` |
-| Live changes (§11) | Process instance migration | `POST /migration/generate|validate|execute`, `engine/.../migration/` |
+| Live changes (§11) | Process instance migration | `MigrationRestService.java`: `POST /migration/generate` (35-39), `/validate` (41-45), `/execute` (47-50), **`/executeAsync` (52-56, batch — use for many sites)**; `engine/.../impl/migration/` |
 | KPIs (§12) | History tables (`ACT_HI_*`), history level full | `HistoryRestService`, `engine/.../history/` |
 | Isolation (§07) | One engine per client (tenant ids only if engines are shared later) | `TenantIdProvider` (engine/src/main/java/org/operaton/bpm/engine/impl/cfg/multitenancy/TenantIdProvider.java) |
 | Notifications, integrations | External tasks | `ExternalTaskRestService` |
 | Headless engine | Operaton Run, REST only | `distro/run/` (`assembly/resources/default.yml`, `production.yml`, `run.sh --rest`) |
 
+### Engine constraints found while mapping (verified in source)
+- **Resource id whitelist.** By default Operaton accepts only `[a-zA-Z0-9]+|operaton-admin` for user, group and tenant ids (`ProcessEngineConfiguration.java:331`, enforced e.g. in `SaveGroupCmd.java`). BPMN parsing accepts `legal__L1`, but **creating that group over REST fails**, and so would UUID user ids. Decision: our Operaton image ships a config override setting `operaton.bpm.generic-properties.properties.group-resource-whitelist-pattern` and `user-resource-whitelist-pattern` to `[a-zA-Z0-9_-]+|operaton-admin` (same mechanism as `distro/run/assembly/resources/production.yml`). S1-02 must prove it with a test that creates group `legal__L2` and a UUID user via REST. Fallback if that fails: alphanumeric ids (`legalL2`).
+- **Candidate groups** come from the client's department levels and approval chains in `workflow.json` (`<dept>__L<n>`), not copied from a free-text role as the prototype does today.
+
 ## The prototype (to be imported)
-The working prototype is `github.com/Shrey2149/outpost`: `matrix.py` (validator + BPMN/form compiler + deploy + configurator ops), `mcp_server.py` (matrix-configurator MCP), `workspace.json`, `catalogue.json`, `start.sh`. A Sprint 1 issue imports it into `platform/prototype/` unchanged; S1-08 then ports the compiler into `platform/packages/compiler`.
+The working prototype is `github.com/Shrey2149/outpost` (a fork of `Adityashandilya555/operaton-plat`, the repo the blueprint names): `matrix.py` (validator + BPMN/form compiler + deploy + configurator ops), `mcp_server.py` (matrix-configurator MCP), `workspace.json`, `catalogue.json`, `start.sh`. A Sprint 1 issue imports it into `platform/prototype/` unchanged; S1-08 then ports the compiler into `platform/packages/compiler`: `compile_main` (matrix.py:408), `compile_module`/`add_task` (:352/:379), `build` (:525), `deploy` (:563). Changes for `workflow.json`: `zm:` formKeys with JSON Schema forms instead of `form_html`; candidate groups from levels/approval chains; the `apps` section validated against block manifests and stored in the client's database (never compiled into BPMN); deploy target = the client's own Operaton from the registry.
 
 ## Target layout (created by Sprint 1 issues)
 ```
