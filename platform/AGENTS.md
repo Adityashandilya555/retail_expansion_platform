@@ -145,7 +145,7 @@ Sourcegraph is the first stop for any question about Operaton, the prototype or 
 - **Third-party software:** check its licence or terms allow analysis first. Never copy its code into this repo; re-implement from the understanding.
 - Findings go to `vault/40-Research/<topic>.md` with REA's evidence and limitations.
 - It exposes about 170 tools, so enable it in `/mcp` only for sessions that need it, and keep it off otherwise.
-- Node: supported versions are 22.19+, 24.11+ and 26+. 6.4.0 also starts on Node 25.9, with an npm `EBADENGINE` warning (checked 2026-10-12).
+- Node: supported versions are 22.19+, 24.11+ and 26+; we use **Node 26** (`brew upgrade node`). Odd versions such as 25 are unsupported: REA starts with an npm `EBADENGINE` warning (checked 2026-10-12).
 - Bump the pinned version deliberately in a PR (REA releases often); don't run `rea setup` here, because `.mcp.json` already registers the server.
 
 ### Validating an issue: `/refine-issue`
@@ -170,7 +170,7 @@ Implementing: restate the spec → failing tests from acceptance criteria → im
 Milestones: `Sprint 1 — Foundation`, `Sprint 2 — Configure and run`, `Backlog`.
 
 ## Git and PRs
-Branch `<issue#>-<slug>` from `main`; one issue per PR; title `#<n> <title>`; body `Closes #<n>`, summary, test evidence, env vars. Conventional commits. No direct pushes to `main`, no force-push on shared branches, no self-merge without a collaborator's review.
+Branch `<issue#>-<slug>` from `main`; one issue per PR; title `#<n> <title>`; body `Closes #<n>`, summary, test evidence, env vars. Conventional commits. No direct pushes to `main`, no force-push on shared branches. Adi (repo owner) merges: his own PRs need no second approval once CI is green, and other collaborators' PRs need his review.
 
 ## Code conventions
 - Python 3.12, typed, Pydantic v2 at boundaries, async SQLAlchemy, `httpx.AsyncClient` for Operaton, JSON logs with `client` + `request_id`.

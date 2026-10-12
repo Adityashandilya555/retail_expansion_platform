@@ -31,15 +31,15 @@ print("Node (REA needs 22.19+, 24.11+ or 26+)")
 v = run(["node", "-v"]).stdout.strip()
 m = re.match(r"v(\d+)\.(\d+)", v)
 if not m:
-    report("FAIL", "node not found: install Node 24 LTS")
+    report("FAIL", "node not found: install Node 26")
 else:
     major, minor = int(m[1]), int(m[2])
     if major >= 26 or (major == 24 and minor >= 11) or (major == 22 and minor >= 19):
         report("ok", f"node {v}")
-    elif major == 25:
-        report("WARN", f"node {v}: REA runs with an npm EBADENGINE warning; Node 24 LTS avoids it")
+    elif major in (23, 25):
+        report("WARN", f"node {v}: unsupported odd version, REA runs with an npm EBADENGINE warning; upgrade to Node 26")
     else:
-        report("FAIL", f"node {v} is too old for REA")
+        report("FAIL", f"node {v} is too old for REA: install Node 26")
 
 print("GitHub")
 r = run(["gh", "repo", "view", REPO, "--json", "name"])
