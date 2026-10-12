@@ -8,6 +8,8 @@
 | `.github/workflows/build.yml` | `paths-ignore` += `platform/**`, `.mcp.json`; Sonar job gated on `vars.SONAR_ENABLED == 'true'` | Platform-only commits shouldn't trigger the 15–20 min Operaton build; no SonarCloud project on the fork |
 | `.github/workflows/pr-build.yml` | same as above | same |
 | `.github/workflows/zm-platform.yml` | new | Z-Matrix CI (ruff, pytest, tsc, eslint, vitest), only for `platform/**` |
+| `.github/workflows/zm-claude.yml` | new | `@claude` on issues and PRs for collaborators (official `anthropics/claude-code-action`, SHA-pinned); pushes a branch, never opens a PR |
+| `.github/workflows/zm-claude-review.yml` | new | automatic Claude review of non-draft, non-fork PRs touching `platform/**` or `zm-*.yml` |
 | `.github/ISSUE_TEMPLATE/zm_spec.yml` | new | spec-driven issue template |
 | `CLAUDE.md`, `.mcp.json`, `.claude/commands/*`, `.claude/agents/*` | new | agent setup (upstream `.claude/skills` untouched) |
 | Engine modules | none yet | each future engine change gets a row here + an `area:engine` issue |
