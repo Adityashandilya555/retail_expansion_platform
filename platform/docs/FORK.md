@@ -7,7 +7,7 @@
 |---|---|---|
 | `.github/workflows/build.yml` | `paths-ignore` += `platform/**`, `.mcp.json`; Sonar job gated on `vars.SONAR_ENABLED == 'true'` | Platform-only commits shouldn't trigger the 15–20 min Operaton build; no SonarCloud project on the fork |
 | `.github/workflows/pr-build.yml` | same as above | same |
-| `.github/workflows/zm-platform.yml` | new | Z-Matrix CI (ruff, pytest, tsc, eslint, vitest), only for `platform/**` |
+| `.github/workflows/zm-platform.yml` | new | Z-Matrix CI (ruff, pytest, tsc, eslint, vitest) + SonarQube Cloud scan of `platform/` (project `Adityashandilya555_retail_expansion_platform`, secret `SONAR_TOKEN`), only for `platform/**`. Operaton's own Sonar jobs in `build.yml`/`pr-build.yml` stay off (`SONAR_ENABLED` unset) until the first `area:engine` change |
 | `.github/ISSUE_TEMPLATE/zm_spec.yml` | new | spec-driven issue template |
 | `CLAUDE.md`, `.mcp.json`, `.claude/commands/*`, `.claude/agents/*` | new | agent setup (upstream `.claude/skills` untouched) |
 | Engine modules | none yet | each future engine change gets a row here + an `area:engine` issue |
