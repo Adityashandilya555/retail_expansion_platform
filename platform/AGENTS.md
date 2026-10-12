@@ -100,7 +100,7 @@ platform/docker-compose.yml   local stack: api, worker, operaton ×2 (pilot + is
 Secrets never go into git, issues, PRs or chat — set them as platform env vars via MCP/CLI and refer to them by name. Human-only steps (billing, OAuth consent, plan upgrades) get `needs:human` and an exact click path.
 
 ## Agent tools and rules
-Tools agents can call besides the platform MCPs above: `sourcegraph` (code search), `rea` (reverse engineering), the `operaton-researcher` subagent, and the commands `/refine-issue`, `/implement-issue`, `/infra-check`. All MCP servers are registered in the root `.mcp.json`; Claude Code asks each person to approve them on first use.
+Tools agents can call besides the platform MCPs above: `sourcegraph` (code search), `rea` (reverse engineering), the `operaton-researcher` subagent, and the commands `/refine-issue`, `/implement-issue`, `/infra-check`. All MCP servers are registered in the root `.mcp.json`; Claude Code asks each person to approve them on first use. Check your setup with `python3 platform/scripts/check_agent_tools.py` (Node, GitHub, REA, Sourcegraph incl. `rev:` and `fork:yes` search).
 
 ### Code search: Sourcegraph rules
 Sourcegraph is the first stop for any question about Operaton, the prototype or code in this fork. It returns exact paths and lines without loading the 17k-file tree into context.
