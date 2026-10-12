@@ -2,6 +2,8 @@
   "mcpServers": {
     "supabase": {"type": "http", "url": "https://mcp.supabase.com/mcp?features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching%2Cstorage"},
     "vercel": {"type": "http", "url": "https://mcp.vercel.com"},
-    "railway": {"command": "railway", "args": ["mcp"]}
+    "railway": {"command": "railway", "args": ["mcp"]},
+    "sourcegraph": {"type": "http", "url": "${SRC_ENDPOINT:-http://localhost:7080}/.api/mcp", "headers": {"Authorization": "token ${SRC_ACCESS_TOKEN:-}"}},
+    "rea": {"command": "npx", "args": ["-y", "rea-agents@6.4.0", "mcp"]}
   }
 }

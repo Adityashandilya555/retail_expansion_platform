@@ -9,7 +9,7 @@
 | `.github/workflows/pr-build.yml` | same as above | same |
 | `.github/workflows/zm-platform.yml` | new | Z-Matrix CI (ruff, pytest, tsc, eslint, vitest), only for `platform/**` |
 | `.github/ISSUE_TEMPLATE/zm_spec.yml` | new | spec-driven issue template |
-| `CLAUDE.md`, `.mcp.json`, `.claude/commands/*`, `.claude/agents/*` | new | agent setup (upstream `.claude/skills` untouched) |
+| `CLAUDE.md`, `.mcp.json`, `.claude/commands/*`, `.claude/agents/*` | new | agent setup (upstream `.claude/skills` untouched): MCP servers supabase, vercel, railway, sourcegraph, rea; commands `/refine-issue`, `/implement-issue`, `/infra-check`; subagent `operaton-researcher` |
 | Engine modules | none yet | each future engine change gets a row here + an `area:engine` issue |
 
 ## Operaton workflows on the fork
