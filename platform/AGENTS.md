@@ -106,6 +106,11 @@ Canonical list: `platform/.env.example` (each var tagged with the platform that 
 Operaton is the base project, so its build and test workflows stay on: `pr-build.yml` (build, unit, integration, Spring Boot, Quarkus, webapps-neo tests), `build.yml`, `migration-test.yml`, `unit-tests-with-databases.yaml` (manual, run against PostgreSQL before pinning an engine version), `zizmor-check.yml`, `lint.yml`. They skip `platform/**`-only changes. Upstream-maintenance workflows are disabled on the fork. Full list, reasons and every fork delta: `platform/docs/FORK.md` — update it whenever you change anything outside `platform/`.
 Our CI: `.github/workflows/zm-platform.yml` (ruff + pytest, tsc + eslint + vitest; Playwright joins when e2e exists), triggered only by `platform/**`. An engine change must pass `pr-build.yml`; run `./mvnw -pl <module> test` locally first (root `AGENTS.md`).
 
+## Working with Claude on GitHub
+- **On demand** (`.github/workflows/zm-claude.yml`): comment `@claude implement this issue per the spec` on an issue, or `@claude <what to fix>` on a PR (comment, review or review comment). Claude pushes a branch `<issue#>-<slug>` and replies with a "create PR" link; **a person opens the PR** and a collaborator reviews it. Only owners, members and collaborators trigger it; anyone else's `@claude` is skipped.
+- **Automatic review** (`.github/workflows/zm-claude-review.yml`): every non-draft PR from a branch of this repo that touches `platform/**` or `.github/workflows/zm-*.yml` gets inline comments plus one summary comment, updated on each push. Fork PRs and drafts are skipped. It checks these conventions and the linked issue's acceptance criteria, so keep `Closes #<n>` in the PR body. It doesn't replace the collaborator's review.
+- Auth: Actions secret `CLAUDE_CODE_OAUTH_TOKEN`. Actions logs are public, so never turn on `show_full_output`.
+
 ## Issues are specs
 Template: `.github/ISSUE_TEMPLATE/zm_spec.yml` — Context (§ref) · Spec · How (MCP per step, `HUMAN:` steps) · Operaton references · Acceptance criteria (Given/When/Then) · Test plan · Out of scope · Depends on · Environment variables.
 Implementing: restate the spec → failing tests from acceptance criteria → implement → green → PR. If the spec is wrong, comment and stop.
