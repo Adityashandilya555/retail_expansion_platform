@@ -157,7 +157,8 @@ jobs:
         with:
           pattern: coverage-*
           merge-multiple: true
-          path: .
+          # Artifacts are rooted at platform/ (their common ancestor), so they unpack into the scan's base dir.
+          path: platform
       - name: Scan
         # SONAR_TOKEN is absent on PRs from forks; the scan skips itself there.
         if: env.SONAR_TOKEN != ''

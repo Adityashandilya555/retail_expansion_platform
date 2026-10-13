@@ -29,5 +29,5 @@ def main() -> None:
     run(stop, float(os.environ.get("WORKER_TICK_SECONDS", "30")))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
