@@ -1,0 +1,103 @@
+# Local Z-Matrix stack (D11). Start with scripts/dev-up.sh: it starts the Supabase CLI
+# vault (pilot-local, db on :54322) first, then this file.
+#   pg-platform    control plane stand-in (platform schema, S1-04)   :5433
+#   pg-iso         second client vault for isolation tests (qsr-local) :5434
+#   operaton-pilot pilot client's engine -> Supabase CLI Postgres       :8080
+#   operaton-iso   isolation client's engine -> pg-iso                   :8081
+#   api, worker    platform API (:8000) and worker
+# Host ports can be moved if taken locally: API_PORT, OPERATON_PILOT_PORT, OPERATON_ISO_PORT,
+# PG_PLATFORM_PORT, PG_ISO_PORT (tests/integration reads the same variables).
+name: zm
+
+x-operaton: &operaton
+  # S1-02 (#11) switches this to `build: infra/operaton`.
+  image: ${OPERATON_IMAGE:-operaton/operaton:2.1.5}
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://localhost:8080/engine-rest/engine >/dev/null || exit 1"]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+    start_period: 60s
+
+x-operaton-env: &operaton-env
+  DB_DRIVER: org.postgresql.Driver
+  DB_USERNAME: postgres
+  DB_PASSWORD: postgres
+  OPERATON_BPM_RUN_EXAMPLE_ENABLED: "false"
+  OPERATON_BPM_HISTORY_LEVEL: full
+
+x-postgres: &postgres
+  image: postgres:17
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres"]
+    interval: 2s
+    timeout: 5s
+    retries: 30
+
+services:
+  pg-platform:
+    <<: *postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports: ["${PG_PLATFORM_PORT:-5433}:5432"]
+    volumes:
+      - pg-platform:/var/lib/postgresql/data
+
+  pg-iso:
+    <<: *postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports: ["${PG_ISO_PORT:-5434}:5432"]
+    volumes:
+      - pg-iso:/var/lib/postgresql/data
+      - ./infra/compose/pg-iso-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+
+  operaton-pilot:
+    <<: *operaton
+    ports: ["${OPERATON_PILOT_PORT:-8080}:8080"]
+    # host.docker.internal only resolves by default on Docker Desktop; this makes it work on Linux (CI) too.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    environment:
+      <<: *operaton-env
+      DB_URL: jdbc:postgresql://host.docker.internal:54322/postgres?currentSchema=operaton
+      WAIT_FOR: host.docker.internal:54322
+
+  operaton-iso:
+    <<: *operaton
+    ports: ["${OPERATON_ISO_PORT:-8081}:8080"]
+    depends_on:
+      pg-iso:
+        condition: service_healthy
+    environment:
+      <<: *operaton-env
+      DB_URL: jdbc:postgresql://pg-iso:5432/postgres?currentSchema=operaton
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    ports: ["${API_PORT:-8000}:8000"]
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+
+volumes:
+  pg-platform:
+  pg-iso:
