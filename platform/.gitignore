@@ -9,3 +9,9 @@ dist/
 .vercel/
 .supabase/
 .serena/
+coverage/
+coverage.xml
+.coverage
+.pytest_cache/
+.ruff_cache/
+*.tsbuildinfo

@@ -1,0 +1,60 @@
+# uv workspace root for the Z-Matrix Python code (virtual: not a package itself).
+[project]
+name = "zm-platform"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["apps/api", "apps/worker", "packages/compiler", "packages/schema"]
+
+[tool.uv.sources]
+zm-api = { workspace = true }
+zm-worker = { workspace = true }
+zm-compiler = { workspace = true }
+zm-schema = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28",
+    "psycopg[binary]>=3.3",
+    "pytest>=9.1",
+    "pytest-cov>=7.1",
+    "ruff>=0.17",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+# platform/prototype is imported unchanged from Shrey2149/outpost (#8).
+extend-exclude = ["prototype"]
+
+[tool.ruff.format]
+# Pre-existing agent tooling script (#72), kept as written.
+exclude = ["scripts/check_agent_tools.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["zm_api", "zm_worker", "zm_compiler", "zm_schema"]
+
+[tool.ruff.lint.per-file-ignores]
+# Pre-existing agent tooling script (#72), kept as written.
+"scripts/check_agent_tools.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "apps/api/tests",
+    "apps/worker/tests",
+    "packages/compiler/tests",
+    "packages/schema/tests",
+    "tests",
+]
+markers = ["integration: needs the local stack from scripts/dev-up.sh"]
+addopts = ["-m", "not integration", "--import-mode=importlib"]
+
+[tool.coverage.run]
+source = ["zm_api", "zm_worker", "zm_compiler", "zm_schema"]
