@@ -1,0 +1,7 @@
+{
+  "name": "@zm/zm-tokens",
+  "private": true,
+  "description": "Z-Matrix design tokens as CSS variables (S1-11)",
+  "type": "module",
+  "exports": "./src/index.ts"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@zm/templates",
+  "private": true,
+  "description": "starter workflow.json per template + department catalogue (S1-09)",
+  "type": "module",
+  "exports": "./src/index.ts"
+}

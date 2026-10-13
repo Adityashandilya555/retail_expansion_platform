@@ -1,0 +1,7 @@
+{
+  "name": "@zm/zm-ui",
+  "private": true,
+  "description": "Z-Matrix components (S1-12)",
+  "type": "module",
+  "exports": "./src/index.ts"
+}

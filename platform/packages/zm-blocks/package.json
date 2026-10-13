@@ -1,0 +1,7 @@
+{
+  "name": "@zm/zm-blocks",
+  "private": true,
+  "description": "blocks with manifest.json, placed by the agent (S1-14)",
+  "type": "module",
+  "exports": "./src/index.ts"
+}
