@@ -100,11 +100,42 @@ def test_bpmn_without_history_ttl_deploys(rest):
     rest.delete(f"/deployment/{response.json()['id']}", params={"cascade": "true"})
 
 
+def connect(db_port: int) -> psycopg.Connection:
+    return psycopg.connect(
+        f"postgresql://postgres:postgres@localhost:{db_port}/postgres", connect_timeout=5
+    )
+
+
+def test_ten_failed_logins_do_not_lock_a_user_for_good(rest):
+    user_id, password = str(uuid.uuid4()), "not-a-real-Password-2"
+    profile = {"id": user_id, "firstName": "Lock", "lastName": "Probe", "email": "s1@example.com"}
+    rest.post("/user/create", json={"profile": profile, "credentials": {"password": password}})
+    try:
+        # Operaton's default (login-max-attempts 10) would refuse even the right password from here.
+        with connect(SUPABASE_DB) as conn:
+            conn.execute(
+                "update operaton.act_id_user set attempts_ = 10, lock_exp_time_ = null"
+                " where id_ = %s",
+                (user_id,),
+            )
+        response = httpx.get(f"{REST}/task", auth=(user_id, password), timeout=10)
+        assert response.status_code == 200, response.text
+    finally:
+        rest.delete(f"/user/{user_id}")
+
+
+def test_engine_holds_at_most_five_connections():
+    with connect(SUPABASE_DB) as conn:
+        (count,) = conn.execute(
+            "select count(*) from pg_stat_activity"
+            " where application_name = 'PostgreSQL JDBC Driver'"
+        ).fetchone()
+    assert 1 <= count <= 5, count
+
+
 @pytest.mark.parametrize("db_port", [SUPABASE_DB, PG_ISO])
 def test_engine_tables_live_only_in_operaton_schema(db_port):
-    with psycopg.connect(
-        f"postgresql://postgres:postgres@localhost:{db_port}/postgres", connect_timeout=5
-    ) as conn:
+    with connect(db_port) as conn:
         rows = conn.execute(
             "select table_schema, count(*) from information_schema.tables"
             " where table_name like 'act\\_%' group by table_schema"
