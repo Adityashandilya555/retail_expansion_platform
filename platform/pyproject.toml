@@ -45,6 +45,7 @@ testpaths = [
     "apps/worker/tests",
     "packages/compiler/tests",
     "packages/schema/tests",
+    "infra/operaton/tests",
     "tests",
 ]
 markers = ["integration: needs the local stack from scripts/dev-up.sh"]

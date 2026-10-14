@@ -1,0 +1,33 @@
+# Complete Operaton Run configuration for every Z-Matrix engine (S1-02, #11).
+# It replaces the image's default.yml (run.sh loads exactly one file via --spring.config.location), so nothing is inherited.
+# Env: DB_* (operaton.sh maps them to SPRING_DATASOURCE_*; DB_URL must end in ?currentSchema=operaton) and ZM_ADMIN_USER_*
+# (no defaults: the engine refuses to start without them).
+operaton.bpm:
+  admin-user:
+    id: "${ZM_ADMIN_USER_ID}"
+    password: "${ZM_ADMIN_USER_PASSWORD}"
+  authorization.enabled: true
+  history-level: full
+  database:
+    schema-update: true
+    # Operaton requires prefix = schema + "." when a schema is set. Queries are then schema-qualified, so a DB_URL without
+    # ?currentSchema=operaton fails at startup instead of silently creating tables in public.
+    schema-name: operaton
+    table-prefix: operaton.
+  run:
+    auth.enabled: true
+    example.enabled: false
+  webapp.enabled: false
+  generic-properties.properties:
+    # The default [a-zA-Z0-9]+ rejects group ids like legal__L2 and UUID user ids (platform/AGENTS.md "Engine constraints").
+    user-resource-whitelist-pattern: "[a-zA-Z0-9_-]+|operaton-admin"
+    group-resource-whitelist-pattern: "[a-zA-Z0-9_-]+|operaton-admin"
+    # Compiled BPMN carries no historyTimeToLive (D7).
+    enforce-history-time-to-live: false
+
+# GET /health, outside REST auth: Railway and compose health checks.
+operaton.run.health.rest-endpoint.enabled: true
+server.port: 8080
+
+# Kept from the image's default.yml: never serve static content from the classpath.
+spring.web.resources.static-locations: NULL
