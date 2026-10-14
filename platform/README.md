@@ -40,21 +40,20 @@ pnpm typecheck && pnpm lint && pnpm test
 
 ## Deploy: Vercel (`zm-web`, `zm-console`)
 There are two projects in the Vercel **Pro** team (D18); Hobby is non-commercial only. They are static Vite builds, so a later move to AWS is S3 + CloudFront. Build settings live in each app's `vercel.json`:
-- **Install and build** run at the pnpm workspace root `platform/` (`cd ../.. && pnpm …`), because the lockfile lives there.
+- **Install and build** run at the pnpm workspace root `platform/` (`cd ../.. && corepack pnpm …`), because the lockfile lives there. `corepack` (bundled with Node 22 and 24, Vercel's build runtimes) runs the pnpm pinned in `platform/package.json` (`packageManager`). Vercel's own Corepack switch only reads `packageManager` from the project root (`apps/<app>`), so it isn't used.
 - **`ignoreCommand`** skips the build unless `platform/` changed, so Operaton-only commits don't build.
 - **SPA fallback:** every path rewrites to `/index.html`, so deep links like `/app/legal` load the app.
 
 | Project | Root directory | Env vars (Production + Preview) |
 |---|---|---|
-| `zm-web` | `platform/apps/web` | `VITE_API_BASE_URL=https://<railway-api-domain>`, `ENABLE_EXPERIMENTAL_COREPACK=1` |
+| `zm-web` | `platform/apps/web` | `VITE_API_BASE_URL=https://<railway-api-domain>` |
 | `zm-console` | `platform/apps/console` | same |
-
-`ENABLE_EXPERIMENTAL_COREPACK=1` makes Vercel use the pnpm version pinned in `package.json` (`packageManager`).
 
 Setup:
 1. HUMAN: create or upgrade the Vercel team to **Pro**: Dashboard → Settings → Billing, starting with the Pro trial. Use one Developer seat; collaborators join as free Viewer seats.
 2. HUMAN: install the Vercel GitHub app on the fork: vercel.com → Add New → Project → Import `retail_expansion_platform`. Then run `vercel login`.
 3. Create both projects from the repo with the root directories above (keep "Include files outside the root directory" on), and set the env vars. Preview deployments on PRs are on by default.
+   - Vercel's "Skip deployments when there are no changes to the root directory or its dependencies" detects workspaces from a lockfile at the repo root. Ours is in `platform/`, so after the first deploys, check that a change in `platform/packages/**` still builds both apps. If it doesn't, turn that setting off; `ignoreCommand` already skips non-`platform/` commits.
 4. Add both production domains to `CORS_ALLOWED_ORIGINS` on the Railway `api` (comma-separated; see "Deploy: Railway" in #13).
 5. Check:
    - `curl -X OPTIONS https://<api>/healthz -H "Origin: https://<zm-web domain>" -H "Access-Control-Request-Method: GET"` returns `access-control-allow-origin`;
