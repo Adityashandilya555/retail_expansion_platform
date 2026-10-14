@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./apps/web" },
+    { "path": "./apps/console" },
+    { "path": "./packages/templates" },
+    { "path": "./packages/zm-tokens" },
+    { "path": "./packages/zm-ui" },
+    { "path": "./packages/zm-forms" },
+    { "path": "./packages/zm-blocks" },
+    { "path": "./packages/api-client" }
+  ]
+}

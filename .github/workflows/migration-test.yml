@@ -11,6 +11,7 @@ on:
     paths:
       - '**/*.sql'
       - 'qa/test-db-rolling-update/**'
+      - '!platform/**'  # fork delta: our Supabase migrations are not Operaton's schema (platform/docs/FORK.md)
   schedule:
     - cron: "15 1 * * 5"     # Runs at 1:15 AM UTC Friday
   workflow_dispatch:

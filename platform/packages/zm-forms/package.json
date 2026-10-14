@@ -1,0 +1,7 @@
+{
+  "name": "@zm/zm-forms",
+  "private": true,
+  "description": "form renderer: sections, 12-column grid, Ajv (S1-15)",
+  "type": "module",
+  "exports": "./src/index.ts"
+}

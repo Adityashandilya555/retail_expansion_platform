@@ -7,9 +7,11 @@
 |---|---|---|
 | `.github/workflows/build.yml` | `paths-ignore` += `platform/**`, `.mcp.json`; Sonar job gated on `vars.SONAR_ENABLED == 'true'` | Platform-only commits shouldn't trigger the 15–20 min Operaton build; no SonarCloud project on the fork |
 | `.github/workflows/pr-build.yml` | same as above | same |
-| `.github/workflows/zm-platform.yml` | new | Z-Matrix CI (ruff, pytest, tsc, eslint, vitest) + SonarQube Cloud scan of `platform/` (project `Adityashandilya555_retail_expansion_platform`, secret `SONAR_TOKEN`), only for `platform/**`. Operaton's own Sonar jobs in `build.yml`/`pr-build.yml` stay off (`SONAR_ENABLED` unset) until the first `area:engine` change |
+| `.github/workflows/migration-test.yml` | `paths` += `!platform/**` | Our Supabase migrations aren't Operaton's schema; without this every platform migration PR would run the 5-database rolling-update matrix (S1-01) |
+| `.github/workflows/zm-platform.yml` | new | Z-Matrix CI: `python` (uv workspace: ruff, pytest + coverage), `web` (pnpm workspace: tsc, eslint, vitest + coverage), `zm-integration` (Supabase CLI db + `docker compose up --wait` + `pytest -m integration`, S1-01) + SonarQube Cloud scan reading the `coverage-*` artifacts of `platform/` (project `Adityashandilya555_retail_expansion_platform`, secret `SONAR_TOKEN`), only for `platform/**`. Operaton's own Sonar jobs in `build.yml`/`pr-build.yml` stay off (`SONAR_ENABLED` unset) until the first `area:engine` change |
 | `.github/ISSUE_TEMPLATE/zm_spec.yml` | new | spec-driven issue template |
 | `CLAUDE.md`, `.mcp.json`, `.claude/commands/*`, `.claude/agents/*` | new | agent setup (upstream `.claude/skills` untouched): MCP servers supabase, vercel, railway, sourcegraph, rea; commands `/refine-issue`, `/implement-issue`, `/infra-check`; subagent `operaton-researcher` |
+| Repo settings: ruleset `main` | require a PR (0 approvals), block force pushes and deletion, no bypass; **no required status checks**. Source: `platform/infra/github/ruleset-main.json`, applied with `gh api -X POST repos/Adityashandilya555/retail_expansion_platform/rulesets --input platform/infra/github/ruleset-main.json` (to change it: `-X PUT .../rulesets/<id>`) | Adi merges his own PRs once CI is green; collaborators' PRs get his review. CI is path-filtered (`zm-platform` only on `platform/**`, Operaton builds skip `platform/**`), so a required check would never report on the other kind of PR and would block it forever (S1-01) |
 | Engine modules | none yet | each future engine change gets a row here + an `area:engine` issue |
 
 ## Operaton workflows on the fork
@@ -18,7 +20,7 @@
 |---|---|---|
 | `pr-build.yml` | PRs to `main` touching Operaton | Maven build + unit tests; integration, Spring Boot starter, Quarkus and webapps-neo tests when relevant |
 | `build.yml` | push to `main` | full build + tests, uploads Operaton Run/Tomcat distro artifacts (used for our engine image when we change the engine) |
-| `migration-test.yml` | PRs touching `**/*.sql`, weekly, manual | DB rolling-update/migration safety (we run Operaton on Postgres/Supabase) |
+| `migration-test.yml` | PRs touching `**/*.sql` outside `platform/`, weekly, manual | DB rolling-update/migration safety (we run Operaton on Postgres/Supabase). GitHub had it as `disabled_fork`; enabled in S1-01 |
 | `unit-tests-with-databases.yaml` | manual | engine tests against **PostgreSQL** etc. — run before pinning a new engine version |
 | `zizmor-check.yml` | workflow changes | security lint of all workflows incl. ours |
 | `lint.yml` | PRs touching ADR markdown | markdown lint (non-blocking) |

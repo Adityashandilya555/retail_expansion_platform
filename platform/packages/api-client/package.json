@@ -1,0 +1,7 @@
+{
+  "name": "@zm/api-client",
+  "private": true,
+  "description": "TypeScript client generated from the API's OpenAPI (S1-05)",
+  "type": "module",
+  "exports": "./src/index.ts"
+}
