@@ -53,26 +53,25 @@ tests/integration   smoke tests for the local stack
 ```
 
 ## Deploy: Railway (`api`, `worker`)
-Project `zm-platform`, environment `production`, region `asia-southeast1-eqsg3a` (D2). Build and deploy settings live in each service's `railway.json` (config as code). Two settings can't live there, so set them once per service:
+Project `zm-platform`, environment `production`, region `asia-southeast1-eqsg3a` (D2). The two services are defined in **`.railway/railway.ts`**, using Railway Infrastructure as Code. Config as code (`railway.json`) is deprecated, and new services can't opt in to it.
 
-| Service | Root directory | Config file path | Public domain |
-|---|---|---|---|
-| `api` | `platform` | `/platform/apps/api/railway.json` | yes (`railway domain`) |
-| `worker` | `platform` | `/platform/apps/worker/railway.json` | no |
+What the file sets for each service:
+- **Source:** the GitHub repo, branch `main`, with root directory `platform`. The Dockerfiles use `platform/` as their build context, the same as compose, and `dockerfilePath` is relative to it.
+- **Watch patterns:** repo-absolute, so only `platform/apps/<svc>/**`, `platform/packages/**`, `pyproject.toml` and `uv.lock` (plus `infra/supabase/**` for the worker) trigger a deploy. Operaton-only merges deploy nothing.
+- **Deploy:** one replica in `asia-southeast1-eqsg3a`, restart on failure.
+- **api only:** healthcheck `/healthz`. The api listens on `$PORT`, injected by Railway. Once S1-04 lands, add `preDeploy: "alembic upgrade head"` to `api`.
+- **Variables:** `LOG_LEVEL`, plus `WORKER_TICK_SECONDS` and `RAILWAY_REGION` for the worker.
+  - Secrets, and values that come from other systems, are `preserve()`: Railway keeps the value set in the dashboard. That covers `RAILWAY_API_TOKEN` (worker) and `CORS_ALLOWED_ORIGINS` (api, set with #14).
+  - Railway provides `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID` and `PORT` at runtime.
 
-- **Root directory `platform`:** the Dockerfiles use `platform/` as their build context, the same as compose. `dockerfilePath` in `railway.json` is relative to it.
-- **Config file path is absolute:** it doesn't follow the root directory. `watchPatterns` are repo-absolute too, so Operaton-only merges don't redeploy either service.
-- **`api` port:** the api listens on `$PORT` (injected by Railway), and Railway health-checks `/healthz`. Once S1-04 lands, add `"preDeployCommand": "alembic upgrade head"` to `apps/api/railway.json`.
-- **Private networking** is on by default, so the worker reaches `operaton-<slug>.railway.internal:8080`.
+Private networking is on by default, so the worker reaches `operaton-<slug>.railway.internal:8080`. The per-client Operaton services are created by the worker through the Railway API (S2-02b), not by this file.
 
-Setup, run once after `railway login`:
-1. HUMAN: pick a plan (Hobby or higher) under railway.com → Settings → Plans.
-2. `railway init --name zm-platform`.
-3. Add services `api` and `worker` from GitHub repo `Adityashandilya555/retail_expansion_platform`, branch `main`.
-4. Set each service's root directory and config path (table above), then run `railway domain --service api`.
-5. Set variables with `railway variables --service <svc> --set NAME=value`:
-   - `api`: `CORS_ALLOWED_ORIGINS`, `LOG_LEVEL`;
-   - `worker`: `LOG_LEVEL`, `WORKER_TICK_SECONDS`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, `RAILWAY_REGION`, `RAILWAY_API_TOKEN`.
+Setup, run from `platform/`:
+1. HUMAN: pick a plan (Hobby or higher) under railway.com → Settings → Plans, then run `npx @railway/cli login`.
+2. `npx @railway/cli link`: choose project `zm-platform`, environment `production`.
+3. `npx @railway/cli config plan`. This is read-only; review the diff.
+4. `npx @railway/cli config apply`. It confirms before changing anything.
+5. `npx @railway/cli domain --service api`. Generated domains aren't part of IaC.
+6. HUMAN: Project → Settings → Tokens → create token `zm-worker`, then set it as `RAILWAY_API_TOKEN` on `worker` in the dashboard. S2-02b checks whether `serviceCreate` needs an account token instead.
 
-   Further `[Railway]` variables in `.env.example` are added by the issues whose code first reads them.
-6. HUMAN: Project → Settings → Tokens → create token `zm-worker`, then set it as `RAILWAY_API_TOKEN` on `worker`. S2-02b checks whether `serviceCreate` needs an account token instead.
+Later changes: edit `.railway/railway.ts` in a PR, then run `config plan` and `config apply` after merge. Run `config plan --detailed-exit-code` to check for drift.
