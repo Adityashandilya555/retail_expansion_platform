@@ -21,7 +21,7 @@ docker compose down && supabase --workdir infra stop   # data volumes are kept; 
 | Supabase CLI (`infra/supabase`, project `zm-local-pilot`) | Postgres `:54322`, API `:54321` | pilot client vault (`pilot-local`) |
 | `api` | http://localhost:8000/healthz | FastAPI platform API |
 | `worker` | — | worker loop (JSON logs) |
-| `operaton-pilot` | http://localhost:8080/engine-rest | pilot engine, DB = Supabase CLI Postgres, schema `operaton` |
+| `operaton-pilot` | http://localhost:8080/engine-rest | pilot engine, DB = Supabase CLI Postgres, schema `operaton`. Our image (`infra/operaton`): REST only, service account `zm-service` / `zm-local-only`, `/health` open |
 | `operaton-iso` | http://localhost:8081/engine-rest | isolation client engine (`qsr-local`), DB = `pg-iso` |
 | `pg-platform` | Postgres `:5433` | control plane stand-in |
 | `pg-iso` | Postgres `:5434` | isolation client vault |

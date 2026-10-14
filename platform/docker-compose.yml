@@ -10,11 +10,11 @@
 name: zm
 
 x-operaton: &operaton
-  # S1-02 (#11) switches this to `build: infra/operaton`.
-  image: ${OPERATON_IMAGE:-operaton/operaton:2.1.5}
+  # Our image (S1-02): official 2.1.5, REST only, settings in infra/operaton/default.yml.
+  build: infra/operaton
   restart: unless-stopped
   healthcheck:
-    test: ["CMD-SHELL", "wget -qO- http://localhost:8080/engine-rest/engine >/dev/null || exit 1"]
+    test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null || exit 1"]
     interval: 5s
     timeout: 5s
     retries: 30
@@ -24,8 +24,9 @@ x-operaton-env: &operaton-env
   DB_DRIVER: org.postgresql.Driver
   DB_USERNAME: postgres
   DB_PASSWORD: postgres
-  OPERATON_BPM_RUN_EXAMPLE_ENABLED: "false"
-  OPERATON_BPM_HISTORY_LEVEL: full
+  # Service account (API + worker only); local defaults, the worker sets real ones per engine.
+  ZM_ADMIN_USER_ID: ${ZM_ADMIN_USER_ID:-zm-service}
+  ZM_ADMIN_USER_PASSWORD: ${ZM_ADMIN_USER_PASSWORD:-zm-local-only}
 
 x-postgres: &postgres
   image: postgres:17
