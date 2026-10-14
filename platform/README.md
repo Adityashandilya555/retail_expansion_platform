@@ -68,8 +68,10 @@ Private networking is on by default, so the worker reaches `operaton-<slug>.rail
 
 Setup, run from `platform/`:
 1. HUMAN: pick a plan (Hobby or higher) under railway.com → Settings → Plans, then run `npx @railway/cli login`.
-2. `npx @railway/cli link`: choose project `zm-platform`, environment `production`.
+2. `corepack pnpm install`, because the CLI evaluates `.railway/railway.ts`, which imports `railway/iac` from `node_modules`. Then run `npx @railway/cli link` and choose project `zm-platform`, environment `production`.
 3. `npx @railway/cli config plan`. This is read-only; review the diff.
+   - Railway matches services **by name**. A service it auto-created when the repo was connected (for example `retail_expansion_platform`) shows up as **destroy**, with `api` as **create**. Rename that service to `api` first, or delete it, so the plan has no destroy line.
+   - Check that the `preserve()` variables plan cleanly before their values exist.
 4. `npx @railway/cli config apply`. It confirms before changing anything.
 5. `npx @railway/cli domain --service api`. Generated domains aren't part of IaC.
 6. HUMAN: Project → Settings → Tokens → create token `zm-worker`, then set it as `RAILWAY_API_TOKEN` on `worker` in the dashboard. S2-02b checks whether `serviceCreate` needs an account token instead.
