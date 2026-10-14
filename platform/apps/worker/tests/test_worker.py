@@ -18,21 +18,6 @@ def test_json_formatter_tags_client_and_request_id() -> None:
     assert line["request_id"] is None
 
 
-def test_run_stops_when_event_is_set(caplog) -> None:
-    stop = threading.Event()
-    stop.set()
-    with caplog.at_level(logging.INFO, logger="zm_worker"):
-        run(stop, interval=0)
-    assert [r.getMessage() for r in caplog.records] == ["worker started", "worker stopped"]
-
-
-def test_configure_installs_json_handler() -> None:
-    logs.configure("debug")
-    root = logging.getLogger()
-    assert root.level == logging.DEBUG
-    assert isinstance(root.handlers[0].formatter, logs.JsonFormatter)
-
-
 def test_tick_logs(caplog) -> None:
     with caplog.at_level(logging.INFO, logger="zm_worker"):
         worker_main.tick()

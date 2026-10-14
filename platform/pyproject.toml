@@ -10,12 +10,6 @@ package = false
 [tool.uv.workspace]
 members = ["apps/api", "apps/worker", "packages/compiler", "packages/schema"]
 
-[tool.uv.sources]
-zm-api = { workspace = true }
-zm-worker = { workspace = true }
-zm-compiler = { workspace = true }
-zm-schema = { workspace = true }
-
 [dependency-groups]
 dev = [
     "httpx>=0.28",

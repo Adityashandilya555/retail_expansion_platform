@@ -21,6 +21,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text-summary", "lcov"],
       include: projects.map((p) => `${p}/src/**/*.{ts,tsx}`),
+      exclude: ["**/src/main.tsx"], // Vite mount boilerplate; also excluded in sonar-project.properties
     },
   },
 });

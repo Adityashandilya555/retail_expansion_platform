@@ -13,7 +13,7 @@ Our code on top of the Operaton fork. Conventions: [AGENTS.md](AGENTS.md) · pro
 cp .env.example .env        # optional for now; never commit .env
 scripts/dev-up.sh           # Supabase CLI vault, then docker compose
 uv run pytest -m integration
-scripts/dev-down.sh
+docker compose down && supabase --workdir infra stop   # data volumes are kept; add -v to drop them
 ```
 
 | Service | URL / port | What |
