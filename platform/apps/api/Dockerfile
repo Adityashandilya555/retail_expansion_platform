@@ -15,4 +15,5 @@ RUN useradd --system --no-create-home zm
 USER zm
 ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app/apps/api/src"
 EXPOSE 8000
-CMD ["uvicorn", "zm_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Railway injects $PORT; compose and local runs use 8000.
+CMD ["sh", "-c", "exec uvicorn zm_api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
