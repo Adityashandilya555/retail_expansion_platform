@@ -61,7 +61,7 @@ What the file sets for each service:
 - **Deploy:** one replica in `asia-southeast1-eqsg3a`, restart on failure.
 - **api only:** healthcheck `/healthz`. The api listens on `$PORT`, injected by Railway. Once S1-04 lands, add `preDeploy: "alembic upgrade head"` to `api`.
 - **Variables:** `LOG_LEVEL`, plus `WORKER_TICK_SECONDS` and `RAILWAY_REGION` for the worker.
-  - Secrets, and values that come from other systems, are `preserve()`: Railway keeps the value set in the dashboard. That covers `RAILWAY_API_TOKEN` (worker) and `CORS_ALLOWED_ORIGINS` (api, set with #14).
+  - Secrets, and values that come from other systems, are `preserve()`: Railway keeps the value set in the dashboard. That covers `RAILWAY_API_TOKEN` and `SUPABASE_ACCESS_TOKEN` (worker), and `CORS_ALLOWED_ORIGINS` (api, set with #14). Paste secrets into the Railway dashboard only, never into git, issues or chat.
   - Railway provides `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID` and `PORT` at runtime.
 
 Private networking is on by default, so the worker reaches `operaton-<slug>.railway.internal:8080`. The per-client Operaton services are created by the worker through the Railway API (S2-02b), not by this file.

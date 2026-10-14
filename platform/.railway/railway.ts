@@ -50,6 +50,8 @@ export default defineRailway(() => {
       // Project token `zm-worker` (HUMAN step); RAILWAY_PROJECT_ID and RAILWAY_ENVIRONMENT_ID are
       // provided by Railway at runtime.
       RAILWAY_API_TOKEN: preserve(),
+      // Supabase Management API token for provisioning client projects (S2-02a); set in the dashboard.
+      SUPABASE_ACCESS_TOKEN: preserve(),
     },
   });
 
