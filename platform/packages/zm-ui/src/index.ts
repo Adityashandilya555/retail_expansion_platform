@@ -1,2 +1,2 @@
 // Placeholder: Z-Matrix components (S1-12).
-export const PACKAGE = "@zm/zm-ui";
+export const PACKAGE = "@zm/ui";

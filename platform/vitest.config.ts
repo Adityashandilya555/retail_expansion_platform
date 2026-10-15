@@ -6,7 +6,6 @@ const projects = [
   "apps/web",
   "apps/console",
   "packages/templates",
-  "packages/zm-tokens",
   "packages/zm-ui",
   "packages/zm-forms",
   "packages/zm-blocks",
