@@ -12,7 +12,8 @@ const REGION = "asia-southeast1-eqsg3a"; // D2
 
 // The Dockerfiles use platform/ as build context (as docker-compose.yml does), so platform/ is the
 // root directory and dockerfilePath is relative to it. Watch patterns are repo-absolute: Operaton-only
-// commits redeploy nothing.
+// commits redeploy nothing. Restart policy is Railway's default (on failure), so it isn't set: an
+// explicit ON_FAILURE is stored as null and would show as permanent drift in `config plan`.
 const source = github(REPO, { branch: "main", rootDirectory: "platform" });
 const shared = ["/platform/packages/**", "/platform/pyproject.toml", "/platform/uv.lock"];
 
@@ -26,7 +27,6 @@ export default defineRailway(() => {
     },
     healthcheck: "/healthz",
     replicas: { [REGION]: 1 },
-    deploy: { restartPolicyType: "ON_FAILURE" },
     env: {
       LOG_LEVEL: "info",
       // Comma-separated Vercel domains of zm-web and zm-console, set with #14.
@@ -42,7 +42,6 @@ export default defineRailway(() => {
       watchPatterns: ["/platform/apps/worker/**", "/platform/infra/supabase/**", ...shared],
     },
     replicas: { [REGION]: 1 },
-    deploy: { restartPolicyType: "ON_FAILURE" },
     env: {
       LOG_LEVEL: "info",
       WORKER_TICK_SECONDS: "30",
