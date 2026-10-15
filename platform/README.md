@@ -79,7 +79,7 @@ Project `zm-platform`, environment `production`, region `asia-southeast1-eqsg3a`
 What the file sets for each service:
 - **Source:** the GitHub repo, branch `main`, with root directory `platform`. The Dockerfiles use `platform/` as their build context, the same as compose, and `dockerfilePath` is relative to it.
 - **Watch patterns:** repo-absolute, so only `platform/apps/<svc>/**`, `platform/packages/**`, `pyproject.toml` and `uv.lock` (plus `infra/supabase/**` for the worker) trigger a deploy. Operaton-only merges deploy nothing.
-- **Deploy:** one replica in `asia-southeast1-eqsg3a`, restart on failure.
+- **Deploy:** one replica in `asia-southeast1-eqsg3a`; restart on failure is Railway's default, so the file doesn't set it.
 - **api only:** healthcheck `/healthz`. The api listens on `$PORT`, injected by Railway. Once S1-04 lands, add `preDeploy: "alembic upgrade head"` to `api`.
 - **Variables:** `LOG_LEVEL`, plus `WORKER_TICK_SECONDS` and `RAILWAY_REGION` for the worker.
   - Secrets, and values that come from other systems, are `preserve()`: Railway keeps the value set in the dashboard. That covers `RAILWAY_API_TOKEN` and `SUPABASE_ACCESS_TOKEN` (worker), and `CORS_ALLOWED_ORIGINS` (api, set with #14). Paste secrets into the Railway dashboard only, never into git, issues or chat.
