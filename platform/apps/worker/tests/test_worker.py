@@ -38,7 +38,7 @@ def test_main_reads_env_and_stops_on_signal(monkeypatch) -> None:
     monkeypatch.setattr(worker_main, "run", fake_run)
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
-        worker_main.main()
+        worker_main.main([])
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)

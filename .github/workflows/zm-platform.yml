@@ -128,6 +128,14 @@ jobs:
         run: >-
           supabase --workdir infra start
           -x gotrue,realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+      - name: Migrate the client vaults
+        env:
+          ZM_ENGINE_DB_PASSWORD: zm-engine-local
+          ZM_API_DB_PASSWORD: zm-api-local
+        run: |
+          docker compose up -d --wait pg-iso
+          uv run zm-worker vault-migrate --dsn postgresql://postgres:postgres@localhost:54322/postgres
+          uv run zm-worker vault-migrate --dsn postgresql://postgres:postgres@localhost:5434/postgres
       - name: Start the compose stack
         run: docker compose up -d --build --wait
       - name: Integration tests
