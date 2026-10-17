@@ -83,7 +83,7 @@ platform/packages/zm-tokens|zm-ui|zm-forms/   TypeScript design system (installe
 platform/packages/zm-blocks/  blocks + manifest.json each (name, description, allowed props) — what the agent can place
 platform/packages/zm-themes/  theme packs (tokens + styled components), each with DESIGN.md; built/audited with Impeccable
 platform/packages/zm-layouts/ fixed layouts (screen types) with named regions
-platform/packages/templates/  starter workflow.json per template (QSR, Café, Gated retail) + department catalogue
+platform/packages/templates/  starter workflow.json per template (data folder, not a code package): matrix-retail, qsr; `zm-api templates sync` → platform.templates
 platform/infra/operaton/      Dockerfile (official image or fork build), railway.json, health check
 platform/infra/supabase/      supabase CLI: platform/ migrations (control plane) and client/ migrations (app + operaton roles) applied by the worker
 platform/prototype/           outpost@ce6d141, REFERENCE ONLY (never edited, imported or extended; see its AGENTS.md)
