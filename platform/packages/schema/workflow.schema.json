@@ -1,0 +1,958 @@
+{
+  "$defs": {
+    "Approval": {
+      "additionalProperties": false,
+      "properties": {
+        "chain": {
+          "description": "Approvers in order; each can approve, reject (if allowed) or send back.",
+          "items": {
+            "$ref": "#/$defs/DeptLevel"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "send_back_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "allow_reject": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "chain"
+      ],
+      "title": "Approval",
+      "type": "object"
+    },
+    "Apps": {
+      "additionalProperties": false,
+      "properties": {
+        "theme": {
+          "default": "quartz",
+          "description": "Theme preset key (D19).",
+          "minLength": 1,
+          "type": "string"
+        },
+        "accent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nav": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/NavItem"
+          },
+          "type": "array"
+        },
+        "pages": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Page"
+          },
+          "type": "array"
+        }
+      },
+      "title": "Apps",
+      "type": "object"
+    },
+    "BlockRef": {
+      "additionalProperties": false,
+      "properties": {
+        "block": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "props": {
+          "additionalProperties": true,
+          "default": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "block"
+      ],
+      "title": "BlockRef",
+      "type": "object"
+    },
+    "CaseCode": {
+      "additionalProperties": false,
+      "properties": {
+        "pattern": {
+          "description": "e.g. `MX-{seq:4}`; must contain `{seq:N}`.",
+          "pattern": "\\{seq:[1-9]\\}",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
+      "title": "CaseCode",
+      "type": "object"
+    },
+    "Cell": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "span": {
+          "default": 12,
+          "maximum": 12,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "title": "Cell",
+      "type": "object"
+    },
+    "Department": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "description": "Department key; Operaton candidate groups are derived as `<key>__L<n>`.",
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "levels": {
+          "description": "Contiguous from 1 (L1 = most junior).",
+          "items": {
+            "$ref": "#/$defs/Level"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "levels"
+      ],
+      "title": "Department",
+      "type": "object"
+    },
+    "DeptLevel": {
+      "additionalProperties": false,
+      "properties": {
+        "department": {
+          "type": "string"
+        },
+        "level": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "department",
+        "level"
+      ],
+      "title": "DeptLevel",
+      "type": "object"
+    },
+    "DocumentRule": {
+      "additionalProperties": false,
+      "properties": {
+        "accept": {
+          "description": "Allowed file extensions, e.g. `[\"pdf\", \"jpg\"]`.",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "max_mb": {
+          "default": 25,
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "keep_versions": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "accept"
+      ],
+      "title": "DocumentRule",
+      "type": "object"
+    },
+    "FieldDef": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "text",
+            "textarea",
+            "number",
+            "currency",
+            "percent",
+            "date",
+            "date_range",
+            "select",
+            "multi_select",
+            "yes_no",
+            "rating",
+            "user",
+            "address",
+            "checklist",
+            "line_items",
+            "computed",
+            "document",
+            "info"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Option"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "document": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentRule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "since": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Release version that added the field (additive versioning, S2-25)."
+        },
+        "hidden": {
+          "default": false,
+          "description": "Hidden from new forms; stored values are kept.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "label"
+      ],
+      "title": "FieldDef",
+      "type": "object"
+    },
+    "FieldPerformer": {
+      "additionalProperties": false,
+      "properties": {
+        "from_field": {
+          "description": "A `user`-type field filled earlier in the case.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_field"
+      ],
+      "title": "FieldPerformer",
+      "type": "object"
+    },
+    "Flow": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "case_label": {
+          "description": "What one case is called, e.g. \"Site\".",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "case_code": {
+          "$ref": "#/$defs/CaseCode"
+        },
+        "start": {
+          "$ref": "#/$defs/Start"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/Stage"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "case_label",
+        "case_code",
+        "start",
+        "stages"
+      ],
+      "title": "Flow",
+      "type": "object"
+    },
+    "Form": {
+      "additionalProperties": false,
+      "properties": {
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/Section"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "sections"
+      ],
+      "title": "Form",
+      "type": "object"
+    },
+    "InitiatorAtLeastRule": {
+      "additionalProperties": false,
+      "properties": {
+        "initiator_at_least": {
+          "$ref": "#/$defs/DeptLevel"
+        }
+      },
+      "required": [
+        "initiator_at_least"
+      ],
+      "title": "InitiatorAtLeastRule",
+      "type": "object"
+    },
+    "InitiatorPerformer": {
+      "additionalProperties": false,
+      "properties": {
+        "initiator": {
+          "const": true,
+          "description": "The person who started the case.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "initiator"
+      ],
+      "title": "InitiatorPerformer",
+      "type": "object"
+    },
+    "Kpi": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "duration",
+            "count"
+          ],
+          "type": "string"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Stage key the measurement starts at."
+        },
+        "to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "type"
+      ],
+      "title": "Kpi",
+      "type": "object"
+    },
+    "Level": {
+      "additionalProperties": false,
+      "properties": {
+        "n": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "n",
+        "name"
+      ],
+      "title": "Level",
+      "type": "object"
+    },
+    "LevelPerformer": {
+      "additionalProperties": false,
+      "properties": {
+        "department": {
+          "type": "string"
+        },
+        "level": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "or_above": {
+          "default": false,
+          "description": "Higher levels of the same department may also do the task.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "department",
+        "level"
+      ],
+      "title": "LevelPerformer",
+      "type": "object"
+    },
+    "NavItem": {
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "visible_to": {
+          "description": "Department keys, or `\"*\"` for everyone.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "page",
+        "label",
+        "visible_to"
+      ],
+      "title": "NavItem",
+      "type": "object"
+    },
+    "Option": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "Option",
+      "type": "object"
+    },
+    "Org": {
+      "additionalProperties": false,
+      "properties": {
+        "departments": {
+          "items": {
+            "$ref": "#/$defs/Department"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "departments"
+      ],
+      "title": "Org",
+      "type": "object"
+    },
+    "Outcome": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A task id in the same stage, `@close` (close the case) or `@end`; default: next step."
+        },
+        "comment_required": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "Outcome",
+      "type": "object"
+    },
+    "Page": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "layout": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "department": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "flow": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required for the `case` layout."
+        },
+        "regions": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/BlockRef"
+            },
+            "type": "array"
+          },
+          "default": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "key",
+        "layout"
+      ],
+      "title": "Page",
+      "type": "object"
+    },
+    "ParallelGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "parallel": {
+          "items": {
+            "$ref": "#/$defs/Task"
+          },
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "parallel"
+      ],
+      "title": "ParallelGroup",
+      "type": "object"
+    },
+    "Route": {
+      "additionalProperties": false,
+      "properties": {
+        "when": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/InitiatorAtLeastRule"
+            }
+          ]
+        },
+        "to": {
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "when",
+        "to",
+        "label"
+      ],
+      "title": "Route",
+      "type": "object"
+    },
+    "Section": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "hidden_below_level": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeptLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rows": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/Cell"
+            },
+            "type": "array"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "rows"
+      ],
+      "title": "Section",
+      "type": "object"
+    },
+    "Stage": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "department": {
+          "type": "string"
+        },
+        "after": {
+          "default": [],
+          "description": "Stage keys of the same flow that must finish first; several = parallel join.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tasks": {
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/Task"
+              },
+              {
+                "$ref": "#/$defs/ParallelGroup"
+              }
+            ]
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "department",
+        "tasks"
+      ],
+      "title": "Stage",
+      "type": "object"
+    },
+    "Start": {
+      "additionalProperties": false,
+      "properties": {
+        "performers": {
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/LevelPerformer"
+              },
+              {
+                "$ref": "#/$defs/InitiatorPerformer"
+              },
+              {
+                "$ref": "#/$defs/FieldPerformer"
+              }
+            ]
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "form": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "performers",
+        "form"
+      ],
+      "title": "Start",
+      "type": "object"
+    },
+    "Task": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "performer": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/LevelPerformer"
+            },
+            {
+              "$ref": "#/$defs/InitiatorPerformer"
+            },
+            {
+              "$ref": "#/$defs/FieldPerformer"
+            }
+          ]
+        },
+        "form": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "show": {
+          "default": [],
+          "description": "Read-only fields from earlier steps shown on this task.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "outcomes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Outcome"
+          },
+          "type": "array"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Approval"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "skip_if": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/InitiatorAtLeastRule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "route": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Route"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "performer"
+      ],
+      "title": "Task",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One client's `workflow.json`, schema version 1.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "org": {
+      "$ref": "#/$defs/Org"
+    },
+    "flows": {
+      "items": {
+        "$ref": "#/$defs/Flow"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "fields": {
+      "additionalProperties": {
+        "$ref": "#/$defs/FieldDef"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "forms": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Form"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "apps": {
+      "$ref": "#/$defs/Apps",
+      "default": {
+        "theme": "quartz",
+        "accent": null,
+        "nav": [],
+        "pages": []
+      }
+    },
+    "kpis": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Kpi"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "org",
+    "flows"
+  ],
+  "title": "WorkflowV1",
+  "type": "object"
+}

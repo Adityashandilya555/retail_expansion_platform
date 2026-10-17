@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.12.*"
 
 [manifest]
@@ -770,8 +770,14 @@ dev = [
 
 [[package]]
 name = "zm-schema"
-version = "0.0.0"
+version = "0.1.0"
 source = { editable = "packages/schema" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.11" }]
 
 [[package]]
 name = "zm-worker"

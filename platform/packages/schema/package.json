@@ -1,0 +1,18 @@
+{
+  "name": "@zm/schema",
+  "private": true,
+  "description": "TS types generated from workflow.schema.json (the Pydantic models in src/zm_schema are the source of truth)",
+  "type": "module",
+  "types": "./ts/workflow.d.ts",
+  "exports": {
+    ".": {
+      "types": "./ts/workflow.d.ts"
+    }
+  },
+  "scripts": {
+    "gen": "json2ts --input workflow.schema.json --output ts/workflow.d.ts --additionalProperties false --bannerComment \"/* Generated from workflow.schema.json by json-schema-to-typescript. Do not edit: run \\`uv run zm-schema export && pnpm --filter @zm/schema gen\\`. */\""
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "16.0.0"
+  }
+}
