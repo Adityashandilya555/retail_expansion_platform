@@ -1,9 +1,12 @@
 [project]
 name = "zm-compiler"
-version = "0.0.0"
+version = "0.1.0"
 description = "workflow.json -> BPMN/DMN + form/UI specs -> release (S1-08a)"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = ["zm-schema"]
+
+[tool.uv.sources]
+zm-schema = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

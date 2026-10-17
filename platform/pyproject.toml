@@ -13,6 +13,7 @@ members = ["apps/api", "apps/worker", "packages/compiler", "packages/schema"]
 [dependency-groups]
 dev = [
     "httpx>=0.28",
+    "jsonschema>=4.23",
     "psycopg[binary]>=3.3",
     "pytest>=9.1",
     "pytest-cov>=7.1",
