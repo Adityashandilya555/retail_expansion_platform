@@ -1,9 +1,11 @@
+import argparse
 import logging
 import os
 import signal
+import sys
 import threading
 
-from zm_worker import logs
+from zm_worker import logs, vault_migrate
 
 log = logging.getLogger("zm_worker")
 
@@ -21,8 +23,27 @@ def run(stop: threading.Event, interval: float) -> None:
     log.info("worker stopped")
 
 
-def main() -> None:
+def migrate(argv: list[str]) -> None:
+    """`zm-worker vault-migrate --dsn …`: apply the client vault migrations by hand (local dev)."""
+    parser = argparse.ArgumentParser(prog="zm-worker vault-migrate")
+    parser.add_argument("--dsn", required=True, help="client database URL")
+    args = parser.parse_args(argv)
+    env = {role: f"{role.upper()}_DB_PASSWORD" for role in vault_migrate.ROLES}
+    missing = [var for var in env.values() if not os.environ.get(var)]
+    if missing:
+        parser.error(f"set {', '.join(missing)}")
+    applied = vault_migrate.apply(args.dsn, {role: os.environ[var] for role, var in env.items()})
+    log.info("vault migrated: %s", ", ".join(applied) or "already up to date")
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = sys.argv[1:] if argv is None else argv
     logs.configure(os.environ.get("LOG_LEVEL", "info"))
+    if args[:1] == ["vault-migrate"]:
+        migrate(args[1:])
+        return
+    if args:
+        sys.exit(f"unknown command {args[0]!r}; usage: zm-worker [vault-migrate --dsn URL]")
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())

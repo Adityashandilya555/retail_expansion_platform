@@ -22,9 +22,8 @@ x-operaton: &operaton
 
 x-operaton-env: &operaton-env
   DB_DRIVER: org.postgresql.Driver
-  DB_USERNAME: postgres
-  DB_PASSWORD: postgres
-  # Service account (API + worker only); local defaults, the worker sets real ones per engine.
+  DB_USERNAME: zm_engine
+  DB_PASSWORD: ${ZM_ENGINE_DB_PASSWORD:-zm-engine-local}
   ZM_ADMIN_USER_ID: ${ZM_ADMIN_USER_ID:-zm-service}
   ZM_ADMIN_USER_PASSWORD: ${ZM_ADMIN_USER_PASSWORD:-zm-local-only}
 

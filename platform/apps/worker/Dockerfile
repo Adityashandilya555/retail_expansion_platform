@@ -8,6 +8,7 @@ COPY apps/api apps/api
 COPY apps/worker apps/worker
 COPY packages/compiler packages/compiler
 COPY packages/schema packages/schema
+COPY infra/supabase/client infra/supabase/client
 # Wheels only (--no-build): no setup/build-backend code runs. Our own code is not installed;
 # it runs from source via PYTHONPATH.
 RUN uv sync --frozen --no-dev --no-build --no-install-workspace --package zm-worker
