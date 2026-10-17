@@ -62,7 +62,7 @@ Setup:
 ## `workflow.json` schema
 One `workflow.json` per client: org, flows, fields, forms, apps, KPIs. The Pydantic models in `packages/schema/src/zm_schema/models.py` are the source of truth (#16); cross-reference rules live in `semantics.py`.
 ```bash
-uv run zm-schema validate path/to/workflow.json   # path: message per problem, exit 1 if any
+uv run zm-schema validate path/to/workflow.json   # path: message per problem, exit 1 if any (files under the current dir only)
 uv run zm-schema export                           # after a model change: regenerate workflow.schema.json
 pnpm --filter @zm/schema gen                      # …then the TS types in packages/schema/ts/
 ```
