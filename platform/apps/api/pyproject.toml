@@ -3,7 +3,14 @@ name = "zm-api"
 version = "0.0.0"
 description = "Z-Matrix platform API"
 requires-python = ">=3.12,<3.13"
-dependencies = ["fastapi>=0.143", "uvicorn[standard]>=0.54"]
+dependencies = [
+    "alembic>=1.14",
+    "asyncpg>=0.30",
+    "cryptography>=44",
+    "fastapi>=0.143",
+    "sqlalchemy[asyncio]>=2.0",
+    "uvicorn[standard]>=0.54",
+]
 
 [build-system]
 requires = ["hatchling"]

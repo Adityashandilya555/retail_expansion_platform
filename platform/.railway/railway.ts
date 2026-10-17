@@ -26,6 +26,8 @@ export default defineRailway(() => {
       watchPatterns: ["/platform/apps/api/**", ...shared],
     },
     healthcheck: "/healthz",
+    // Control-plane migrations (S1-04) on PLATFORM_DATABASE_URL before each deploy; WORKDIR is /app.
+    preDeploy: "alembic -c apps/api/alembic.ini -x db=platform upgrade head",
     replicas: { [REGION]: 1 },
     env: {
       LOG_LEVEL: "info",
