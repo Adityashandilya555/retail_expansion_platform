@@ -62,6 +62,9 @@ jobs:
       - run: uv sync --all-packages --frozen
       - name: Lint
         run: uv run ruff check . && uv run ruff format --check .
+      # workflow.json schema (#16): the committed JSON Schema must match the Pydantic models.
+      - name: workflow.schema.json up to date
+        run: uv run zm-schema export --check
       - name: Test (unit; integration runs in zm-integration)
         run: uv run pytest --cov --cov-report=xml:coverage.xml
       # sonar-project.properties keeps platform/ as the common root of the uploaded paths (see #70).
@@ -90,6 +93,9 @@ jobs:
           node-version: 22
       # pnpm version comes from platform/package.json "packageManager".
       - run: corepack enable && pnpm install --frozen-lockfile
+      # workflow.json schema (#16): the committed TS types must match workflow.schema.json.
+      - name: Generated TS types up to date
+        run: pnpm --filter @zm/schema gen && git diff --exit-code -- packages/schema/ts
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test

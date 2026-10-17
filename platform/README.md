@@ -59,6 +59,15 @@ Setup:
    - `curl -X OPTIONS https://<api>/healthz -H "Origin: https://<zm-web domain>" -H "Access-Control-Request-Method: GET"` returns `access-control-allow-origin`;
    - `https://<zm-web domain>/app/legal` serves the app.
 
+## `workflow.json` schema
+One `workflow.json` per client: org, flows, fields, forms, apps, KPIs. The Pydantic models in `packages/schema/src/zm_schema/models.py` are the source of truth (#16); cross-reference rules live in `semantics.py`.
+```bash
+uv run zm-schema validate path/to/workflow.json   # path: message per problem, exit 1 if any
+uv run zm-schema export                           # after a model change: regenerate workflow.schema.json
+pnpm --filter @zm/schema gen                      # …then the TS types in packages/schema/ts/
+```
+CI fails if either generated file is stale. In Python, use `zm_schema.validate(doc)` to get every error as `{path, message}`, or `zm_schema.migrate(doc)` to get a `WorkflowV1` model. A breaking change bumps `CURRENT_VERSION` and registers a step in `zm_schema.versioning.MIGRATIONS`. Broken examples live in `packages/schema/tests/broken/`; regenerate them with `uv run python packages/schema/tests/make_broken.py`.
+
 ## Layout
 ```
 apps/api            FastAPI platform API              (Python, uv workspace)
