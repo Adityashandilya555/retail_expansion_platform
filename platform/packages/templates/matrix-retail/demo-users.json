@@ -1,0 +1,10 @@
+{
+  "note": "Demo users for the Matrix Retail pilot (#18). Emails only: passwords are generated at seed time and never committed.",
+  "users": [
+    {"email": "bd.l1@matrix-retail.demo", "name": "BD Executive", "department": "bd", "level": 1},
+    {"email": "bd.l2@matrix-retail.demo", "name": "BD Supervisor", "department": "bd", "level": 2},
+    {"email": "legal.l1@matrix-retail.demo", "name": "Legal Executive", "department": "legal", "level": 1},
+    {"email": "legal.l2@matrix-retail.demo", "name": "Legal Supervisor", "department": "legal", "level": 2},
+    {"email": "management.l1@matrix-retail.demo", "name": "Business Admin", "department": "management", "level": 1}
+  ]
+}

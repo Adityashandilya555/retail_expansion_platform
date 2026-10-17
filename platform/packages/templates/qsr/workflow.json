@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "org": {
+    "departments": [
+      {"key": "bd", "name": "Business development", "levels": [{"n": 1, "name": "BD Manager"}, {"n": 2, "name": "BD Head"}]},
+      {"key": "legal", "name": "Legal & Statutory", "levels": [{"n": 1, "name": "Legal Executive"}, {"n": 2, "name": "Legal Supervisor"}, {"n": 3, "name": "Head of Legal"}]},
+      {"key": "design", "name": "Design", "levels": [{"n": 1, "name": "Designer"}, {"n": 2, "name": "Design Lead"}]},
+      {"key": "budget", "name": "Budget", "levels": [{"n": 1, "name": "Budget Analyst"}, {"n": 2, "name": "Finance Controller"}]}
+    ]
+  },
+  "flows": [
+    {
+      "key": "store_launch",
+      "name": "QSR store launch",
+      "case_label": "Store",
+      "case_code": {"pattern": "QSR-{seq:4}"},
+      "start": {"performers": [{"department": "bd", "level": 1, "or_above": true}], "form": "start"},
+      "stages": [
+        {
+          "key": "site_hunt",
+          "name": "Site hunt",
+          "department": "bd",
+          "tasks": [
+            {"id": "qsr_site_brief", "name": "Site brief", "performer": {"initiator": true}, "form": "qsr_site_brief", "show": ["store_name", "city"]},
+            {
+              "id": "qsr_site_signoff",
+              "name": "Approve site",
+              "performer": {"department": "bd", "level": 2},
+              "show": ["store_name", "monthly_rent"],
+              "outcomes": [
+                {"id": "approve", "label": "Approve"},
+                {"id": "send_back", "label": "Send back", "to": "qsr_site_brief", "comment_required": true},
+                {"id": "reject", "label": "Reject", "to": "@close", "comment_required": true}
+              ]
+            }
+          ]
+        },
+        {
+          "key": "statutory",
+          "name": "Statutory licences",
+          "department": "legal",
+          "after": ["site_hunt"],
+          "tasks": [
+            {
+              "id": "qsr_licences",
+              "name": "Statutory licences",
+              "performer": {"department": "legal", "level": 1, "or_above": true},
+              "form": "qsr_licences",
+              "show": ["store_name"],
+              "approval": {"chain": [{"department": "legal", "level": 2}, {"department": "legal", "level": 3}], "send_back_to": "qsr_licences", "allow_reject": true}
+            }
+          ]
+        },
+        {
+          "key": "store_design",
+          "name": "Store design",
+          "department": "design",
+          "after": ["site_hunt"],
+          "tasks": [
+            {"id": "qsr_layout", "name": "Store layout", "performer": {"department": "design", "level": 1}, "form": "qsr_layout"},
+            {
+              "id": "qsr_layout_review",
+              "name": "Review layout",
+              "performer": {"department": "design", "level": 2},
+              "show": ["layout_file"],
+              "outcomes": [
+                {"id": "approve", "label": "Approve"},
+                {"id": "send_back", "label": "Send back", "to": "qsr_layout", "comment_required": true}
+              ]
+            }
+          ]
+        },
+        {
+          "key": "capex",
+          "name": "Capex budget",
+          "department": "budget",
+          "after": ["statutory", "store_design"],
+          "tasks": [
+            {
+              "id": "qsr_capex",
+              "name": "Capex estimate",
+              "performer": {"department": "budget", "level": 1},
+              "form": "qsr_capex",
+              "show": ["fssai_no", "monthly_rent"],
+              "approval": {"chain": [{"department": "budget", "level": 2}], "send_back_to": "qsr_capex", "allow_reject": false}
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "fields": {
+    "store_name": {"type": "text", "label": "Store name", "required": true},
+    "city": {"type": "text", "label": "City", "required": true},
+    "drive_thru": {"type": "yes_no", "label": "Drive-thru"},
+    "monthly_rent": {"type": "currency", "label": "Monthly rent", "required": true},
+    "carpet_area": {"type": "number", "label": "Carpet area (sq ft)"},
+    "fssai_no": {"type": "text", "label": "FSSAI number", "required": true},
+    "licence_valid_until": {"type": "date", "label": "Valid until"},
+    "fire_noc": {"type": "document", "label": "Fire NOC", "document": {"accept": ["pdf"], "max_mb": 25, "keep_versions": true}},
+    "layout_file": {"type": "document", "label": "Store layout", "document": {"accept": ["pdf", "png"], "max_mb": 25}},
+    "capex_total": {"type": "currency", "label": "Capex total", "required": true}
+  },
+  "forms": {
+    "start": {"sections": [{"key": "store", "title": "Store", "rows": [[{"field": "store_name", "span": 8}, {"field": "city", "span": 4}], [{"field": "drive_thru"}]]}]},
+    "qsr_site_brief": {"sections": [{"key": "terms", "title": "Commercial terms", "rows": [[{"field": "monthly_rent", "span": 6}, {"field": "carpet_area", "span": 6}]]}]},
+    "qsr_licences": {
+      "sections": [
+        {"key": "licence", "title": "Licence details", "rows": [[{"field": "fssai_no", "span": 6}, {"field": "licence_valid_until", "span": 6}]]},
+        {"key": "documents", "title": "Documents", "rows": [[{"field": "fire_noc"}]]}
+      ]
+    },
+    "qsr_layout": {"sections": [{"key": "layout", "title": "Layout", "rows": [[{"field": "layout_file"}]]}]},
+    "qsr_capex": {
+      "sections": [
+        {"key": "capex", "title": "Capex", "hidden_below_level": {"department": "budget", "level": 1}, "rows": [[{"field": "capex_total", "span": 6}]]}
+      ]
+    }
+  },
+  "apps": {
+    "theme": "quartz",
+    "nav": [
+      {"page": "home", "label": "Home", "visible_to": ["*"]},
+      {"page": "stores", "label": "Stores", "visible_to": ["*"]}
+    ],
+    "pages": [
+      {"key": "home", "layout": "standard", "regions": {"main": [{"block": "task_inbox", "props": {"scope": "mine", "group_by": "case"}}]}},
+      {"key": "stores", "layout": "standard", "regions": {"main": [{"block": "case_table", "props": {"flow": "store_launch", "columns": ["code", "store_name", "city", "stage", "status"]}}]}},
+      {"key": "store", "layout": "case", "flow": "store_launch", "regions": {"header": [{"block": "case_header", "props": {"title_field": "store_name", "fields": ["city"]}}], "tasks": [{"block": "case_tasks"}]}}
+    ]
+  }
+}

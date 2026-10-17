@@ -80,8 +80,6 @@ importers:
         specifier: 16.0.0
         version: 16.0.0
 
-  packages/templates: {}
-
   packages/zm-blocks: {}
 
   packages/zm-forms: {}

@@ -45,6 +45,7 @@ testpaths = [
     "apps/worker/tests",
     "packages/compiler/tests",
     "packages/schema/tests",
+    "packages/templates/tests",
     "infra/operaton/tests",
     "tests",
 ]
