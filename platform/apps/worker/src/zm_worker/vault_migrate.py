@@ -10,8 +10,10 @@ log = logging.getLogger("zm_worker.vault_migrate")
 MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "infra/supabase/client/migrations"
 ROLES = ("zm_engine", "zm_api")
 
+
 class MigrationChangedError(RuntimeError):
     """An already-applied migration file was edited."""
+
 
 def apply(dsn: str, secrets: dict[str, str], migrations_dir: Path = MIGRATIONS_DIR) -> list[str]:
     """Apply pending migrations, set the role passwords, return the names applied this run."""

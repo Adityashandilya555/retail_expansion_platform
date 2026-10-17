@@ -13,8 +13,8 @@ export ZM_API_DB_PASSWORD="${ZM_API_DB_PASSWORD:-zm-api-local}"
 
 "${supabase[@]}" --workdir infra start
 docker compose up -d --wait pg-iso
-uv run zm-worker vault-migrate --dsn postgresql://postgres:postgres@localhost:54322/postgres
-uv run zm-worker vault-migrate --dsn "postgresql://postgres:postgres@localhost:${PG_ISO_PORT:-5434}/postgres"
+uv run --no-build zm-worker vault-migrate --dsn postgresql://postgres:postgres@localhost:54322/postgres
+uv run --no-build zm-worker vault-migrate --dsn "postgresql://postgres:postgres@localhost:${PG_ISO_PORT:-5434}/postgres"
 docker compose up -d --build --wait
 
 cat <<'URLS'
