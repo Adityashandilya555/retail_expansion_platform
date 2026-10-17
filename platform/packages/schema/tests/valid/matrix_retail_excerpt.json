@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "org": {
+    "departments": [
+      {"key": "bd", "name": "Business development", "levels": [{"n": 1, "name": "BD Executive"}, {"n": 2, "name": "BD Supervisor"}]},
+      {"key": "legal", "name": "Legal & Statutory", "levels": [{"n": 1, "name": "Legal Executive"}, {"n": 2, "name": "Legal Supervisor"}, {"n": 3, "name": "Head of Legal"}]},
+      {"key": "finance", "name": "Finance", "levels": [{"n": 1, "name": "Finance Executive"}, {"n": 2, "name": "Finance Controller"}]},
+      {"key": "admin", "name": "Business admin", "levels": [{"n": 1, "name": "Business Admin"}]}
+    ]
+  },
+  "flows": [
+    {
+      "key": "site_launch",
+      "name": "Site launch",
+      "case_label": "Site",
+      "case_code": {"pattern": "MX-{seq:4}"},
+      "start": {"performers": [{"department": "bd", "level": 1, "or_above": true}], "form": "site_start"},
+      "stages": [
+        {
+          "key": "bd_qualification",
+          "name": "BD - Qualification",
+          "department": "bd",
+          "tasks": [
+            {
+              "id": "bd_site_details",
+              "name": "Site details",
+              "performer": {"initiator": true},
+              "form": "site_details",
+              "show": ["site_name", "city"]
+            },
+            {
+              "id": "bd_approve_details",
+              "name": "Approve site details",
+              "performer": {"department": "bd", "level": 2},
+              "show": ["site_name", "monthly_rent", "site_owner"],
+              "skip_if": {"initiator_at_least": {"department": "bd", "level": 2}},
+              "approval": {"chain": [{"department": "bd", "level": 2}], "send_back_to": "bd_site_details", "allow_reject": true}
+            }
+          ]
+        },
+        {
+          "key": "bd_loi",
+          "name": "BD - LOI",
+          "department": "bd",
+          "after": ["bd_qualification"],
+          "tasks": [
+            {"id": "bd_upload_loi", "name": "Upload LOI", "performer": {"from_field": "site_owner"}, "form": "loi", "show": ["monthly_rent"]},
+            {
+              "id": "bd_send_legal",
+              "name": "Send to Legal and Finance",
+              "performer": {"department": "bd", "level": 2},
+              "show": ["loi_file", "monthly_rent"],
+              "outcomes": [
+                {"id": "send", "label": "Send to Legal + Finance"},
+                {"id": "send_back", "label": "Send back", "to": "bd_upload_loi", "comment_required": true},
+                {"id": "reject", "label": "Reject", "to": "@close", "comment_required": true}
+              ]
+            }
+          ]
+        },
+        {
+          "key": "legal",
+          "name": "Legal",
+          "department": "legal",
+          "after": ["bd_loi"],
+          "tasks": [
+            {"id": "legal_dd_checklist", "name": "DD checklist", "performer": {"department": "legal", "level": 1}, "form": "dd", "show": ["loi_file"]},
+            {
+              "parallel": [
+                {"id": "legal_fire_noc", "name": "Fire NOC", "performer": {"department": "legal", "level": 1}, "form": "fire_noc"},
+                {"id": "legal_agreement", "name": "Lease agreement", "performer": {"department": "legal", "level": 2}}
+              ]
+            },
+            {
+              "id": "legal_licensing",
+              "name": "Licensing",
+              "performer": {"department": "legal", "level": 2, "or_above": true},
+              "show": ["dd_items", "fire_noc"],
+              "route": [{"when": "!(licFssai && licFireNoc)", "to": "legal_licensing", "label": "Some pending"}]
+            }
+          ]
+        },
+        {
+          "key": "finance",
+          "name": "Finance",
+          "department": "finance",
+          "after": ["bd_loi"],
+          "tasks": [
+            {"id": "fin_ca_entry", "name": "CA entry", "performer": {"department": "finance", "level": 1}, "form": "ca", "show": ["monthly_rent"]},
+            {
+              "id": "fin_approve",
+              "name": "Approve budget",
+              "performer": {"department": "finance", "level": 2},
+              "show": ["capex", "total_incl_gst"],
+              "approval": {"chain": [{"department": "finance", "level": 2}, {"department": "admin", "level": 1}], "send_back_to": "fin_ca_entry", "allow_reject": false}
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "fields": {
+    "site_name": {"type": "text", "label": "Site name", "required": true},
+    "city": {"type": "text", "label": "City", "required": true},
+    "store_model": {"type": "select", "label": "Store model", "options": [{"id": "cafe", "label": "Cafe"}, {"id": "kiosk", "label": "Kiosk"}]},
+    "monthly_rent": {"type": "currency", "label": "Monthly rent"},
+    "site_owner": {"type": "user", "label": "Site owner"},
+    "loi_file": {"type": "document", "label": "Signed LOI", "required": true, "document": {"accept": ["pdf"], "max_mb": 25, "keep_versions": true}},
+    "dd_items": {"type": "checklist", "label": "DD items", "options": [{"id": "title", "label": "Title deed"}, {"id": "oc", "label": "OC"}]},
+    "fire_noc": {"type": "document", "label": "Fire NOC", "document": {"accept": ["pdf", "jpg"], "max_mb": 25}},
+    "capex": {"type": "line_items", "label": "Capex"},
+    "total_incl_gst": {"type": "computed", "label": "Total incl. GST", "since": 2}
+  },
+  "forms": {
+    "site_start": {"sections": [{"key": "site", "title": "Site", "rows": [[{"field": "site_name", "span": 8}, {"field": "city", "span": 4}], [{"field": "store_model"}]]}]},
+    "site_details": {
+      "sections": [
+        {"key": "people", "title": "People", "rows": [[{"field": "site_owner"}]]},
+        {"key": "commercials", "title": "Commercials", "hidden_below_level": {"department": "bd", "level": 2}, "rows": [[{"field": "monthly_rent", "span": 6}]]}
+      ]
+    },
+    "loi": {"sections": [{"key": "loi", "title": "LOI", "rows": [[{"field": "loi_file"}]]}]},
+    "dd": {"sections": [{"key": "dd", "title": "Due diligence", "rows": [[{"field": "dd_items"}]]}]},
+    "fire_noc": {"sections": [{"key": "noc", "title": "Fire NOC", "rows": [[{"field": "fire_noc"}]]}]},
+    "ca": {"sections": [{"key": "ca", "title": "Budget", "rows": [[{"field": "capex"}], [{"field": "total_incl_gst", "span": 4}]]}]}
+  },
+  "apps": {
+    "theme": "quartz",
+    "accent": "copper",
+    "nav": [
+      {"page": "home", "label": "Home", "visible_to": ["*"]},
+      {"page": "legal_overview", "label": "Legal", "visible_to": ["legal", "admin"]}
+    ],
+    "pages": [
+      {"key": "home", "layout": "home", "regions": {"hero": [{"block": "kpi_tile", "props": {"kpi": "loi_to_legal"}}], "main": [{"block": "task_inbox"}]}},
+      {"key": "legal_overview", "layout": "department", "department": "legal", "regions": {"main": [{"block": "task_inbox", "props": {"scope": "team"}}]}},
+      {"key": "site", "layout": "case", "flow": "site_launch", "regions": {"main": [{"block": "case_header"}]}}
+    ]
+  },
+  "kpis": [
+    {"key": "loi_to_legal", "label": "Days LOI → Legal", "type": "duration", "from": "bd_loi", "to": "legal"},
+    {"key": "sites_in_legal", "label": "Sites in Legal", "type": "count", "from": "legal"}
+  ]
+}
