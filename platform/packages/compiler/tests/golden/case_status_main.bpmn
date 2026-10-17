@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:operaton="http://operaton.org/schema/1.0/bpmn" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="defs_zm_t__store_launch" targetNamespace="https://z-matrix/workflow">
+<bpmn:error id="Error_CLOSED" name="CLOSED" errorCode="CLOSED" />
+<bpmn:process id="zm_t__store_launch" name="Store launch" isExecutable="true" operaton:candidateStarterGroups="bd__L1,bd__L2">
+<bpmn:startEvent id="start" name="New site" operaton:formKey="zm:start" operaton:initiator="initiator"><bpmn:extensionElements><operaton:executionListener event="start" expression="${execution.setVariable('stage', 'Created')}" /><operaton:executionListener event="start" expression="${execution.setVariable('case_status', 'open')}" /></bpmn:extensionElements></bpmn:startEvent>
+<bpmn:callActivity id="call_bd" name="BD" calledElement="zm_t__store_launch__bd" operaton:calledElementBinding="deployment"><bpmn:extensionElements><operaton:executionListener event="start" expression="${execution.setVariable('stage', 'BD')}" /><operaton:executionListener event="start" expression="${execution.setVariable('m_bd', 'in progress')}" /><operaton:executionListener event="end" expression="${execution.setVariable('m_bd', 'done')}" /><operaton:in businessKey="#{execution.processBusinessKey}" /><operaton:in variables="all" /><operaton:out variables="all" /></bpmn:extensionElements></bpmn:callActivity>
+<bpmn:boundaryEvent id="closed_bd" name="Closed" attachedToRef="call_bd"><bpmn:errorEventDefinition errorRef="Error_CLOSED" /></bpmn:boundaryEvent>
+<bpmn:endEvent id="closed_bd_end" name="Closed in BD"><bpmn:extensionElements><operaton:executionListener event="start" expression="${execution.setVariable('stage', 'Closed in BD')}" /><operaton:executionListener event="start" expression="${execution.setVariable('case_status', 'closed:bd')}" /></bpmn:extensionElements><bpmn:terminateEventDefinition /></bpmn:endEvent>
+<bpmn:callActivity id="call_legal" name="Legal" calledElement="zm_t__store_launch__legal" operaton:calledElementBinding="deployment"><bpmn:extensionElements><operaton:executionListener event="start" expression="${execution.setVariable('stage', 'Legal')}" /><operaton:executionListener event="start" expression="${execution.setVariable('m_legal', 'in progress')}" /><operaton:executionListener event="end" expression="${execution.setVariable('m_legal', 'done')}" /><operaton:in businessKey="#{execution.processBusinessKey}" /><operaton:in variables="all" /><operaton:out variables="all" /></bpmn:extensionElements></bpmn:callActivity>
+<bpmn:boundaryEvent id="closed_legal" name="Closed" attachedToRef="call_legal"><bpmn:errorEventDefinition errorRef="Error_CLOSED" /></bpmn:boundaryEvent>
+<bpmn:endEvent id="closed_legal_end" name="Closed in Legal"><bpmn:extensionElements><operaton:executionListener event="start" expression="${execution.setVariable('stage', 'Closed in Legal')}" /><operaton:executionListener event="start" expression="${execution.setVariable('case_status', 'closed:legal')}" /></bpmn:extensionElements><bpmn:terminateEventDefinition /></bpmn:endEvent>
+<bpmn:endEvent id="completed_end" name="Completed"><bpmn:extensionElements><operaton:executionListener event="start" expression="${execution.setVariable('stage', 'Completed')}" /><operaton:executionListener event="start" expression="${execution.setVariable('case_status', 'completed')}" /></bpmn:extensionElements></bpmn:endEvent>
+<bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="call_bd" />
+<bpmn:sequenceFlow id="f2" sourceRef="closed_bd" targetRef="closed_bd_end" />
+<bpmn:sequenceFlow id="f3" sourceRef="call_bd" targetRef="call_legal" />
+<bpmn:sequenceFlow id="f4" sourceRef="closed_legal" targetRef="closed_legal_end" />
+<bpmn:sequenceFlow id="f5" sourceRef="call_legal" targetRef="completed_end" />
+</bpmn:process>
+<bpmndi:BPMNDiagram id="dia_zm_t__store_launch"><bpmndi:BPMNPlane id="plane_zm_t__store_launch" bpmnElement="zm_t__store_launch">
+<bpmndi:BPMNShape id="start_di" bpmnElement="start"><dc:Bounds x="102" y="102" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="call_bd_di" bpmnElement="call_bd"><dc:Bounds x="225" y="80" width="120" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="closed_bd_di" bpmnElement="closed_bd"><dc:Bounds x="287" y="142" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="closed_bd_end_di" bpmnElement="closed_bd_end"><dc:Bounds x="432" y="242" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="call_legal_di" bpmnElement="call_legal"><dc:Bounds x="390" y="80" width="120" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="closed_legal_di" bpmnElement="closed_legal"><dc:Bounds x="452" y="142" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="closed_legal_end_di" bpmnElement="closed_legal_end"><dc:Bounds x="597" y="242" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="completed_end_di" bpmnElement="completed_end"><dc:Bounds x="597" y="102" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNEdge id="f1_di" bpmnElement="f1"><di:waypoint x="138" y="120" /><di:waypoint x="225" y="120" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f2_di" bpmnElement="f2"><di:waypoint x="305" y="178" /><di:waypoint x="305" y="260" /><di:waypoint x="432" y="260" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f3_di" bpmnElement="f3"><di:waypoint x="345" y="120" /><di:waypoint x="390" y="120" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f4_di" bpmnElement="f4"><di:waypoint x="470" y="178" /><di:waypoint x="470" y="260" /><di:waypoint x="597" y="260" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f5_di" bpmnElement="f5"><di:waypoint x="510" y="120" /><di:waypoint x="597" y="120" /></bpmndi:BPMNEdge>
+</bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
+</bpmn:definitions>
