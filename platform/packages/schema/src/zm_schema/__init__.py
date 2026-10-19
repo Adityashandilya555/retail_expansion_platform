@@ -2,6 +2,7 @@
 
 from zm_schema.api import validate
 from zm_schema.errors import Error
+from zm_schema.forms import submission_errors
 from zm_schema.models import WorkflowV1
 from zm_schema.semantics import group_id
 from zm_schema.versioning import CURRENT_VERSION, SchemaVersionError, migrate
@@ -15,5 +16,6 @@ __all__ = [
     "WorkflowV1",
     "group_id",
     "migrate",
+    "submission_errors",
     "validate",
 ]

@@ -9,7 +9,9 @@ import pytest
 
 from zm_compiler import compile
 
-from .conftest import GOLDEN, doc, template
+from .conftest import GOLDEN, PLATFORM, doc, template
+
+FORM_FIXTURES = PLATFORM / "packages" / "schema" / "tests" / "fixtures"
 
 UPDATE = os.environ.get("ZM_UPDATE_GOLDEN") == "1"
 
@@ -54,3 +56,19 @@ def test_forms(form_id: str) -> None:
     r = compile(template("qsr"), "qsr")
     blob = json.dumps(r.forms[form_id].schema, indent=2, sort_keys=True) + "\n"
     check(GOLDEN / "forms" / f"{form_id}.json", blob.encode())
+
+
+@pytest.mark.parametrize(
+    ("key", "form_id"),
+    [
+        ("matrix-retail", "legal_dd_checklist"),
+        ("matrix-retail", "fin_ca_entry"),
+        ("qsr", "qsr_licences"),
+        ("qsr", "qsr_licences__appr_legal_L3"),
+    ],
+)
+def test_shared_form_fixtures(key: str, form_id: str) -> None:
+    """Schemas that @zm/forms (vitest) and zm_schema.submission_errors (pytest) both check (#28)."""
+    r = compile(template(key), key)
+    blob = json.dumps(r.forms[form_id].schema, indent=2, sort_keys=True) + "\n"
+    check(FORM_FIXTURES / f"{form_id}.schema.json", blob.encode())
