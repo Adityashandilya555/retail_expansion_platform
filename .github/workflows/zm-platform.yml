@@ -99,6 +99,9 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      # #20: the client app's production build leaves out /dev/ui, uses no Google Fonts, JS ≤ 300 kB gzip.
+      - name: Client app build check
+        run: pnpm --filter @zm/web build && pnpm --filter @zm/web check:build
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-web

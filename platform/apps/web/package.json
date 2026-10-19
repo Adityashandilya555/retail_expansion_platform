@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:build": "node scripts/check-build.mjs"
   },
   "dependencies": {
     "@mantine/core": "~9.7.2",
