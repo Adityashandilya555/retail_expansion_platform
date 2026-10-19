@@ -3,16 +3,16 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import { AppearanceMenu } from "./AppearanceMenu";
 import { expectNoAxeViolations } from "./test";
-import { ZmProvider, useAppearance, type ZmClientLook } from "./ZmProvider";
+import { APPEARANCE_USER_KEY, ZmProvider, useAppearance, type ZmClientLook } from "./ZmProvider";
 
 function Probe() {
   const { accent, preset } = useAppearance();
   return <output data-testid="probe">{`${preset.key}:${accent}`}</output>;
 }
 
-function renderApp(client?: ZmClientLook) {
+function renderApp(client?: ZmClientLook, userId?: string) {
   return render(
-    <ZmProvider env="test" client={client}>
+    <ZmProvider env="test" client={client} userId={userId}>
       <AppearanceMenu />
       <Probe />
     </ZmProvider>,
@@ -68,4 +68,45 @@ test("the appearance menu works from the keyboard and passes axe", async () => {
   await user.keyboard("{Enter}");
   expect(screen.getByRole("radiogroup", { name: "Colour scheme" })).toBeDefined();
   await expectNoAxeViolations();
+});
+
+test("people sharing a browser keep their own appearance", async () => {
+  const user = userEvent.setup();
+  const asA = renderApp(undefined, "user-a");
+  await user.click(screen.getByRole("button", { name: "Appearance" }));
+  await user.click(screen.getByRole("radio", { name: "Dark" }));
+  await user.click(screen.getByRole("button", { name: "Accent: Plum" }));
+  expect(localStorage.getItem(APPEARANCE_USER_KEY)).toBe("user-a");
+  asA.unmount();
+
+  // B signs in on the same browser: system scheme and the default accent, not A's choices.
+  const asB = renderApp(undefined, "user-b");
+  expect(screen.getByTestId("probe").textContent).toBe("quartz:slate");
+  expect(localStorage.getItem("zm:color-scheme:user-b")).toBeNull();
+  expect(localStorage.getItem(APPEARANCE_USER_KEY)).toBe("user-b");
+  asB.unmount();
+
+  // A comes back: their choices return.
+  renderApp(undefined, "user-a");
+  expect(screen.getByTestId("probe").textContent).toBe("quartz:plum");
+  expect(scheme()).toBe("dark");
+});
+
+test("switching user in place reloads that user's choices", async () => {
+  const user = userEvent.setup();
+  const view = renderApp(undefined, "user-a");
+  await user.click(screen.getByRole("button", { name: "Appearance" }));
+  await user.click(screen.getByRole("button", { name: "Accent: Teal" }));
+  view.rerender(
+    <ZmProvider env="test" userId="user-b">
+      <Probe />
+    </ZmProvider>,
+  );
+  expect(screen.getByTestId("probe").textContent).toBe("quartz:slate");
+});
+
+test("signing out clears the pointer the pre-paint script reads", () => {
+  localStorage.setItem(APPEARANCE_USER_KEY, "user-a");
+  renderApp();
+  expect(localStorage.getItem(APPEARANCE_USER_KEY)).toBeNull();
 });

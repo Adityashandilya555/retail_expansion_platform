@@ -19,4 +19,12 @@ export {
   type Preset,
   type PresetOverrides,
 } from "./theme";
-export { ACCENT_STORAGE_KEY, SCHEME_STORAGE_KEY, ZmProvider, useAppearance, type ZmClientLook } from "./ZmProvider";
+export {
+  APPEARANCE_USER_KEY,
+  ZmProvider,
+  accentStorageKey,
+  appearanceScope,
+  schemeStorageKey,
+  useAppearance,
+  type ZmClientLook,
+} from "./ZmProvider";

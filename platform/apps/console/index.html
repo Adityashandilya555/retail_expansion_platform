@@ -5,10 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Z-Matrix — owner console</title>
     <script>
-      // Set the colour scheme before React loads, so there is no flash (key shared with @zm/ui ZmProvider).
+      // Set the colour scheme before React loads, so there is no flash. Keys are shared with
+      // @zm/ui ZmProvider: the signed-in person's scope (zm:appearance-user) or "anon".
       (function () {
         var stored = null;
-        try { stored = localStorage.getItem("zm:color-scheme"); } catch (e) {}
+        try {
+          var scope = localStorage.getItem("zm:appearance-user") || "anon";
+          stored = localStorage.getItem("zm:color-scheme:" + scope);
+        } catch (e) {}
         var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
         var scheme = stored === "light" || stored === "dark" ? stored : dark ? "dark" : "light";
         document.documentElement.setAttribute("data-mantine-color-scheme", scheme);
