@@ -1,5 +1,10 @@
 """The resolver against the local stack (#21): real registry, the pilot vault as `zm_api`, and
-operaton-pilot as `zm-service`. `pytest -m integration` after scripts/dev-up.sh."""
+operaton-pilot as `zm-service`. `pytest -m integration` after scripts/dev-up.sh.
+
+Never send a wrong password as `zm-service` here: the engine's 3-60 s delay after a failed login
+(infra/operaton/default.yml) would answer 401 to every later test on the shared stack. The
+401 -> 502 mapping is unit-tested in test_operaton_client.py.
+"""
 
 import argparse
 import asyncio
@@ -16,7 +21,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from zm_api import secrets
 from zm_api.context import Resolver, platform_lookup
 from zm_api.errors import NotFound
-from zm_api.operaton import OperatonError
 
 pytestmark = pytest.mark.integration
 
@@ -73,20 +77,3 @@ def test_resolved_client_reaches_its_own_vault_and_engine() -> None:
             await resolver.aclose()
 
     asyncio.run(go())
-
-
-def test_wrong_service_password_is_a_502_from_operaton_401() -> None:
-    async def go() -> OperatonError:
-        slug = await add_client("wrong-password")
-        resolver = Resolver(platform_lookup())
-        try:
-            ctx = await resolver.resolve(slug)
-            assert ctx is not None
-            with pytest.raises(OperatonError) as info:
-                await ctx.operaton.process_definition("anything")
-            return info.value
-        finally:
-            await resolver.aclose()
-
-    err = asyncio.run(go())
-    assert (err.status, err.upstream_status) == (502, 401)

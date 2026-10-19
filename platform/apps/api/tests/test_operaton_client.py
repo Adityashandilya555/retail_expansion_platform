@@ -176,6 +176,19 @@ def test_404_is_not_found_and_500_keeps_the_engine_type(op: OperatonClient) -> N
 
 
 @respx.mock
+def test_rejected_service_credentials_are_502_with_upstream_401(op: OperatonClient) -> None:
+    respx.get(f"{BASE}/process-definition/key/p").respond(401)
+
+    async def flow():
+        with pytest.raises(OperatonError) as info:
+            await op.process_definition("p")
+        return info.value
+
+    err = run(flow())
+    assert (err.status, err.upstream_status) == (502, 401)
+
+
+@respx.mock
 def test_unreachable_engine_is_502_without_status(op: OperatonClient) -> None:
     respx.get(f"{BASE}/task/t1").mock(side_effect=httpx.ConnectError("refused"))
 
