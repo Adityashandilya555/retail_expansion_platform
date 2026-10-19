@@ -1,7 +1,23 @@
 {
   "name": "@zm/forms",
   "private": true,
-  "description": "form renderer: sections, 12-column grid, Ajv (S1-15)",
+  "description": "Form renderer on Mantine: sections, 12-column grid, Ajv 2020 (S1-15, #28)",
   "type": "module",
-  "exports": "./src/index.ts"
+  "exports": {
+    ".": "./src/index.ts",
+    "./samples": "./src/samples.ts"
+  },
+  "dependencies": {
+    "@mantine/core": "~9.7.2",
+    "@mantine/form": "~9.7.2",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
+  },
+  "devDependencies": {
+    "@zm/ui": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  }
 }

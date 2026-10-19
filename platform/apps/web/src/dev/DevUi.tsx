@@ -1,10 +1,11 @@
-// /dev/ui (dev server only, never in production builds): every @zm/ui extra plus a sample of Mantine
-// inputs, with a preset switcher; the top bar's appearance menu switches scheme and accent.
+// /dev/ui (dev server only, never in production builds): every @zm/ui extra, @zm/forms on real compiled forms
+// and a sample of Mantine inputs, with a preset switcher; the top bar's appearance menu switches scheme and accent.
 import {
   Alert,
   Badge,
   Button,
   Checkbox,
+  Code,
   Group,
   NumberInput,
   Paper,
@@ -17,6 +18,8 @@ import {
   Textarea,
   Title,
 } from "@mantine/core";
+import { ZmForm } from "@zm/forms";
+import { sampleApproval, sampleDdChecklist, sampleLicences } from "@zm/forms/samples";
 import { AppFrame, DataTable, Num, PageHeader, PRESETS, StageTracker, StatusPill, ZmProvider } from "@zm/ui";
 import { sampleColumns as columns, sampleNav as nav, sampleSites as sites, sampleStages as stages } from "@zm/ui/samples";
 import { useState, type ReactNode } from "react";
@@ -35,6 +38,8 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 export default function DevUi() {
   const [preset, setPreset] = useState("quartz");
   const [tableState, setTableState] = useState("rows");
+  const [submitted, setSubmitted] = useState("nothing yet");
+  const onSubmit = async (values: Record<string, unknown>) => setSubmitted(JSON.stringify(values));
   return (
     <ZmProvider client={{ theme: preset }}>
       <AppFrame clientName="Matrix Retail (preview)" nav={nav} activeKey="sites" user={{ name: "Priya Rao", email: "priya@example.com" }}>
@@ -99,6 +104,33 @@ export default function DevUi() {
               <Num value={98.456} decimals={2} />
               <Num value={null} />
             </Group>
+          </Section>
+
+          <Section title="Forms (@zm/forms): Legal DD checklist, QSR licences, a Legal L3 approval">
+            <Stack gap="xl">
+              <ZmForm
+                schema={sampleDdChecklist}
+                layout={sampleDdChecklist["x-zm-layout"] ?? []}
+                caseLabel="Site"
+                caseData={{ loi_file: { label: "Signed LOI", value: { name: "loi-mx-0001.pdf" } } }}
+                onSubmit={onSubmit}
+              />
+              <ZmForm
+                schema={sampleLicences}
+                layout={sampleLicences["x-zm-layout"] ?? []}
+                caseLabel="Store"
+                caseData={{ store_name: { label: "Store name", value: "Indiranagar" } }}
+                onSubmit={onSubmit}
+              />
+              <ZmForm
+                schema={sampleApproval}
+                layout={[]}
+                caseLabel="Store"
+                caseData={{ store_name: { label: "Store name", value: "Indiranagar" } }}
+                onSubmit={onSubmit}
+              />
+              <Code block>Submitted: {submitted}</Code>
+            </Stack>
           </Section>
 
           <Section title="Mantine inputs (used directly, styled by the theme)">
