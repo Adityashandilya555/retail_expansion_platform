@@ -3,7 +3,6 @@
   "references": [
     { "path": "./apps/web" },
     { "path": "./apps/console" },
-    { "path": "./packages/zm-tokens" },
     { "path": "./packages/zm-ui" },
     { "path": "./packages/zm-forms" },
     { "path": "./packages/zm-blocks" },
