@@ -69,6 +69,18 @@ pnpm --filter @zm/schema gen                      # …then the TS types in pack
 ```
 CI fails if either generated file is stale. In Python, use `zm_schema.validate(doc)` to get every error as `{path, message}`, or `zm_schema.migrate(doc)` to get a `WorkflowV1` model. A breaking change bumps `CURRENT_VERSION` and registers a step in `zm_schema.versioning.MIGRATIONS`. Broken examples live in `packages/schema/tests/broken/`; regenerate them with `uv run python packages/schema/tests/make_broken.py`.
 
+## Starter templates
+`packages/templates/<key>/workflow.json` holds the starter `workflow.json` documents. It's a data folder, not a code package:
+- `matrix-retail`: the pilot client, converted from the prototype (#18);
+- `qsr`: a small template for the local isolation client.
+
+A template is only a starting point (D14). Provisioning copies it into a new client's draft once, and later template changes never reach existing clients.
+```bash
+uv run zm-schema validate packages/templates/matrix-retail/workflow.json
+PLATFORM_DATABASE_URL=… uv run zm-api templates sync   # validate + upsert into platform.templates (key, version)
+```
+`matrix-retail/demo-users.json` lists the demo accounts (emails only; passwords are generated at seed time).
+
 ## Layout
 ```
 apps/api            FastAPI platform API              (Python, uv workspace)
@@ -77,7 +89,8 @@ apps/web            client app                        (Vite + React)
 apps/console        owner console                     (Vite + React)
 packages/compiler   workflow.json → BPMN + specs      (Python)
 packages/schema     workflow.json schema v1           (Python)
-packages/templates, zm-ui, zm-forms, zm-blocks, api-client   (TypeScript; zm-ui = Mantine theme + extras)
+packages/templates  starter workflow.json documents (data)
+packages/zm-ui, zm-forms, zm-blocks, api-client   (TypeScript; zm-ui = Mantine theme + extras)
 infra/supabase      Supabase CLI project (local pilot vault)
 infra/compose       init scripts for docker-compose.yml
 tests/integration   smoke tests for the local stack

@@ -5,7 +5,6 @@ import { defineConfig } from "vitest/config";
 const projects = [
   "apps/web",
   "apps/console",
-  "packages/templates",
   "packages/zm-ui",
   "packages/zm-forms",
   "packages/zm-blocks",

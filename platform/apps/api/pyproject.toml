@@ -10,7 +10,14 @@ dependencies = [
     "fastapi>=0.143",
     "sqlalchemy[asyncio]>=2.0",
     "uvicorn[standard]>=0.54",
+    "zm-schema",
 ]
+
+[project.scripts]
+zm-api = "zm_api.cli:main"
+
+[tool.uv.sources]
+zm-schema = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

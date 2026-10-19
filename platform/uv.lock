@@ -726,6 +726,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "zm-schema" },
 ]
 
 [package.metadata]
@@ -736,6 +737,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.143" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54" },
+    { name = "zm-schema", editable = "packages/schema" },
 ]
 
 [[package]]
