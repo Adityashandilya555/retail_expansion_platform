@@ -4,5 +4,5 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [react()],
   server: { port: 5173 },
-  test: { environment: "jsdom" },
+  test: { environment: "jsdom", setupFiles: ["../../packages/zm-ui/src/test/setup.ts"] },
 });

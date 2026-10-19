@@ -16,4 +16,9 @@ export default tseslint.config(
       "@typescript-eslint/no-explicit-any": "error",
     },
   },
+  {
+    // Node build/check scripts (e.g. apps/web/scripts/check-build.mjs).
+    files: ["**/scripts/**/*.mjs"],
+    languageOptions: { globals: globals.node },
+  },
 );

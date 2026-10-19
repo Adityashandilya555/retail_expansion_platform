@@ -17,12 +17,12 @@ Blueprint (with diagrams): https://claude.ai/artifact/5wzWQ8tFq6bTyjENpmLJe3. Te
 |---|---|---|
 | Engine | Operaton (`operaton/operaton` image pinned to the release this fork is based on, or an image built from this fork's `distro/run` when an engine change is needed), REST only, webapps off | Railway (private network) |
 | Platform API + worker | Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2 async, Alembic, httpx | Railway |
-| Z-Matrix shell | React 18, TypeScript, Vite, React Router, TanStack Query, Z-Matrix tokens as CSS vars (no Tailwind), Lucide | Vercel |
+| Z-Matrix shell | React 19, TypeScript, Vite, React Router, TanStack Query, **Mantine 9** (one uniform theme in `@zm/ui`: per-client preset + default accent, per-user light/dark/auto + accent), Lucide, no Tailwind | Vercel |
 | Admin agent | Anthropic Python SDK, `claude-opus-5-5`, strict tool schemas, edits the draft only | inside the API |
 | Data + files | Supabase **platform project** (`platform` schema: registry, requests, admins, templates) + **one project per client** (`app`, `operaton` schemas, private bucket; keys not URLs) | Supabase |
 
 ## The product flow (what every issue ultimately serves)
-**Product decisions that override the blueprint are in `platform/docs/PRODUCT.md`** (owner console vs client app, workspace-code login, who uses the agent, change requests with human review, field versioning, theme packs on fixed layouts). Read it before planning.
+**Product decisions that override the blueprint are in `platform/docs/PRODUCT.md`** (owner console vs client app, workspace-code login, who uses the agent, change requests with human review, field versioning, theme presets on fixed layouts, site-centric client app (D19)). Read it before planning.
 In one line: **client input → agent writes that client's `workflow.json` (flow + forms + picked UI packages) → compile → deploy to that client's own instance (its Operaton + Supabase project).**
 
 1. **We create the client** in the owner console (no public sign-up) and issue its workspace code.
@@ -30,7 +30,7 @@ In one line: **client input → agent writes that client's `workflow.json` (flow
    - creates the client's **own Supabase project** via the Supabase Management API (platform project = control plane; one project per client), applies `app` + `operaton` schemas and roles, turns the Data API off, creates the private bucket;
    - starts the client's **own Operaton service on Railway** via the Railway API (pinned image, env from the registry, private networking, service account), waits for health;
    - writes the registry row (client → Operaton URL, DB DSN, bucket, encrypted secrets), seeds the business admin and the chosen template.
-3. **Agent writes the client's `workflow.json` from the client's input.** We (platform owners, in the owner console) describe the client's process; the agent turns it into the client's **draft `workflow.json`** (the prototype calls it `workspace.json`). One file per client holds everything: `org` (departments, levels), `flow` (stages, tasks, approvals, document slots, SLAs), `forms`, `apps` (pages → layout template → regions → **UI packages picked for this client** with their props, nav, accent) and `kpis`. The agent edits it only through typed, strict-schema tools; every change is a logged JSON patch with undo. The **UI packages are pre-built by us** (`@zm/blocks` blocks and layout templates on `@zm/ui` + `@zm/tokens`); the agent chooses and configures them by reading their **manifests** (name, description, allowed props) — it never writes code or CSS.
+3. **Agent writes the client's `workflow.json` from the client's input.** We (platform owners, in the owner console) describe the client's process; the agent turns it into the client's **draft `workflow.json`** (the prototype calls it `workspace.json`). One file per client holds everything: `org` (departments, levels), `flow` (stages, tasks, approvals, document slots, SLAs), `forms`, `apps` (pages → layout template → regions → **UI packages picked for this client** with their props, and nav; the look is the client's theme preset and default accent) and `kpis`. The agent edits it only through typed, strict-schema tools; every change is a logged JSON patch with undo. The **UI packages are pre-built by us** (`@zm/blocks` blocks and layout templates on `@zm/ui`, which wraps Mantine); the agent chooses and configures them by reading their **manifests** (name, description, allowed props) — it never writes code or CSS.
 4. **Validate → preview → publish → deploy to that client's instance.** The draft `workflow.json` is validated against its JSON Schema, previewed in the shell, and a **person** clicks Publish: the compiler emits BPMN (+ DMN) and form/UI specs, deploys them to that client's Operaton as an immutable release vN, and stores the UI config in that client's database. Running sites stay on their version unless the admin migrates them.
 5. **Run.** Users open the client landing page, enter the workspace code, log in with email + password (never Operaton); the API resolves the client from the JWT, filters the release by department/level/scope, and the one Z-Matrix shell draws that client's screens from its config; tasks come from that client's Operaton, answers/files from its database and bucket.
 
@@ -79,10 +79,9 @@ platform/apps/api/            FastAPI platform API incl. agent loop + typed draf
 platform/apps/worker/         provisioning (Supabase Management API + Railway API), reconciler, notifications (Railway)
 platform/packages/compiler/   workflow.json → BPMN/DMN + form/UI specs → release on the client's Operaton (from matrix.py)
 platform/packages/schema/     workflow.json JSON Schema v1 + Pydantic; TS types generated
-platform/packages/zm-tokens|zm-ui|zm-forms/   TypeScript design system (installed once)
-platform/packages/zm-blocks/  blocks + manifest.json each (name, description, allowed props) — what the agent can place
-platform/packages/zm-themes/  theme packs (tokens + styled components), each with DESIGN.md; built/audited with Impeccable
-platform/packages/zm-layouts/ fixed layouts (screen types) with named regions
+platform/packages/zm-ui/      Mantine theme + client presets, ZmProvider, appearance menu, AppFrame and extras (installed once; previews at /dev/ui)
+platform/packages/zm-forms/   form renderer on Mantine inputs + Ajv 2020
+platform/packages/zm-blocks/  layouts (`standard`, `case`) and blocks, each with manifest.json (name, description, allowed props, no styling) — what the agent can place
 platform/packages/templates/  starter workflow.json per template (data folder, not a code package): matrix-retail, qsr; `zm-api templates sync` → platform.templates
 platform/infra/operaton/      Dockerfile (official image or fork build), railway.json, health check
 platform/infra/supabase/      supabase CLI: platform/ migrations (control plane) and client/ migrations (app + operaton roles) applied by the worker
@@ -135,7 +134,6 @@ Sourcegraph is the first stop for any question about Operaton, the prototype or 
 ### Reverse engineering: REA
 `rea` (github.com/morluto/rea, MIT, pinned `rea-agents@6.4.0`, Node ≥ 22.19) inspects compiled things whose source we don't have: JavaScript/Electron bundles, .NET assemblies, native binaries (with an existing Ghidra, Hopper or IDA install), and websites. Analysis runs locally, and results come with evidence and stated limits.
 - **Use it for:**
-  - the Z-Matrix design kit, which ships only a compiled `_ds_bundle.js` and an empty component manifest: recover its component inventory, props and states for `@zm/tokens`, `@zm/ui` and the theme packs;
   - a built artifact when its source can't answer the question, e.g. what our production web bundle actually contains;
   - studying a reference product's feature for product research.
 - **Don't use it for:**
@@ -175,5 +173,6 @@ Branch `<issue#>-<slug>` from `main`; one issue per PR; title `#<n> <title>`; bo
 ## Code conventions
 - Python 3.12, typed, Pydantic v2 at boundaries, async SQLAlchemy, `httpx.AsyncClient` for Operaton, JSON logs with `client` + `request_id`.
 - TypeScript strict, no `any`, API types generated from OpenAPI, components with light/dark previews and visible focus.
+- UI: Mantine first (D19); build our own component only when Mantine lacks it, in `@zm/ui`. No colours outside `packages/zm-ui/src/theme.ts`; preview every component at `/dev/ui` (dev server).
 - Client id comes only from the JWT; cross-client reads return 404.
 - Files: keys `sites/<site>/<task>/<slot>/<uuid>-<name>` + sha256, never URLs.
