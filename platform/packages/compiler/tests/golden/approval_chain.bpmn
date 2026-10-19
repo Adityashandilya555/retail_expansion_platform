@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:operaton="http://operaton.org/schema/1.0/bpmn" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="defs_zm_qsr__store_launch__statutory" targetNamespace="https://z-matrix/workflow">
+<bpmn:error id="Error_CLOSED" name="CLOSED" errorCode="CLOSED" />
+<bpmn:process id="zm_qsr__store_launch__statutory" name="Statutory licences" isExecutable="true" operaton:isStartableInTasklist="false">
+<bpmn:startEvent id="start" name="Start"></bpmn:startEvent>
+<bpmn:endEvent id="done" name="Done"></bpmn:endEvent>
+<bpmn:userTask id="qsr_licences" name="Statutory licences" operaton:formKey="zm:qsr_licences" operaton:candidateGroups="legal__L1,legal__L2,legal__L3"></bpmn:userTask>
+<bpmn:userTask id="qsr_licences__appr_legal_L2" name="Statutory licences: Legal &amp; Statutory L2 approval" operaton:formKey="zm:qsr_licences__appr_legal_L2" operaton:candidateGroups="legal__L2"></bpmn:userTask>
+<bpmn:exclusiveGateway id="qsr_licences__appr_legal_L2_gw" />
+<bpmn:endEvent id="qsr_licences__appr_legal_L2_reject_end" name="Closed"><bpmn:errorEventDefinition errorRef="Error_CLOSED" /></bpmn:endEvent>
+<bpmn:userTask id="qsr_licences__appr_legal_L3" name="Statutory licences: Legal &amp; Statutory L3 approval" operaton:formKey="zm:qsr_licences__appr_legal_L3" operaton:candidateGroups="legal__L3"></bpmn:userTask>
+<bpmn:exclusiveGateway id="qsr_licences__appr_legal_L3_gw" />
+<bpmn:endEvent id="qsr_licences__appr_legal_L3_reject_end" name="Closed"><bpmn:errorEventDefinition errorRef="Error_CLOSED" /></bpmn:endEvent>
+<bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="qsr_licences" />
+<bpmn:sequenceFlow id="f2" sourceRef="qsr_licences" targetRef="qsr_licences__appr_legal_L2" />
+<bpmn:sequenceFlow id="f3" sourceRef="qsr_licences__appr_legal_L2" targetRef="qsr_licences__appr_legal_L2_gw" />
+<bpmn:sequenceFlow id="f4" sourceRef="qsr_licences__appr_legal_L2_gw" targetRef="qsr_licences__appr_legal_L3" name="Approve"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${qsr_licences__appr_legal_L2_outcome == 'approve'}</bpmn:conditionExpression></bpmn:sequenceFlow>
+<bpmn:sequenceFlow id="f5" sourceRef="qsr_licences__appr_legal_L2_gw" targetRef="qsr_licences" name="Send back"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${qsr_licences__appr_legal_L2_outcome == 'send_back'}</bpmn:conditionExpression></bpmn:sequenceFlow>
+<bpmn:sequenceFlow id="f6" sourceRef="qsr_licences__appr_legal_L2_gw" targetRef="qsr_licences__appr_legal_L2_reject_end" name="Reject"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${qsr_licences__appr_legal_L2_outcome == 'reject'}</bpmn:conditionExpression></bpmn:sequenceFlow>
+<bpmn:sequenceFlow id="f7" sourceRef="qsr_licences__appr_legal_L3" targetRef="qsr_licences__appr_legal_L3_gw" />
+<bpmn:sequenceFlow id="f8" sourceRef="qsr_licences__appr_legal_L3_gw" targetRef="done" name="Approve"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${qsr_licences__appr_legal_L3_outcome == 'approve'}</bpmn:conditionExpression></bpmn:sequenceFlow>
+<bpmn:sequenceFlow id="f9" sourceRef="qsr_licences__appr_legal_L3_gw" targetRef="qsr_licences" name="Send back"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${qsr_licences__appr_legal_L3_outcome == 'send_back'}</bpmn:conditionExpression></bpmn:sequenceFlow>
+<bpmn:sequenceFlow id="f10" sourceRef="qsr_licences__appr_legal_L3_gw" targetRef="qsr_licences__appr_legal_L3_reject_end" name="Reject"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${qsr_licences__appr_legal_L3_outcome == 'reject'}</bpmn:conditionExpression></bpmn:sequenceFlow>
+</bpmn:process>
+<bpmndi:BPMNDiagram id="dia_zm_qsr__store_launch__statutory"><bpmndi:BPMNPlane id="plane_zm_qsr__store_launch__statutory" bpmnElement="zm_qsr__store_launch__statutory">
+<bpmndi:BPMNShape id="start_di" bpmnElement="start"><dc:Bounds x="102" y="102" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="done_di" bpmnElement="done"><dc:Bounds x="1092" y="102" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="qsr_licences_di" bpmnElement="qsr_licences"><dc:Bounds x="230" y="80" width="110" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="qsr_licences__appr_legal_L2_di" bpmnElement="qsr_licences__appr_legal_L2"><dc:Bounds x="395" y="80" width="110" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="qsr_licences__appr_legal_L2_gw_di" bpmnElement="qsr_licences__appr_legal_L2_gw"><dc:Bounds x="590" y="95" width="50" height="50" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="qsr_licences__appr_legal_L2_reject_end_di" bpmnElement="qsr_licences__appr_legal_L2_reject_end"><dc:Bounds x="762" y="242" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="qsr_licences__appr_legal_L3_di" bpmnElement="qsr_licences__appr_legal_L3"><dc:Bounds x="725" y="80" width="110" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="qsr_licences__appr_legal_L3_gw_di" bpmnElement="qsr_licences__appr_legal_L3_gw"><dc:Bounds x="920" y="95" width="50" height="50" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="qsr_licences__appr_legal_L3_reject_end_di" bpmnElement="qsr_licences__appr_legal_L3_reject_end"><dc:Bounds x="1092" y="242" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNEdge id="f1_di" bpmnElement="f1"><di:waypoint x="138" y="120" /><di:waypoint x="230" y="120" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f2_di" bpmnElement="f2"><di:waypoint x="340" y="120" /><di:waypoint x="395" y="120" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f3_di" bpmnElement="f3"><di:waypoint x="505" y="120" /><di:waypoint x="590" y="120" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f4_di" bpmnElement="f4"><di:waypoint x="640" y="120" /><di:waypoint x="725" y="120" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f5_di" bpmnElement="f5"><di:waypoint x="615" y="95" /><di:waypoint x="615" y="62" /><di:waypoint x="285" y="62" /><di:waypoint x="285" y="80" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f6_di" bpmnElement="f6"><di:waypoint x="615" y="145" /><di:waypoint x="615" y="260" /><di:waypoint x="762" y="260" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f7_di" bpmnElement="f7"><di:waypoint x="835" y="120" /><di:waypoint x="920" y="120" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f8_di" bpmnElement="f8"><di:waypoint x="970" y="120" /><di:waypoint x="1092" y="120" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f9_di" bpmnElement="f9"><di:waypoint x="945" y="95" /><di:waypoint x="945" y="54" /><di:waypoint x="285" y="54" /><di:waypoint x="285" y="80" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="f10_di" bpmnElement="f10"><di:waypoint x="945" y="145" /><di:waypoint x="945" y="260" /><di:waypoint x="1092" y="260" /></bpmndi:BPMNEdge>
+</bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
+</bpmn:definitions>
