@@ -33,11 +33,18 @@ A port already taken on your machine? Move it with `API_PORT`, `OPERATON_PILOT_P
 uv sync --all-packages
 uv run ruff check . && uv run ruff format --check .
 uv run pytest                      # unit; integration tests are marked and skipped by default
+uv run zm-schema export --check && uv run zm-api openapi --check   # committed generated files are current
 
 pnpm install
 pnpm typecheck && pnpm lint && pnpm test
 pnpm --filter @zm/web dev       # component preview at http://localhost:5173/dev/ui
 ```
+
+## Platform API (`apps/api`)
+- **Which client:** only the JWT claim `client` (a registry slug) decides it, never the path or body. `ClientCtx` gives a route that client's database (`zm_api` role, pool 5), its Operaton (`OperatonClient`, as the `zm-service` account) and its bucket. Registry rows are cached for 60 s; the per-client engines and clients are created lazily and closed when evicted. `OwnerCtx` (owner console) has no client resources. Put `/app/*` routes on `client_router()` and `/owner/*` routes on `owner_router()`, so each needs its token even without a Ctx parameter.
+- **Errors:** everything is RFC 9457 `application/problem+json` `{type, title, status, detail, request_id}`; 422s add `errors: [{path, message}]` by JSON Pointer. Another client's ids are 404, never 403. Operaton failures are 502, with Operaton's own message in the log only.
+- **Logs:** one JSON line per request (`client`, `request_id`, `method`, `route`, `status`, `ms`) plus one per Operaton call (`op`, `status`, `ms`). `X-Request-Id` is echoed or generated. Level from `LOG_LEVEL`.
+- **TS client:** after an API change, run `uv run zm-api openapi` (writes `packages/api-client/openapi.json`), then `pnpm --filter @zm/api-client gen`. CI fails if either is stale. Apps use `createApiClient(import.meta.env.VITE_API_BASE_URL, getToken)`.
 
 ## Deploy: Vercel (`zm-web`, `zm-console`)
 There are two projects in the Vercel **Pro** team (D18); Hobby is non-commercial only. They are static Vite builds, so a later move to AWS is S3 + CloudFront. Build settings live in each app's `vercel.json`:
