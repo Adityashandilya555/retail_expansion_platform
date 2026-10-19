@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "if": {
+    "properties": {
+      "qsr_site_signoff_outcome": {
+        "enum": [
+          "send_back",
+          "reject"
+        ]
+      }
+    },
+    "required": [
+      "qsr_site_signoff_outcome"
+    ]
+  },
+  "properties": {
+    "qsr_site_signoff_comment": {
+      "title": "Comment",
+      "type": "string",
+      "x-zm-type": "textarea"
+    },
+    "qsr_site_signoff_outcome": {
+      "enum": [
+        "approve",
+        "send_back",
+        "reject"
+      ],
+      "title": "Decision",
+      "type": "string",
+      "x-zm-options": [
+        {
+          "id": "approve",
+          "label": "Approve"
+        },
+        {
+          "id": "send_back",
+          "label": "Send back"
+        },
+        {
+          "id": "reject",
+          "label": "Reject"
+        }
+      ],
+      "x-zm-type": "outcome"
+    }
+  },
+  "required": [
+    "qsr_site_signoff_outcome"
+  ],
+  "then": {
+    "properties": {
+      "qsr_site_signoff_comment": {
+        "minLength": 1
+      }
+    },
+    "required": [
+      "qsr_site_signoff_comment"
+    ]
+  },
+  "type": "object",
+  "x-zm-layout": [],
+  "x-zm-show": [
+    "store_name",
+    "monthly_rent"
+  ]
+}

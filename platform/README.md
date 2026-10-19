@@ -69,6 +69,17 @@ pnpm --filter @zm/schema gen                      # …then the TS types in pack
 ```
 CI fails if either generated file is stale. In Python, use `zm_schema.validate(doc)` to get every error as `{path, message}`, or `zm_schema.migrate(doc)` to get a `WorkflowV1` model. A breaking change bumps `CURRENT_VERSION` and registers a step in `zm_schema.versioning.MIGRATIONS`. Broken examples live in `packages/schema/tests/broken/`; regenerate them with `uv run python packages/schema/tests/make_broken.py`.
 
+## Compiler
+`zm_compiler.compile(WorkflowV1, client_slug) -> Release` (#19) is pure and deterministic: the same document gives byte-identical output. A `Release` holds:
+- the BPMN: one main process `zm_<slug>__<flow>` per flow and one process per stage, all for a single Operaton deployment;
+- per form key, a JSON Schema 2020-12 form with `x-zm-type`, `x-zm-options` and `x-zm-layout`;
+- the `apps` UI config, unchanged;
+- the candidate groups `<dept>__L<n>`;
+- the routing variables per task (D5);
+- the process keys.
+
+Golden files live in `packages/compiler/tests/golden/`. After an intended change, regenerate them with `ZM_UPDATE_GOLDEN=1 uv run pytest packages/compiler`. `pytest -m integration packages/compiler` deploys both templates to the local `operaton-pilot` and runs cases to `closed:legal` and `completed`.
+
 ## Starter templates
 `packages/templates/<key>/workflow.json` holds the starter `workflow.json` documents. It's a data folder, not a code package:
 - `matrix-retail`: the pilot client, converted from the prototype (#18);
