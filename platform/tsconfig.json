@@ -7,6 +7,7 @@
     { "path": "./packages/zm-ui" },
     { "path": "./packages/zm-forms" },
     { "path": "./packages/zm-blocks" },
-    { "path": "./packages/api-client" }
+    { "path": "./packages/api-client" },
+    { "path": "./packages/schema" }
   ]
 }

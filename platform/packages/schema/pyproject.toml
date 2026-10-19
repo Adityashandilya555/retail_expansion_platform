@@ -1,9 +1,12 @@
 [project]
 name = "zm-schema"
-version = "0.0.0"
+version = "0.1.0"
 description = "workflow.json schema v1: Pydantic models + JSON Schema (S1-07)"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = ["pydantic>=2.11"]
+
+[project.scripts]
+zm-schema = "zm_schema.cli:main"
 
 [build-system]
 requires = ["hatchling"]

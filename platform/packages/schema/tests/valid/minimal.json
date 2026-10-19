@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "org": {
+    "departments": [
+      {"key": "bd", "name": "Business development", "levels": [{"n": 1, "name": "BD Executive"}]}
+    ]
+  },
+  "flows": [
+    {
+      "key": "site_launch",
+      "name": "Site launch",
+      "case_label": "Site",
+      "case_code": {"pattern": "MX-{seq:4}"},
+      "start": {"performers": [{"department": "bd", "level": 1}], "form": "site_start"},
+      "stages": [
+        {
+          "key": "bd_qualification",
+          "name": "BD - Qualification",
+          "department": "bd",
+          "tasks": [
+            {
+              "id": "bd_qualify",
+              "name": "Qualify the site",
+              "performer": {"initiator": true},
+              "form": "qualify",
+              "show": ["site_name"]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "fields": {
+    "site_name": {"type": "text", "label": "Site name", "required": true},
+    "monthly_rent": {"type": "currency", "label": "Monthly rent"}
+  },
+  "forms": {
+    "site_start": {"sections": [{"key": "site", "title": "Site", "rows": [[{"field": "site_name"}]]}]},
+    "qualify": {"sections": [{"key": "terms", "title": "Terms", "rows": [[{"field": "monthly_rent", "span": 6}]]}]}
+  }
+}

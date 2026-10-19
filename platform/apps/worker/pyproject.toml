@@ -3,7 +3,10 @@ name = "zm-worker"
 version = "0.0.0"
 description = "Z-Matrix worker: provisioning, reconciler, notifications"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = ["psycopg[binary]>=3.3"]
+
+[project.scripts]
+zm-worker = "zm_worker.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
