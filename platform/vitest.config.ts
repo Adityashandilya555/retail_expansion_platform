@@ -6,7 +6,6 @@ const projects = [
   "apps/web",
   "apps/console",
   "packages/templates",
-  "packages/zm-tokens",
   "packages/zm-ui",
   "packages/zm-forms",
   "packages/zm-blocks",
@@ -21,7 +20,8 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text-summary", "lcov"],
       include: projects.map((p) => `${p}/src/**/*.{ts,tsx}`),
-      exclude: ["**/src/main.tsx"], // Vite mount boilerplate; also excluded in sonar-project.properties
+      // Vite mount boilerplate, dev-only previews (/dev/ui) and test helpers; also excluded in sonar-project.properties.
+      exclude: ["**/src/main.tsx", "**/src/dev/**", "**/src/test/**"],
     },
   },
 });

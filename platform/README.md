@@ -36,6 +36,7 @@ uv run pytest                      # unit; integration tests are marked and skip
 
 pnpm install
 pnpm typecheck && pnpm lint && pnpm test
+pnpm --filter @zm/web dev       # component preview at http://localhost:5173/dev/ui
 ```
 
 ## Deploy: Vercel (`zm-web`, `zm-console`)
@@ -76,7 +77,7 @@ apps/web            client app                        (Vite + React)
 apps/console        owner console                     (Vite + React)
 packages/compiler   workflow.json → BPMN + specs      (Python)
 packages/schema     workflow.json schema v1           (Python)
-packages/templates, zm-tokens, zm-ui, zm-forms, zm-blocks, api-client   (TypeScript)
+packages/templates, zm-ui, zm-forms, zm-blocks, api-client   (TypeScript; zm-ui = Mantine theme + extras)
 infra/supabase      Supabase CLI project (local pilot vault)
 infra/compose       init scripts for docker-compose.yml
 tests/integration   smoke tests for the local stack
