@@ -221,7 +221,7 @@ describe("field types", () => {
     expect(screen.getByLabelText("Comment").hasAttribute("readonly")).toBe(true);
   });
 
-  // Codex (#106) worried readOnly reaches Radio.Group but not its radios. Mantine 9.7.2's Radio.Group
+  // The Codex review worried readOnly reaches Radio.Group but not its radios. Mantine 9.7.2's Radio.Group
   // ignores changes while readOnly (RadioGroup.mjs: `!readOnly && setValue(...)`); this pins that.
   test("read-only yes/no answers can't be changed by click or keyboard", async () => {
     renderForm({ schema: DD, readOnly: true, values: { dd_title_doc: true } });
