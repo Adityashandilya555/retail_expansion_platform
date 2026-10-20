@@ -138,10 +138,40 @@ def test_deploy_sends_one_named_part_per_resource(op: OperatonClient) -> None:
     )
     assert out["id"] == "d1"
     content = sent(route).content.decode()
-    for part in ("deployment-name", "deployment-source", "enable-duplicate-filtering"):
+    for part in (
+        "deployment-name",
+        "deployment-source",
+        "enable-duplicate-filtering",
+        "deploy-changed-only",
+    ):
         assert f'name="{part}"' in content
+    # every resource is redeployed when one changed (deployment-bound call activities, #23)
+    assert 'name="deploy-changed-only"\r\n\r\nfalse' in content
     assert 'name="main.bpmn"; filename="main.bpmn"' in content
     assert 'name="legal.bpmn"; filename="legal.bpmn"' in content
+
+
+@respx.mock
+def test_deploy_changed_only_can_be_switched_on(op: OperatonClient) -> None:
+    route = respx.post(f"{BASE}/deployment/create").respond(200, json={"id": "d1"})
+    run(op.deploy("zm_pilot", {"main.bpmn": b"<definitions/>"}, changed_only=True))
+    assert 'name="deploy-changed-only"\r\n\r\ntrue' in sent(route).content.decode()
+
+
+@respx.mock
+def test_process_definition_by_id_and_deployments_by_name(op: OperatonClient) -> None:
+    by_id = respx.get(url__regex=r".*/process-definition/zm_p%3A1%3Aabc$").respond(
+        200, json={"id": "zm_p:1:abc", "deploymentId": "d1"}
+    )
+    listed = respx.get(f"{BASE}/deployment").respond(200, json=[{"id": "d2"}, {"id": "d1"}])
+    assert run(op.process_definition_by_id("zm_p:1:abc"))["deploymentId"] == "d1"
+    assert [d["id"] for d in run(op.deployments("pilot-release"))] == ["d2", "d1"]
+    assert by_id.called
+    assert dict(sent(listed).url.params) == {
+        "name": "pilot-release",
+        "sortBy": "deploymentTime",
+        "sortOrder": "desc",
+    }
 
 
 @respx.mock
