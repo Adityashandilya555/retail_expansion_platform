@@ -65,6 +65,9 @@ jobs:
       # workflow.json schema (#16): the committed JSON Schema must match the Pydantic models.
       - name: workflow.schema.json up to date
         run: uv run zm-schema export --check
+      # API client (#21): the committed packages/api-client/openapi.json must match the API.
+      - name: openapi.json up to date
+        run: uv run zm-api openapi --check
       - name: Test (unit; integration runs in zm-integration)
         run: uv run pytest --cov --cov-report=xml:coverage.xml
       # sonar-project.properties keeps platform/ as the common root of the uploaded paths (see #70).
@@ -96,6 +99,9 @@ jobs:
       # workflow.json schema (#16): the committed TS types must match workflow.schema.json.
       - name: Generated TS types up to date
         run: pnpm --filter @zm/schema gen && git diff --exit-code -- packages/schema/ts
+      # API client (#21): the generated TS client must match the committed openapi.json.
+      - name: API client up to date
+        run: pnpm --filter @zm/api-client gen && git diff --exit-code -- packages/api-client
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
