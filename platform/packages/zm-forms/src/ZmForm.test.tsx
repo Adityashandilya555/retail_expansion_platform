@@ -105,6 +105,16 @@ describe("validation", () => {
     expect(screen.getByRole("alert").textContent).toContain("Release changed, reload");
   });
 
+  test("a failed request shows a form alert and re-enables submit", async () => {
+    const onSubmit = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    const { user } = renderForm({ schema: CA, values: { ca_code: "CA-17", ca_amount: 10 }, onSubmit });
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(screen.getByRole("alert").textContent).toContain("try again");
+    expect((screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   test("submit is disabled while the request is pending", async () => {
     let resolve: () => void = () => {};
     const onSubmit = vi.fn(() => new Promise<void>((r) => (resolve = r)));
@@ -190,6 +200,18 @@ describe("field types", () => {
     await user.type(screen.getByLabelText(/Opened/), "2026-11-01");
     await user.click(screen.getByRole("button", { name: "Submit" }));
     expect(onSubmit).toHaveBeenCalledWith({ name: "Indiranagar", area: 1200, rent: 250000, opened: "2026-11-01", model: "cafe" });
+    warn.mockRestore();
+  });
+
+  test("decimals and negative numbers can be typed and submit as numbers", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { user, onSubmit } = renderForm({ schema: ALL, layout, values: { name: "Indiranagar" } });
+    await user.type(screen.getByLabelText(/Area/), "-0.5");
+    await user.type(screen.getByLabelText(/Rent/), "150000.50");
+    expect((screen.getByLabelText(/Area/) as HTMLInputElement).value).toBe("-0.5");
+    expect((screen.getByLabelText(/Rent/) as HTMLInputElement).value).toBe("₹ 1,50,000.50");
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(onSubmit).toHaveBeenCalledWith({ name: "Indiranagar", area: -0.5, rent: 150000.5 });
     warn.mockRestore();
   });
 

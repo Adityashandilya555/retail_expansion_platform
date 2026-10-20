@@ -66,7 +66,7 @@ function Field({ name, field, form, required, readOnly }: { name: string; field:
       return (
         <NumberInput
           {...common}
-          value={typeof value === "number" ? value : ""}
+          value={typeof value === "number" || typeof value === "string" ? value : ""}
           onChange={onChange}
           {...(type === "currency" && { prefix: "₹ ", thousandSeparator: ",", thousandsGroupStyle: "lakh" as const })}
         />
@@ -105,7 +105,8 @@ export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabe
   const needsComment = ((schema.if as { properties?: Record<string, { enum?: string[] }> } | undefined)?.properties?.[outcomeKey ?? ""]?.enum ?? [])
     .map((o) => outcomes.find((x) => x.id === o)?.label.toLowerCase())
     .filter(Boolean);
-  const rendered = new Set([...layout.flatMap((s) => s.rows.flat().map((c) => c.field)), ...(commentKey ? [commentKey] : [])]);
+  const laidOut = new Set(layout.flatMap((s) => s.rows.flat().map((c) => c.field)));
+  const rendered = new Set([...laidOut, ...(commentKey ? [commentKey] : [])]);
   const show = schema["x-zm-show"] ?? [];
 
   function showErrors(errors: FieldError[]) {
@@ -124,13 +125,17 @@ export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabe
 
   async function submit(outcome?: string) {
     const data = answered({ ...form.getValues(), ...(outcomeKey && outcome && { [outcomeKey]: outcome }) });
-    const errors = formErrors(schema, data);
-    if (errors.length) return showErrors(errors);
+    // NumberInput keeps in-between input ("1.", "0.50", "-") as a string; a lone "-" stays one for Ajv to report.
+    for (const [k, v] of Object.entries(data)) if (typeof v === "string" && props[k]?.type === "number" && Number.isFinite(Number(v))) data[k] = Number(v);
     setFormLevel([]);
-    setPending(outcome ?? "submit");
     try {
+      const errors = formErrors(schema, data);
+      if (errors.length) return showErrors(errors);
+      setPending(outcome ?? "submit");
       const server = await onSubmit(data);
       if (Array.isArray(server) && server.length) showErrors(server);
+    } catch {
+      setFormLevel(["Something went wrong. Check your connection and try again."]);
     } finally {
       setPending(null);
     }
@@ -185,7 +190,7 @@ export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabe
           </Fieldset>
         ))}
 
-        {commentKey && props[commentKey] && (
+        {commentKey && props[commentKey] && !laidOut.has(commentKey) && (
           <Box data-zm-field={commentKey}>
             <Field name={commentKey} field={props[commentKey]} form={form} required={false} readOnly={readOnly} />
             {needsComment.length > 0 && !readOnly && (
