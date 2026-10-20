@@ -10,9 +10,12 @@ export type Problem = components["schemas"]["Problem"];
 /** A 422's per-field error, by JSON Pointer (the shape @zm/forms shows under fields). */
 export type FieldError = components["schemas"]["FieldError"];
 
-/** `baseUrl` is `import.meta.env.VITE_API_BASE_URL`; `getToken` returns the in-memory access token (#22). */
+/** `baseUrl` is `import.meta.env.VITE_API_BASE_URL`; `getToken` returns the in-memory access token (#22).
+ * Requests include credentials so the refresh cookie (httpOnly, scoped to the auth paths) is sent. */
 export function createApiClient(baseUrl: string, getToken?: () => string | null | undefined) {
-  const client = createClient<paths>({ baseUrl });
+  // fetch looked up per request (openapi-fetch would capture it once), so a stub or polyfill set
+  // after this module loads is used
+  const client = createClient<paths>({ baseUrl, credentials: "include", fetch: (request) => globalThis.fetch(request) });
   client.use({
     onRequest({ request }) {
       const token = getToken?.();
