@@ -220,4 +220,19 @@ describe("field types", () => {
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByLabelText("Comment").hasAttribute("readonly")).toBe(true);
   });
+
+  // Codex (#106) worried readOnly reaches Radio.Group but not its radios. Mantine 9.7.2's Radio.Group
+  // ignores changes while readOnly (RadioGroup.mjs: `!readOnly && setValue(...)`); this pins that.
+  test("read-only yes/no answers can't be changed by click or keyboard", async () => {
+    renderForm({ schema: DD, readOnly: true, values: { dd_title_doc: true } });
+    const group = screen.getByRole("radiogroup", { name: "Title document clear" });
+    const yes = within(group).getByRole("radio", { name: "Yes" }) as HTMLInputElement;
+    const no = within(group).getByRole("radio", { name: "No" }) as HTMLInputElement;
+    const user = userEvent.setup();
+    await user.click(no);
+    expect([yes.checked, no.checked]).toEqual([true, false]);
+    yes.focus();
+    await user.keyboard("{ArrowRight}");
+    expect([yes.checked, no.checked]).toEqual([true, false]);
+  });
 });
