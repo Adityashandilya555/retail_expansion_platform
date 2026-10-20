@@ -30,6 +30,11 @@ def group_id(department: str, level: int) -> str:
     return f"{department}__L{level}"
 
 
+# Exactly the ids `group_id` makes for a valid org: a department key Operaton accepts (1-40 chars)
+# and a level from 1. `zm_api.users.mirror` manages only these, never other groups a user holds.
+LEVEL_GROUP = re.compile(r"^[a-zA-Z0-9_-]{1,40}__L[1-9][0-9]*$")
+
+
 def stage_tasks(stage: Stage, base: str) -> Iterator[tuple[Task, str, bool]]:
     """(task, path, in_parallel_group) for every task of a stage, in order."""
     for i, item in enumerate(stage.tasks):

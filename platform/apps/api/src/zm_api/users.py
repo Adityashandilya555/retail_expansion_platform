@@ -18,11 +18,13 @@ from zm_api.context import ClientContext, PlatformRegistry
 from zm_api.errors import NotFound
 from zm_api.operaton import OperatonClient
 from zm_schema import group_id
+from zm_schema.semantics import LEVEL_GROUP
 
 
 def _ours(group: str) -> bool:
-    """Department-level groups we manage; anything else (e.g. operaton-admin) is left alone."""
-    return "__L" in group
+    """Exactly the `<dept>__L<n>` groups we manage; anything else (operaton-admin, audit__Legacy,
+    legal__L0) is left alone."""
+    return LEVEL_GROUP.fullmatch(group) is not None
 
 
 async def mirror(

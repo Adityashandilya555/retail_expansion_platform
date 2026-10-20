@@ -92,13 +92,22 @@ def test_an_existing_user_gets_only_the_missing_memberships_and_loses_stale_ones
 ) -> None:
     respx.get(f"{BASE}/user/{UID}/profile").respond(200, json={"id": str(UID)})
     create = respx.post(f"{BASE}/user/create").respond(204)
-    current = [{"id": "legal__L1"}, {"id": "bd__L1"}, {"id": "operaton-admin"}]
+    # other groups an identity may hold; only the exact `<dept>__L<n>` shape is ours (Codex, #108)
+    foreign = [
+        "operaton-admin",
+        "audit__Legacy",
+        "legal__L0",
+        "legal__L1x",
+        "legal__L",
+        "x__L1__extra",
+    ]
+    current = [{"id": "legal__L1"}, {"id": "bd__L1"}, *({"id": g} for g in foreign)]
     respx.get(f"{BASE}/group", params={"member": str(UID)}).respond(200, json=current)
     respx.get(f"{BASE}/group/legal__L2").respond(200, json={"id": "legal__L2"})
     add_l2 = respx.put(f"{BASE}/group/legal__L2/members/{UID}").respond(204)
     add_l1 = respx.put(f"{BASE}/group/legal__L1/members/{UID}").respond(500)
     drop_bd = respx.delete(f"{BASE}/group/bd__L1/members/{UID}").respond(204)
-    drop_admin = respx.delete(f"{BASE}/group/operaton-admin/members/{UID}").respond(204)
+    drop_foreign = [respx.delete(f"{BASE}/group/{g}/members/{UID}").respond(204) for g in foreign]
 
     groups = {"legal__L1", "legal__L2"}
     asyncio.run(mirror(op, UID, name="Legal Supervisor", email="l2@pilot.demo", groups=groups))
@@ -106,7 +115,7 @@ def test_an_existing_user_gets_only_the_missing_memberships_and_loses_stale_ones
     assert not create.called
     assert add_l2.called and not add_l1.called  # never re-adds: Operaton answers that with a 500
     assert drop_bd.called
-    assert not drop_admin.called  # only department-level groups (`<dept>__L<n>`) are ours
+    assert not any(d.called for d in drop_foreign)  # only `<dept>__L<n>` groups are ours
 
 
 @respx.mock
