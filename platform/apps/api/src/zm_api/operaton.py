@@ -191,7 +191,17 @@ class OperatonClient:
     async def history_task(self, task_id: str) -> list[Json]:
         return await self._call("history_task", "GET", "history/task", params={"taskId": task_id})
 
-    # Identity
+    # Identity (reads first: creating a user or group twice is a 400, a membership twice a 500)
+    async def user_profile(self, user_id: str) -> Json:
+        return await self._call("user_profile", "GET", f"user/{_id(user_id)}/profile")
+
+    async def group(self, group_id: str) -> Json:
+        return await self._call("group", "GET", f"group/{_id(group_id)}")
+
+    async def groups_of(self, user_id: str) -> list[Json]:
+        params = {"member": user_id, "maxResults": 500}
+        return await self._call("groups_of", "GET", "group", params=params)
+
     async def create_group(self, group_id: str, name: str, *, type: str = "zm") -> None:  # noqa: A002
         await self._call(
             "create_group",

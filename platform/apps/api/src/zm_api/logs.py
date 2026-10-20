@@ -48,7 +48,7 @@ def configure(level: str = "info") -> None:
 
 
 class RequestLogMiddleware:
-    """Outermost middleware: sets the request id and writes the request's one log line, with the
+    """Just inside CORS: sets the request id and writes the request's one log line, with the
     traceback of a crash that `zm_api.errors.CrashGuard` turned into a 500."""
 
     def __init__(self, app: ASGIApp) -> None:

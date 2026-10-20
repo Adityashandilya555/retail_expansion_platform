@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from zm_api import errors, logs, settings
+from zm_api import auth, errors, logs, settings
 from zm_api.context import PlatformRegistry, Resolver
 
 
@@ -15,13 +15,20 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
         await app.state.resolver.aclose()
+        await app.state.platform.aclose()
 
     app = FastAPI(title="Z-Matrix Platform API", lifespan=lifespan, responses=errors.RESPONSES)
-    app.state.resolver = resolver or Resolver(PlatformRegistry())
+    app.state.platform = PlatformRegistry()  # client registry + owner tables
+    app.state.resolver = resolver or Resolver(app.state.platform)
+    app.state.workspace_limit = auth.RateLimit(10, 60.0)  # POST /auth/workspace: 10/min/IP
     errors.install(app)
-    # Outermost last: RequestLog → CORS → CrashGuard → routes. Every request is logged with an
-    # X-Request-Id, and even a crash's 500 passes through CORS, so the browser can read it.
+    for router in (auth.router, auth.app_routes, auth.owner_auth, auth.owner_routes):
+        app.include_router(router)
+    # Outermost last: CORS → RequestLog → CrashGuard → routes. CORS headers reach every response,
+    # a crash's 500 too, so the browser can read it. CORS answers preflights itself, so those
+    # aren't logged; every request that reaches the app gets one log line and an X-Request-Id.
     app.add_middleware(errors.CrashGuard)
+    app.add_middleware(logs.RequestLogMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins(),
@@ -30,7 +37,6 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
         expose_headers=["X-Request-Id"],
     )
-    app.add_middleware(logs.RequestLogMiddleware)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, bool]:

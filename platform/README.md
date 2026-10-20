@@ -43,8 +43,22 @@ pnpm --filter @zm/web dev       # component preview at http://localhost:5173/dev
 ## Platform API (`apps/api`)
 - **Which client:** only the JWT claim `client` (a registry slug) decides it, never the path or body. `ClientCtx` gives a route that client's database (`zm_api` role, pool 5), its Operaton (`OperatonClient`, as the `zm-service` account) and its bucket. Registry rows are cached for 60 s; the per-client engines and clients are created lazily and closed when evicted. `OwnerCtx` (owner console) has no client resources. Put `/app/*` routes on `client_router()` and `/owner/*` routes on `owner_router()`, so each needs its token even without a Ctx parameter.
 - **Errors:** everything is RFC 9457 `application/problem+json` `{type, title, status, detail, request_id, errors}` (`errors`: per-field `{path, message}` by JSON Pointer on 422, else null). `Problem` is every route's `default` response in the OpenAPI document, so the TS client types errors from it. Another client's ids are 404, never 403. From Operaton: 404 or "Cannot find … with id" → 404, 400 → 400, anything else → 502; Operaton's own message goes to the log only.
-- **Logs:** one JSON line per request (`client`, `request_id`, `method`, `route`, `status`, `ms`) plus one per Operaton call (`op`, `status`, `ms`). `X-Request-Id` is echoed or generated. Level from `LOG_LEVEL`.
+- **Logs:** one JSON line per request that reaches the app (CORS, the outermost middleware, answers preflights itself) (`client`, `request_id`, `method`, `route`, `status`, `ms`) plus one per Operaton call (`op`, `status`, `ms`). `X-Request-Id` is echoed or generated. Level from `LOG_LEVEL`.
 - **TS client:** after an API change, run `uv run zm-api openapi` (writes `packages/api-client/openapi.json`), then `pnpm --filter @zm/api-client gen`. CI fails if either is stale. Apps use `createApiClient(import.meta.env.VITE_API_BASE_URL, getToken)`.
+
+## Sign-in (#22)
+- **Client app:** `/` asks for the workspace code (`POST /auth/workspace` → the client's name and look; 10/min/IP), `/login` for email and password (`POST /auth/login`), then `/app`. **Owner console:** `/login` (`POST /owner/auth/login`).
+- **Tokens:**
+  - The access token (JWT, `JWT_ACCESS_TTL_MIN`) lives in memory only.
+  - The refresh token is an httpOnly, Secure, `SameSite=Strict` cookie on `/auth` (or `/owner/auth`), `JWT_REFRESH_TTL_DAYS`. Each `POST …/refresh` rotates it; presenting a spent one again revokes the whole session. `POST …/logout` revokes it.
+  - Every failed sign-in gets the same 401. A valid token on the other surface (owner on `/app`, client user on `/owner`) gets 403.
+- **Same site required.** Browsers only send a `SameSite=Strict` cookie when the app and the API are on the same site. Locally, `localhost:5173` and `localhost:8000` are. Deployed, `*.vercel.app` and Railway's generated domain are not. Either give both a domain under one site (e.g. `app.example.com` + `api.example.com`), or rewrite `/api/*` on Vercel to the Railway API and set `VITE_API_BASE_URL=/api`.
+- **People:**
+  ```bash
+  uv run zm-api owners create --email you@example.com --name "You"   # asks for the password; deployed: `railway run`
+  uv run zm-api users seed --client pilot-local packages/templates/matrix-retail/demo-users.json
+  ```
+  `users seed` reads a file under the current directory only, and prints each new user's generated password once (existing users keep theirs). It then mirrors every user into the client's Operaton: same uuid, an unusable password, and exactly the `<dept>__L<n>` groups of their memberships (`zm_api.users.sync_user`, D6). Client users live in the client's own database (`app.users`, `app.memberships`, `app.refresh_tokens`, migration `0002_users.sql`); owners in `platform.owners`.
 
 ## Deploy: Vercel (`zm-web`, `zm-console`)
 There are two projects in the Vercel **Pro** team (D18); Hobby is non-commercial only. They are static Vite builds, so a later move to AWS is S3 + CloudFront. Build settings live in each app's `vercel.json`:

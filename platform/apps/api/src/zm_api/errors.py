@@ -73,6 +73,21 @@ class Unauthorized(ApiError):
         super().__init__(detail, headers={"WWW-Authenticate": "Bearer"})
 
 
+class Forbidden(ApiError):
+    """A valid sign-in for the other surface: an owner on `/app`, a client user on `/owner`."""
+
+    status = 403
+
+
+class TooManyRequests(ApiError):
+    status = 429
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__(
+            "Too many attempts, try again shortly", headers={"Retry-After": str(retry_after)}
+        )
+
+
 class ServiceUnavailable(ApiError):
     status = 503
 

@@ -1,9 +1,11 @@
 // jsdom lacks APIs Mantine relies on; shared by every TS project that renders @zm/ui (see vitest configs).
+import { notifications } from "@mantine/notifications";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
 afterEach(() => {
   cleanup();
+  notifications.clean(); // the notifications store is global: don't leak toasts into the next test
 });
 
 const { getComputedStyle } = window;

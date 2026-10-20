@@ -31,6 +31,7 @@ test("calls the API base URL with the current token", async () => {
   const [first, second] = seen;
   expect(first?.url).toBe("https://api.example.com/healthz");
   expect(first?.headers.get("authorization")).toBe("Bearer t1");
+  expect(first?.credentials).toBe("include"); // the refresh cookie (#22) rides along
   expect(second?.headers.has("authorization")).toBe(false);
 });
 
