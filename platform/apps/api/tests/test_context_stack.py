@@ -19,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from zm_api import secrets
-from zm_api.context import Resolver, platform_lookup
+from zm_api.context import PlatformRegistry, Resolver
 from zm_api.errors import NotFound
 
 pytestmark = pytest.mark.integration
@@ -65,7 +65,7 @@ async def add_client(password: str) -> str:
 def test_resolved_client_reaches_its_own_vault_and_engine() -> None:
     async def go() -> None:
         slug = await add_client(SERVICE_PASSWORD)
-        resolver = Resolver(platform_lookup())
+        resolver = Resolver(PlatformRegistry())
         try:
             ctx = await resolver.resolve(slug)
             assert ctx is not None and ctx.client.slug == slug
@@ -73,6 +73,11 @@ def test_resolved_client_reaches_its_own_vault_and_engine() -> None:
                 assert (await conn.execute(text("select current_user"))).scalar() == "zm_api"
             with pytest.raises(NotFound):  # authenticated: Operaton's own 404, not a 401
                 await ctx.operaton.process_definition(f"no_such_{uuid.uuid4().hex[:6]}")
+            # Operaton answers these with 500 "Cannot find task with id …"; we must say 404.
+            with pytest.raises(NotFound):
+                await ctx.operaton.claim(str(uuid.uuid4()), "nobody")
+            with pytest.raises(NotFound):
+                await ctx.operaton.complete(str(uuid.uuid4()), {})
         finally:
             await resolver.aclose()
 

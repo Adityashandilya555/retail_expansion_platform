@@ -1,4 +1,4 @@
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { createApiClient, type Problem } from "./index";
 
 afterEach(() => {
@@ -34,10 +34,12 @@ test("calls the API base URL with the current token", async () => {
   expect(second?.headers.has("authorization")).toBe(false);
 });
 
-test("errors come back as problem+json", async () => {
-  const problem: Problem = { type: "about:blank", title: "Bad Gateway", status: 502, detail: "x", request_id: "r1" };
+test("errors come back as problem+json, typed from the generated Problem", async () => {
+  const problem: Problem = { type: "about:blank", title: "Bad Gateway", status: 502, detail: "x", request_id: "r1", errors: null };
   stubFetch(() => new Response(JSON.stringify(problem), { status: 502, headers: { "content-type": "application/problem+json" } }));
   const { error, response } = await createApiClient("https://api.example.com").GET("/healthz");
   expect(response.status).toBe(502);
   expect(error).toEqual(problem);
+  // checked by tsc: the generated `default` response types the error as exactly Problem
+  expectTypeOf(error).toEqualTypeOf<Problem | undefined>();
 });

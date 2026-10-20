@@ -11,8 +11,16 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from zm_api.context import ClientCtx, OwnerCtx, Resolver, client_router, owner_router
-from zm_api.errors import NotFound
+from zm_api import secrets
+from zm_api.context import (
+    ClientCtx,
+    OwnerCtx,
+    PlatformRegistry,
+    Resolver,
+    client_router,
+    owner_router,
+)
+from zm_api.errors import NotFound, ServiceUnavailable
 from zm_api.main import create_app
 from zm_api.registry import Client
 
@@ -75,6 +83,9 @@ def test_namespace_routers_need_their_token_even_without_a_ctx_param(api: TestCl
 
 
 def test_pilot_token_reading_a_qsr_site_gets_404_problem(api: TestClient) -> None:
+    """Proves the client comes only from the token, using a probe over each client's own dict.
+    It does not prove data isolation in the client databases: repeat it against the real
+    `/app/sites` route (with pilot-local and qsr-local vaults) when #91 lands."""
     r = api.get("/app/probe/sites/QSR-0001", headers=bearer(token(client="pilot-local")))
     assert r.status_code == 404
     assert r.headers["content-type"] == "application/problem+json"
@@ -85,6 +96,7 @@ def test_pilot_token_reading_a_qsr_site_gets_404_problem(api: TestClient) -> Non
         "status": 404,
         "detail": "No site QSR-0001",
         "request_id": r.headers["x-request-id"],
+        "errors": None,
     }
     own = api.get("/app/probe/sites/QSR-0001", headers=bearer(token(client="qsr-local")))
     assert own.status_code == 200 and own.json()["client"] == "qsr-local"
@@ -206,3 +218,87 @@ def test_clients_beyond_the_cap_are_evicted_and_closed(registry: FakeRegistry) -
 
 def test_unknown_client_resolves_to_none(registry: FakeRegistry) -> None:
     assert resolve(Resolver(registry), "nobody") is None
+
+
+def test_a_row_change_that_isnt_a_resource_keeps_the_live_clients(registry: FakeRegistry) -> None:
+    now = [1000.0]
+    resolver = Resolver(registry, clock=lambda: now[0])
+    first = resolve(resolver, "pilot-local")
+    row = registry.rows["pilot-local"]
+    registry.rows["pilot-local"] = replace(
+        row, name="Pilot (renamed)", updated_at=row.updated_at + timedelta(1)
+    )
+    now[0] += 61
+    second = resolve(resolver, "pilot-local")
+    assert second.client.name == "Pilot (renamed)"
+    assert second.db is first.db and second.operaton is first.operaton
+    assert not first.operaton.http.is_closed
+
+
+def test_a_suspended_client_is_refused_even_while_its_resources_are_live(
+    registry: FakeRegistry,
+) -> None:
+    now = [1000.0]
+    resolver = Resolver(registry, clock=lambda: now[0])
+    resolve(resolver, "pilot-local")
+    registry.rows["pilot-local"] = replace(registry.rows["pilot-local"], status="suspended")
+    now[0] += 61
+    with pytest.raises(ServiceUnavailable):
+        resolve(resolver, "pilot-local")
+
+
+def test_a_hanging_registry_answers_503_without_blocking_other_clients(
+    registry: FakeRegistry,
+) -> None:
+    hang = asyncio.Event()
+
+    async def lookup(slug: str) -> Client | None:
+        if slug == "qsr-local":
+            await hang.wait()  # never set: the control-plane database stopped answering
+        return await registry(slug)
+
+    async def go() -> None:
+        resolver = Resolver(lookup, lookup_timeout=0.2)
+        stuck = asyncio.create_task(resolver.resolve("qsr-local"))
+        await asyncio.sleep(0)
+        async with asyncio.timeout(0.1):  # pilot doesn't wait for qsr's registry query
+            assert (await resolver.resolve("pilot-local")) is not None
+        with pytest.raises(ServiceUnavailable):
+            await stuck
+        await resolver.aclose()
+
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgres://zm_api:pw@db.example.com:5432/postgres",
+        "postgresql://zm_api:pw@db.example.com:5432/postgres",
+        "postgresql+psycopg://zm_api:pw@db.example.com:5432/postgres",
+    ],
+)
+def test_any_postgres_dsn_runs_on_asyncpg(registry: FakeRegistry, dsn: str) -> None:
+    row = registry.rows["pilot-local"]
+    sealed = secrets.seal({"zm_api_dsn": dsn, "service_account_password": "pw"})
+    registry.rows["pilot-local"] = replace(row, secrets=sealed)
+    url = resolve(Resolver(registry), "pilot-local").db.url
+    assert (url.drivername, url.host, url.username) == (
+        "postgresql+asyncpg",
+        "db.example.com",
+        "zm_api",
+    )
+
+
+def test_aclose_closes_the_registry_too(registry: FakeRegistry) -> None:
+    closed: list[bool] = []
+
+    class ClosingRegistry(FakeRegistry):
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    resolver = Resolver(ClosingRegistry(registry.rows))
+    ctx = resolve(resolver, "pilot-local")
+    asyncio.run(resolver.aclose())
+    assert closed == [True] and ctx.operaton.http.is_closed
+    asyncio.run(PlatformRegistry().aclose())  # never used: nothing to dispose, no error

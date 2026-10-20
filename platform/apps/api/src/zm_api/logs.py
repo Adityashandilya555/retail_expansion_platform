@@ -48,7 +48,8 @@ def configure(level: str = "info") -> None:
 
 
 class RequestLogMiddleware:
-    """Outermost middleware: sets the request id, logs the request, turns crashes into a 500."""
+    """Outermost middleware: sets the request id and writes the request's one log line, with the
+    traceback of a crash that `zm_api.errors.CrashGuard` turned into a 500."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -60,31 +61,27 @@ class RequestLogMiddleware:
         incoming = Headers(scope=scope).get("x-request-id", "")
         rid = incoming if _SAFE_ID.fullmatch(incoming) else uuid.uuid4().hex
         reset = request_id.set(rid)
-        state = scope.setdefault(
-            "state", {}
-        )  # request.state: ClientContext records the client here
-        status, started, failure = 500, False, None
+        # request.state: ClientContext records the client here, CrashGuard the error
+        state = scope.setdefault("state", {})
+        status, failure = 500, None
         start = time.perf_counter()
 
         async def send_with_id(message: Message) -> None:
-            nonlocal status, started
+            nonlocal status
             if message["type"] == "http.response.start":
-                started, status = True, message["status"]
+                status = message["status"]
                 MutableHeaders(scope=message).append("X-Request-Id", rid)
             await send(message)
 
         try:
             await self.app(scope, receive, send_with_id)
-        except Exception as exc:  # anything the exception handlers didn't turn into a response
+        except Exception as exc:  # only if something outside CrashGuard fails
             failure = exc
-            if not started:
-                from zm_api.errors import problem  # errors imports this module
-
-                await problem(500, "Something went wrong")(scope, receive, send_with_id)
+            raise
         finally:
             _log.info(
                 "request",
-                exc_info=failure,
+                exc_info=failure or state.get("error"),
                 extra={
                     "client": state.get("client"),
                     "request_id": rid,

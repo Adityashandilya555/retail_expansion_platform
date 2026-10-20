@@ -24,7 +24,42 @@ export interface paths {
 }
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: never;
+    schemas: {
+        /** FieldError */
+        FieldError: {
+            /** Message */
+            message: string;
+            /**
+             * Path
+             * @description JSON Pointer to the field, e.g. `/ca_amount`.
+             */
+            path: string;
+        };
+        /**
+         * Problem
+         * @description Problem details (RFC 9457), the body of every error response.
+         */
+        Problem: {
+            /** Detail */
+            detail: string | null;
+            /**
+             * Errors
+             * @description On 422, one entry per invalid field; otherwise null.
+             */
+            errors: components["schemas"]["FieldError"][] | null;
+            /** Request Id */
+            request_id: string | null;
+            /** Status */
+            status: number;
+            /** Title */
+            title: string;
+            /**
+             * Type
+             * @default about:blank
+             */
+            type: string;
+        };
+    };
     responses: never;
     parameters: never;
     requestBodies: never;
@@ -51,6 +86,15 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean;
                     };
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

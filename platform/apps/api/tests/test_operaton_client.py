@@ -224,3 +224,88 @@ def test_every_call_logs_op_status_and_latency(
     ]
     assert all(isinstance(r.ms, float) for r in records)
     assert records[1].error == "ProcessEngineException: db down"
+
+
+# Bodies as operaton/operaton:2.1.5 answered them for ids that don't exist (probed 2026-10-20).
+CLAIM_UNKNOWN = {
+    "type": "NullValueException",
+    "message": "Cannot find task with id nope-123: task is null",
+    "code": 0,
+}
+COMPLETE_UNKNOWN = {
+    "type": "RestException",
+    "message": "Cannot complete task nope-123: Cannot find task with id nope-123: task is null",
+    "code": 0,
+}
+MEMBER_UNKNOWN = {
+    "type": "NullValueException",
+    "message": "No user found with id 'nouser'.: user is null",
+    "code": 0,
+}
+BAD_VALUE = {
+    "type": "InvalidRequestException",
+    "message": "Cannot convert value 'abc' of type 'Integer' to java type java.lang.Integer",
+    "code": None,
+}
+
+
+@respx.mock
+def test_unknown_task_on_claim_and_complete_is_404_not_502(op: OperatonClient) -> None:
+    respx.post(f"{BASE}/task/nope-123/claim").respond(500, json=CLAIM_UNKNOWN)
+    respx.post(f"{BASE}/task/nope-123/complete").respond(500, json=COMPLETE_UNKNOWN)
+    respx.put(f"{BASE}/group/legal__L1/members/nouser").respond(500, json=MEMBER_UNKNOWN)
+
+    async def flow():
+        with pytest.raises(NotFound):
+            await op.claim("nope-123", "u1")
+        with pytest.raises(NotFound):
+            await op.complete("nope-123", {})
+        with pytest.raises(NotFound):
+            await op.add_member("legal__L1", "nouser")
+
+    run(flow())
+
+
+@respx.mock
+def test_rejected_values_are_400_keeping_the_engine_type(op: OperatonClient) -> None:
+    respx.post(f"{BASE}/process-definition/key/p/start").respond(400, json=BAD_VALUE)
+
+    async def flow():
+        with pytest.raises(OperatonError) as info:
+            await op.start_by_key("p")
+        return info.value
+
+    err = run(flow())
+    assert (err.status, err.upstream_status, err.upstream_type) == (
+        400,
+        400,
+        "InvalidRequestException",
+    )
+    assert "Integer" not in (err.detail or "")
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(500, json=["not", "an", "object"]),
+        httpx.Response(500, text="plain text"),
+        httpx.Response(200, text="<html>not json</html>"),
+    ],
+    ids=["list-error-body", "text-error-body", "non-json-success"],
+)
+@respx.mock
+def test_odd_answers_are_502_not_crashes(op: OperatonClient, answer: httpx.Response) -> None:
+    respx.get(f"{BASE}/task/t1").mock(return_value=answer)
+
+    async def flow():
+        with pytest.raises(OperatonError) as info:
+            await op.get_task("t1")
+        return info.value
+
+    assert run(flow()).status == 502
+
+
+@respx.mock
+def test_empty_success_is_none(op: OperatonClient) -> None:
+    respx.post(f"{BASE}/task/t1/claim").respond(204)
+    assert run(op.claim("t1", "u1")) is None

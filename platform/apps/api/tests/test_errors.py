@@ -22,11 +22,15 @@ class Body(BaseModel):
     count: int
 
 
+WEB = "https://zm-web.test"
+
+
 @pytest.fixture
-def api(rows: dict[str, Client]) -> TestClient:
+def api(rows: dict[str, Client], monkeypatch: pytest.MonkeyPatch) -> TestClient:
     async def lookup(slug: str) -> Client | None:
         return rows.get(slug)
 
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", WEB)
     app = create_app(resolver=Resolver(lookup))
 
     @app.get("/app/probe/task/{task_id}")
@@ -141,3 +145,26 @@ def test_failed_auth_is_logged_once_without_client(
     caplog.set_level(logging.INFO)
     api.get("/app/probe/task/t1")
     assert [(line["status"], line["client"]) for line in request_lines(caplog)] == [(401, None)]
+
+
+def test_a_crash_still_carries_cors_headers_so_the_browser_can_read_it(
+    api: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    r = api.get("/app/probe/boom", headers={**bearer(token()), "Origin": WEB})
+    assert r.status_code == 500
+    assert r.headers["access-control-allow-origin"] == WEB
+    assert "x-request-id" in r.headers["access-control-expose-headers"].lower()
+    assert r.json()["request_id"] == r.headers["x-request-id"]
+    [line] = request_lines(caplog)
+    assert line["status"] == 500 and "secret internals" in line["exc"]
+
+
+def test_preflights_are_logged_too(api: TestClient, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    r = api.options(
+        "/app/probe/echo",
+        headers={"Origin": WEB, "Access-Control-Request-Method": "POST"},
+    )
+    assert r.status_code == 200 and r.headers["access-control-allow-origin"] == WEB
+    assert [line["request_id"] for line in request_lines(caplog)] == [r.headers["x-request-id"]]

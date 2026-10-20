@@ -1,18 +1,21 @@
 """Thin typed client for the Operaton REST endpoints the platform uses (#21).
 
 One instance per client (`zm_api.context`), on that client's `/engine-rest` base URL as its
-service account. Every call logs `op`, `status` and `ms`. Operaton's 404 becomes our 404; any
-other failure (4xx, 5xx, timeout, connection) becomes a 502 problem, with Operaton's message in
-the log only.
+service account. Every call logs `op`, `status` and `ms`, with Operaton's message in the log only.
 
-Verified at Operaton v2.1.5 (engine-rest/.../rest/, read from GitHub at the tag; Sourcegraph was
-down): most engine errors are HTTP 500 with body `{type, message, code}`
-(exception/ExceptionHandlerHelper.java:114-127). A missing or already-claimed task on `claim` is
-a 500 too, so callers check `OperatonError.upstream_type` (e.g. `TaskAlreadyClaimedException`),
-not the status.
+How Operaton's answers map (verified at v2.1.5: exception/ExceptionHandlerHelper.java:114-127, read
+from GitHub at the tag, and probed against the operaton/operaton:2.1.5 image):
+- 404, and a 500 saying the task/user doesn't exist → our 404. Operaton answers an unknown task
+  on `claim`/`complete` (and an unknown user on `add_member`) with 500 `NullValueException` /
+  `RestException` "Cannot find task with id …" / "No user found with id …", not 404.
+- 400 (`BadUserRequestException`, e.g. a variable of the wrong type) → our 400.
+- anything else (other 4xx such as 401, 5xx, timeout, connection, a non-JSON answer) → 502.
+  `OperatonError.upstream_type` keeps the engine's exception type, e.g.
+  `TaskAlreadyClaimedException` (also a 500), for callers that handle it.
 """
 
 import logging
+import re
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -20,18 +23,26 @@ from urllib.parse import quote
 
 import httpx
 
-from zm_api.errors import BadGateway, NotFound
+from zm_api.errors import ApiError, NotFound
 from zm_api.logs import request_id
 
 Json = dict[str, Any]
 _log = logging.getLogger("zm_api.operaton")
+_NOT_FOUND = re.compile(r"Cannot find \w+ with id|No \w+ found with id")
 
 
-class OperatonError(BadGateway):
-    """Operaton answered with an error or not at all. `upstream_status` is None when unreachable."""
+class OperatonError(ApiError):
+    """Operaton refused or failed: 400 when it rejected the values, else 502.
+    `upstream_status` is None when it was unreachable or didn't answer JSON."""
 
     def __init__(self, op: str, upstream_status: int | None, upstream_type: str | None) -> None:
-        super().__init__("The process engine could not handle the request")
+        rejected = upstream_status == 400
+        super().__init__(
+            "The process engine rejected the values"
+            if rejected
+            else "The process engine could not handle the request"
+        )
+        self.status = 400 if rejected else 502
         self.op, self.upstream_status, self.upstream_type = op, upstream_status, upstream_type
 
 
@@ -60,6 +71,13 @@ def _id(value: str) -> str:
     return quote(value, safe="")
 
 
+def _json(response: httpx.Response) -> Any:
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
 class OperatonClient:
     def __init__(
         self,
@@ -86,21 +104,27 @@ class OperatonClient:
     async def aclose(self) -> None:
         await self.http.aclose()
 
-    async def _call(self, op: str, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    async def _call(self, op: str, method: str, path: str, **kwargs: Any) -> Any:
+        """The parsed JSON answer, or None for an empty one (204)."""
         start, status, error = time.perf_counter(), None, None
         try:
             response = await self.http.request(method, path, **kwargs)
             status = response.status_code
             if status >= 400:
-                try:
-                    body = response.json()
-                except ValueError:
-                    body = {}
-                error = f"{body.get('type')}: {body.get('message')}"
-                if status == 404:
+                body = _json(response)
+                upstream = body if isinstance(body, dict) else {}
+                kind, message = upstream.get("type"), str(upstream.get("message") or "")
+                error = f"{kind}: {message}"
+                if status == 404 or (status == 500 and _NOT_FOUND.search(message)):
                     raise NotFound("Not found")
-                raise OperatonError(op, status, body.get("type"))
-            return response
+                raise OperatonError(op, status, kind)
+            if not response.content:
+                return None
+            try:
+                return response.json()
+            except ValueError:
+                error = "answer is not JSON"
+                raise OperatonError(op, None, None) from None
         except httpx.HTTPError as exc:
             error = repr(exc)
             raise OperatonError(op, None, None) from exc
@@ -130,15 +154,11 @@ class OperatonClient:
         }
         # one part per resource, named after it: the engine keys parts by name
         multipart = [(filename, (filename, content)) for filename, content in files.items()]
-        return (
-            await self._call("deploy", "POST", "deployment/create", data=data, files=multipart)
-        ).json()
+        return await self._call("deploy", "POST", "deployment/create", data=data, files=multipart)
 
     async def process_definition(self, key: str) -> Json:
         """The latest version of a process definition."""
-        return (
-            await self._call("process_definition", "GET", f"process-definition/key/{_id(key)}")
-        ).json()
+        return await self._call("process_definition", "GET", f"process-definition/key/{_id(key)}")
 
     # Runtime
     async def start_by_key(
@@ -148,19 +168,17 @@ class OperatonClient:
         if business_key is not None:
             body["businessKey"] = business_key
         path = f"process-definition/key/{_id(key)}/start"
-        return (await self._call("start_by_key", "POST", path, json=body)).json()
+        return await self._call("start_by_key", "POST", path, json=body)
 
     async def list_tasks(
         self, query: Mapping[str, Any], *, first: int = 0, max_results: int = 200
     ) -> list[Json]:
         """`POST /task` with a TaskQueryDto body, e.g. `candidateGroups`, `assignee`."""
         params = {"firstResult": first, "maxResults": max_results}
-        return (
-            await self._call("list_tasks", "POST", "task", params=params, json=dict(query))
-        ).json()
+        return await self._call("list_tasks", "POST", "task", params=params, json=dict(query))
 
     async def get_task(self, task_id: str) -> Json:
-        return (await self._call("get_task", "GET", f"task/{_id(task_id)}")).json()
+        return await self._call("get_task", "GET", f"task/{_id(task_id)}")
 
     async def claim(self, task_id: str, user_id: str) -> None:
         await self._call("claim", "POST", f"task/{_id(task_id)}/claim", json={"userId": user_id})
@@ -171,9 +189,7 @@ class OperatonClient:
 
     # History
     async def history_task(self, task_id: str) -> list[Json]:
-        return (
-            await self._call("history_task", "GET", "history/task", params={"taskId": task_id})
-        ).json()
+        return await self._call("history_task", "GET", "history/task", params={"taskId": task_id})
 
     # Identity
     async def create_group(self, group_id: str, name: str, *, type: str = "zm") -> None:  # noqa: A002
