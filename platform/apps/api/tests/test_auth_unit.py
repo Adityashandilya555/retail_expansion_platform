@@ -8,12 +8,14 @@ error, so `mirror` reads before it writes.
 import asyncio
 import json
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
 import respx
 
 from zm_api.auth import RateLimit
+from zm_api.cli import main as cli
 from zm_api.operaton import OperatonClient
 from zm_api.users import mirror
 
@@ -21,6 +23,19 @@ BASE = "http://operaton.test:8080/engine-rest"
 UID = uuid.UUID("0b4c6f2e-1111-4a2b-9c3d-000000000001")
 GONE = {"type": "UserNotFoundException", "message": f"User with id {UID} does not exist"}
 NO_GROUP = {"type": "InvalidRequestException", "message": "Group with id legal__L1 does not exist"}
+
+
+def test_users_seed_reads_only_valid_files_under_the_current_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    # refused before any database is touched (no PLATFORM_DATABASE_URL is set here)
+    assert cli(["users", "seed", "--client", "pilot-local", "/etc/passwd"]) == 2
+    assert cli(["users", "seed", "--client", "pilot-local", "../users.json"]) == 2
+    assert "not a file inside" in capsys.readouterr().err
+    (tmp_path / "bad.json").write_text(json.dumps({"users": [{"email": "x@y.z", "level": 0}]}))
+    assert cli(["users", "seed", "--client", "pilot-local", "bad.json"]) == 2
+    assert "level" in capsys.readouterr().err
 
 
 def test_rate_limit_allows_ten_a_minute_per_key() -> None:

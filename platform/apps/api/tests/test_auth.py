@@ -268,13 +268,14 @@ def test_cli_seeds_users_and_creates_owners(
     world: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     email = f"cli+{RUN}@pilot.demo"
-    path = tmp_path / "users.json"
+    monkeypatch.chdir(tmp_path)  # the CLI reads seed files under the current directory only
     person = {"email": email, "name": "Cli User", "department": "bd", "level": 2}
-    path.write_text(json.dumps({"users": [person]}))
-    assert cli(["users", "seed", "--client", f"pilot-{RUN}", str(path)]) == 0
+    (tmp_path / "users.json").write_text(json.dumps({"users": [person]}))
+    path = "users.json"
+    assert cli(["users", "seed", "--client", f"pilot-{RUN}", path]) == 0
     line = capsys.readouterr().out.strip()
     assert line.startswith(f"{email}\t") and "(unchanged)" not in line
-    assert cli(["users", "seed", "--client", "no-such-client", str(path)]) == 1
+    assert cli(["users", "seed", "--client", "no-such-client", path]) == 1
 
     monkeypatch.setattr("getpass.getpass", lambda prompt="": "a-long-enough-password")
     owner = ["owners", "create", "--email", f"cli-owner+{RUN}@zm.demo"]

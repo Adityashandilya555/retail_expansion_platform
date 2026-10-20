@@ -160,11 +160,15 @@ def test_a_crash_still_carries_cors_headers_so_the_browser_can_read_it(
     assert line["status"] == 500 and "secret internals" in line["exc"]
 
 
-def test_preflights_are_logged_too(api: TestClient, caplog: pytest.LogCaptureFixture) -> None:
+def test_cors_is_outermost_and_answers_preflights_itself(
+    api: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
     caplog.set_level(logging.INFO)
     r = api.options(
         "/app/probe/echo",
         headers={"Origin": WEB, "Access-Control-Request-Method": "POST"},
     )
     assert r.status_code == 200 and r.headers["access-control-allow-origin"] == WEB
-    assert [line["request_id"] for line in request_lines(caplog)] == [r.headers["x-request-id"]]
+    assert request_lines(caplog) == []  # a preflight never reaches the app, so it isn't logged
+    middleware = [m.cls.__name__ for m in api.app.user_middleware]  # type: ignore[attr-defined]
+    assert middleware == ["CORSMiddleware", "RequestLogMiddleware", "CrashGuard"]  # outer first

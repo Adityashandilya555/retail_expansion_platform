@@ -24,9 +24,11 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
     errors.install(app)
     for router in (auth.router, auth.app_routes, auth.owner_auth, auth.owner_routes):
         app.include_router(router)
-    # Outermost last: RequestLog → CORS → CrashGuard → routes. Every request is logged with an
-    # X-Request-Id, and even a crash's 500 passes through CORS, so the browser can read it.
+    # Outermost last: CORS → RequestLog → CrashGuard → routes. CORS headers reach every response,
+    # a crash's 500 too, so the browser can read it. CORS answers preflights itself, so those
+    # aren't logged; every request that reaches the app gets one log line and an X-Request-Id.
     app.add_middleware(errors.CrashGuard)
+    app.add_middleware(logs.RequestLogMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins(),
@@ -35,7 +37,6 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
         expose_headers=["X-Request-Id"],
     )
-    app.add_middleware(logs.RequestLogMiddleware)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, bool]:

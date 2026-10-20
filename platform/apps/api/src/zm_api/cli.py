@@ -7,10 +7,10 @@
 import argparse
 import asyncio
 import getpass
-import json
 import sys
 from pathlib import Path
 
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -62,8 +62,35 @@ def _create_owner(email: str, name: str) -> int:
     return 0
 
 
-def _seed(slug: str, file: Path) -> int:
-    people = json.loads(file.read_text())["users"]
+class _SeedUser(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    name: str = Field(min_length=1)
+    department: str = Field(min_length=1)
+    level: int = Field(ge=1)
+
+
+class _SeedFile(BaseModel):
+    users: list[_SeedUser]
+
+
+def _inside_cwd(name: str) -> Path | None:
+    """Resolve a user-supplied path; only files under the current directory are read
+    (as `zm-schema validate` does)."""
+    base = Path.cwd().resolve()
+    path = (base / name).resolve()
+    return path if path.is_relative_to(base) and path.is_file() else None
+
+
+def _seed(slug: str, name: str) -> int:
+    path = _inside_cwd(name)
+    if path is None:
+        print(f"{name}: not a file inside {Path.cwd()}", file=sys.stderr)
+        return 2
+    try:
+        people = [u.model_dump() for u in _SeedFile.model_validate_json(path.read_text()).users]
+    except (OSError, ValidationError) as e:
+        print(f"{name}: {e}", file=sys.stderr)
+        return 2
 
     async def go() -> list[users.Seeded] | None:
         resolver = Resolver(PlatformRegistry())
@@ -103,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     seed = people.add_parser("seed", help="load demo users (until invites exist, S2-23)")
     seed.add_argument("--client", required=True, help="client slug")
-    seed.add_argument("file", type=Path, help='JSON {"users": [{email, name, department, level}]}')
+    seed.add_argument("file", help='JSON {"users": [{email, name, department, level}]}')
     args = parser.parse_args(argv)
     if args.cmd == "openapi":
         return openapi.export(args.check)
