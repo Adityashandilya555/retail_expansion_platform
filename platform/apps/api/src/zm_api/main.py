@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from zm_api import auth, errors, logs, settings
+from zm_api import auth, errors, logs, publish, settings
 from zm_api.context import PlatformRegistry, Resolver
 
 
@@ -22,7 +22,13 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
     app.state.resolver = resolver or Resolver(app.state.platform)
     app.state.workspace_limit = auth.RateLimit(10, 60.0)  # POST /auth/workspace: 10/min/IP
     errors.install(app)
-    for router in (auth.router, auth.app_routes, auth.owner_auth, auth.owner_routes):
+    for router in (
+        auth.router,
+        auth.app_routes,
+        auth.owner_auth,
+        auth.owner_routes,
+        publish.routes,
+    ):
         app.include_router(router)
     # Outermost last: CORS → RequestLog → CrashGuard → routes. CORS headers reach every response,
     # a crash's 500 too, so the browser can read it. CORS answers preflights itself, so those

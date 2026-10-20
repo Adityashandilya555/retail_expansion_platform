@@ -9,6 +9,7 @@
   401, after the same password-hashing work.
 """
 
+import asyncio
 import hashlib
 import secrets
 import time
@@ -25,11 +26,12 @@ from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from zm_api import settings
 from zm_api.context import ClientCtx, OwnerCtx, Resolver, UserId, client_router, owner_router
-from zm_api.errors import NotFound, TooManyRequests, Unauthorized
+from zm_api.errors import ApiError, NotFound, TooManyRequests, Unauthorized
 from zm_api.registry import Client
 
 _hasher = PasswordHasher()  # argon2id
@@ -249,11 +251,25 @@ def _clear_cookie(response: Response, t: _Tokens) -> None:
     response.delete_cookie(t.cookie, path=t.path, secure=True, httponly=True, samesite="strict")
 
 
-def _look(row: Client) -> tuple[str, str | None]:
-    """The client's theme preset and default accent for the sign-in screen (D19).
-    shortcut: the defaults until #23 stores releases; then read `ui.theme`/`ui.accent` of the
-    client's active release in app.releases."""
-    return "quartz", None
+async def _look(resolver: Resolver, row: Client) -> tuple[str, str | None]:
+    """The client's theme preset and default accent for the sign-in screen (D19), from its active
+    release (#23). Before the first publish, or if the vault doesn't answer within 2 s, the
+    defaults: the sign-in screen must never fail because of its colours."""
+    from zm_api.releases import active_release
+
+    try:
+        async with asyncio.timeout(2):
+            ctx = await resolver.context(row)
+            async with ctx.db.connect() as conn:
+                release = await active_release(conn)
+    except (TimeoutError, ApiError, SQLAlchemyError, OSError):
+        return "quartz", None
+    if release is None:
+        return "quartz", None
+    theme, accent = release.ui.get("theme"), release.ui.get("accent")
+    return (theme if isinstance(theme, str) else "quartz"), (
+        accent if isinstance(accent, str) else None
+    )
 
 
 # --- client users: /auth/* ----------------------------------------------------------------------
@@ -274,7 +290,7 @@ async def workspace(body: WorkspaceIn, request: Request) -> WorkspaceOut:
     row = await request.app.state.resolver.find_code(body.workspace_code)
     if row is None or row.status != "ready":
         raise NotFound("Workspace not found")
-    theme, accent = _look(row)
+    theme, accent = await _look(request.app.state.resolver, row)
     return WorkspaceOut(client_name=row.name, theme=theme, accent=accent)
 
 

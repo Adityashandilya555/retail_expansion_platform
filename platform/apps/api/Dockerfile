@@ -13,7 +13,8 @@ COPY packages/schema packages/schema
 RUN uv sync --frozen --no-dev --no-build --no-install-workspace --package zm-api
 RUN useradd --system --no-create-home zm
 USER zm
-ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app/apps/api/src"
+# The API imports the workspace packages it publishes with (#23): compiler and schema.
+ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app/apps/api/src:/app/packages/compiler/src:/app/packages/schema/src"
 EXPOSE 8000
 # Railway injects $PORT; compose and local runs use 8000.
 # --no-access-log: zm_api.logs writes the one JSON line per request (#21).

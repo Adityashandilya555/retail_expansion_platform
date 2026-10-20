@@ -163,6 +163,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/owner/clients/{client_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish Client
+         * @description Publish the client's draft as its next release (a person clicks Publish, never the agent).
+         */
+        post: operations["publish_client_owner_clients__client_id__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/owner/me": {
         parameters: {
             query?: never;
@@ -281,6 +301,20 @@ export interface components {
              * @default about:blank
              */
             type: string;
+        };
+        /** PublishOut */
+        PublishOut: {
+            /**
+             * Created
+             * @description False when nothing changed since the last publish (no new version).
+             */
+            created: boolean;
+            /** Deployment Id */
+            deployment_id: string;
+            /** Sha256 */
+            sha256: string;
+            /** Version */
+            version: number;
         };
         /** TokenOut */
         TokenOut: {
@@ -576,6 +610,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TokenOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    publish_client_owner_clients__client_id__publish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishOut"];
                 };
             };
             /** @description Problem details (RFC 9457) */
