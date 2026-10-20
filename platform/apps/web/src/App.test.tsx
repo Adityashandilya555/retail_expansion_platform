@@ -3,9 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 import { ClientApp } from "./App";
-import { forget, refresh } from "./session";
+import { forget, refresh, signedIn, signOut } from "./session";
 
-type Handler = (request: Request) => Response;
+type Handler = (request: Request) => Response | Promise<Response>;
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const problem = (status: number, detail: string) =>
@@ -122,4 +122,17 @@ test("the sign-in page without a workspace goes back to the landing page", async
   api({});
   renderAt("/login");
   expect(await screen.findByLabelText(/Workspace code/)).toBeDefined();
+});
+
+test("a refresh that lands after sign-out doesn't sign the user back in (Codex, #108)", async () => {
+  let land: (r: Response) => void = () => {};
+  api({
+    "POST /auth/refresh": () => new Promise<Response>((resolve) => (land = resolve)),
+    "POST /auth/logout": () => new Response(null, { status: 204 }),
+  });
+  const late = refresh(); // e.g. the scheduled one, already on its way
+  await signOut();
+  land(json(TOKEN)); // the server did rotate, but the person has signed out since
+  expect(await late).toBe(false);
+  expect(signedIn()).toBe(false);
 });

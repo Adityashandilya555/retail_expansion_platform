@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 import { ConsoleApp } from "./App";
-import { forget } from "./session";
+import { forget, refresh, signedIn, signOut } from "./session";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -11,7 +11,7 @@ const problem = (status: number) =>
   json({ type: "about:blank", title: "x", status, detail: "x", request_id: "r", errors: null }, status);
 const OWNER = { id: "6f0c1b9e-5d2a-4c1e-9a7b-3d8e2f1a0b4c", email: "adi@zm.demo", name: "Adi" };
 
-function api(routes: Record<string, (r: Request) => Response>): string[] {
+function api(routes: Record<string, (r: Request) => Response | Promise<Response>>): string[] {
   const calls: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -69,4 +69,17 @@ test("a refresh cookie signs the owner in silently", async () => {
   });
   renderAt("/");
   expect(await screen.findByRole("heading", { name: "Signed in as Adi" })).toBeDefined();
+});
+
+test("a refresh that lands after sign-out doesn't sign the owner back in (Codex, #108)", async () => {
+  let land: (r: Response) => void = () => {};
+  api({
+    "POST /owner/auth/refresh": () => new Promise<Response>((resolve) => (land = resolve)),
+    "POST /owner/auth/logout": () => new Response(null, { status: 204 }),
+  });
+  const late = refresh();
+  await signOut();
+  land(json({ access_token: "o1", token_type: "bearer", expires_in: 900 }));
+  expect(await late).toBe(false);
+  expect(signedIn()).toBe(false);
 });

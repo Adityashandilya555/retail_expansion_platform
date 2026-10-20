@@ -9,6 +9,8 @@ export type OwnerMe = components["schemas"]["OwnerMe"];
 let token: string | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let inflight: Promise<boolean> | null = null;
+// Bumped by forget(): a refresh started before a sign-out must not bring the session back.
+let generation = 0;
 
 export const api = createApiClient(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000", () => token);
 
@@ -19,6 +21,7 @@ function keep(t: TokenOut) {
 }
 
 export function forget() {
+  generation += 1;
   clearTimeout(timer);
   token = null;
   inflight = null;
@@ -38,16 +41,18 @@ export async function signIn(email: string, password: string): Promise<string | 
 }
 
 export function refresh(): Promise<boolean> {
+  const started = generation;
   inflight ??= (async () => {
     try {
       const { data } = await api.POST("/owner/auth/refresh");
+      if (started !== generation) return false; // signed out meanwhile: drop the new token
       if (data) keep(data);
       else forget();
       return data !== undefined;
     } catch {
       return false;
     } finally {
-      inflight = null;
+      if (started === generation) inflight = null; // don't clear a newer session's refresh
     }
   })();
   return inflight;

@@ -12,6 +12,8 @@ export type Outcome<T> = { ok: true; value: T } | { ok: false; message: string }
 let token: string | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let inflight: Promise<boolean> | null = null;
+// Bumped by forget(): a refresh started before a sign-out must not bring the session back.
+let generation = 0;
 
 export const api = createApiClient(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000", () => token);
 
@@ -36,6 +38,7 @@ function keep(t: TokenOut) {
 
 /** Drops the in-memory session (signing out, and between tests). */
 export function forget() {
+  generation += 1;
   clearTimeout(timer);
   token = null;
   inflight = null;
@@ -78,16 +81,18 @@ export async function signIn(code: string, email: string, password: string): Pro
 
 /** A new access token from the refresh cookie; true when signed in. */
 export function refresh(): Promise<boolean> {
+  const started = generation;
   inflight ??= (async () => {
     try {
       const { data } = await api.POST("/auth/refresh");
+      if (started !== generation) return false; // signed out meanwhile: drop the new token
       if (data) keep(data);
       else forget();
       return data !== undefined;
     } catch {
       return false;
     } finally {
-      inflight = null;
+      if (started === generation) inflight = null; // don't clear a newer session's refresh
     }
   })();
   return inflight;
