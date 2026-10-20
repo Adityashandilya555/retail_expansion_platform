@@ -19,6 +19,16 @@ def jwt_secret() -> str:
     return _required("JWT_SECRET")
 
 
+def jwt_access_ttl_min() -> int:
+    """`JWT_ACCESS_TTL_MIN`: access-token lifetime (default 15)."""
+    return int(os.environ.get("JWT_ACCESS_TTL_MIN", "15"))
+
+
+def jwt_refresh_ttl_days() -> int:
+    """`JWT_REFRESH_TTL_DAYS`: refresh-token lifetime, renewed on each use (default 14)."""
+    return int(os.environ.get("JWT_REFRESH_TTL_DAYS", "14"))
+
+
 def platform_database_url() -> str:
     """`PLATFORM_DATABASE_URL`: the control-plane database holding the client registry."""
     return _required("PLATFORM_DATABASE_URL")
