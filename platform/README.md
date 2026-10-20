@@ -46,6 +46,20 @@ pnpm --filter @zm/web dev       # component preview at http://localhost:5173/dev
 - **Logs:** one JSON line per request (`client`, `request_id`, `method`, `route`, `status`, `ms`) plus one per Operaton call (`op`, `status`, `ms`). `X-Request-Id` is echoed or generated. Level from `LOG_LEVEL`.
 - **TS client:** after an API change, run `uv run zm-api openapi` (writes `packages/api-client/openapi.json`), then `pnpm --filter @zm/api-client gen`. CI fails if either is stale. Apps use `createApiClient(import.meta.env.VITE_API_BASE_URL, getToken)`.
 
+## Sign-in (#22)
+- **Client app:** `/` asks for the workspace code (`POST /auth/workspace` → the client's name and look; 10/min/IP), `/login` for email and password (`POST /auth/login`), then `/app`. **Owner console:** `/login` (`POST /owner/auth/login`).
+- **Tokens:**
+  - The access token (JWT, `JWT_ACCESS_TTL_MIN`) lives in memory only.
+  - The refresh token is an httpOnly, Secure, `SameSite=Strict` cookie on `/auth` (or `/owner/auth`), `JWT_REFRESH_TTL_DAYS`. Each `POST …/refresh` rotates it; presenting a spent one again revokes the whole session. `POST …/logout` revokes it.
+  - Every failed sign-in gets the same 401. A valid token on the other surface (owner on `/app`, client user on `/owner`) gets 403.
+- **Same site required.** Browsers only send a `SameSite=Strict` cookie when the app and the API are on the same site. Locally, `localhost:5173` and `localhost:8000` are. Deployed, `*.vercel.app` and Railway's generated domain are not. Either give both a domain under one site (e.g. `app.example.com` + `api.example.com`), or rewrite `/api/*` on Vercel to the Railway API and set `VITE_API_BASE_URL=/api`.
+- **People:**
+  ```bash
+  uv run zm-api owners create --email you@example.com --name "You"   # asks for the password; deployed: `railway run`
+  uv run zm-api users seed --client pilot-local packages/templates/matrix-retail/demo-users.json
+  ```
+  `users seed` prints each new user's generated password once (existing users keep theirs). It then mirrors every user into the client's Operaton: same uuid, an unusable password, and exactly the `<dept>__L<n>` groups of their memberships (`zm_api.users.sync_user`, D6). Client users live in the client's own database (`app.users`, `app.memberships`, `app.refresh_tokens`, migration `0002_users.sql`); owners in `platform.owners`.
+
 ## Deploy: Vercel (`zm-web`, `zm-console`)
 There are two projects in the Vercel **Pro** team (D18); Hobby is non-commercial only. They are static Vite builds, so a later move to AWS is S3 + CloudFront. Build settings live in each app's `vercel.json`:
 - **Install and build** run at the pnpm workspace root `platform/` (`cd ../.. && corepack pnpm …`), because the lockfile lives there. `corepack` (bundled with Node 22 and 24, Vercel's build runtimes) runs the pnpm pinned in `platform/package.json` (`packageManager`). Vercel's own Corepack switch only reads `packageManager` from the project root (`apps/<app>`), so it isn't used.
