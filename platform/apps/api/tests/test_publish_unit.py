@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from zm_api import auth, publish, releases
 from zm_api.context import Resolver
-from zm_api.errors import NotFound, UnprocessableContent
+from zm_api.errors import NotFound, ServiceUnavailable, UnprocessableContent
 from zm_api.main import create_app
 from zm_api.registry import Client
 from zm_api.templates import load_templates
@@ -188,18 +188,19 @@ BASE = "http://operaton.test/engine-rest"
 
 @respx.mock
 def test_groups_are_created_once_even_when_two_publishes_race() -> None:
-    from zm_api.operaton import OperatonClient, OperatonError
+    from zm_api.operaton import OperatonClient
 
     op = OperatonClient(BASE, auth=("zm-service", "pw"), client="pilot-local")
     ctx = type("Ctx", (), {"operaton": op})()
     release = compile(migrate(matrix_retail()), "pilot-local")
+    names = {g.id: g.name for g in release.groups}
     existing = {"bd__L1"}
     raced = {"bd__L2"}  # another publish creates it between our read and our create
 
     def get_group(request):  # noqa: ANN001, ANN202
         gid = request.url.path.rsplit("/", 1)[-1]
         if gid in existing:
-            return httpx.Response(200, json={"id": gid})
+            return httpx.Response(200, json={"id": gid, "name": names[gid]})
         return httpx.Response(404, json={"type": "InvalidRequestException", "message": "none"})
 
     def create(request):  # noqa: ANN001, ANN202
@@ -216,9 +217,46 @@ def test_groups_are_created_once_even_when_two_publishes_race() -> None:
     assert existing == {g.id for g in release.groups}
     assert created.call_count == len(release.groups) - 1  # bd__L1 already existed
 
-    # any other failure still stops the publish
+    # a refused create where the group still doesn't exist stops the publish
     respx.post(f"{BASE}/group/create").respond(500, json={"type": "X", "message": "boom"})
     existing.clear()
-    with pytest.raises(OperatonError):
+    with pytest.raises(NotFound):
         asyncio.run(publish._ensure_groups(ctx, release))  # type: ignore[arg-type]
     asyncio.run(op.aclose())
+
+
+@respx.mock
+def test_a_renamed_level_updates_the_group_name() -> None:
+    from zm_api.operaton import OperatonClient
+
+    op = OperatonClient(BASE, auth=("zm-service", "pw"), client="pilot-local")
+    ctx = type("Ctx", (), {"operaton": op})()
+    release = compile(migrate(matrix_retail()), "pilot-local")
+    names = {g.id: g.name for g in release.groups}
+    names["legal__L1"] = "Legal L1 · old name"
+    respx.get(url__regex=rf"{BASE}/group/[^/]+$").mock(
+        side_effect=lambda r: httpx.Response(
+            200,
+            json={
+                "id": r.url.path.rsplit("/", 1)[-1],
+                "name": names[r.url.path.rsplit("/", 1)[-1]],
+            },
+        )
+    )
+    renamed = respx.put(f"{BASE}/group/legal__L1").respond(204)
+    others = respx.put(url__regex=rf"{BASE}/group/(?!legal__L1$)[^/]+$").respond(204)
+    asyncio.run(publish._ensure_groups(ctx, release))  # type: ignore[arg-type]
+    assert renamed.call_count == 1 and not others.called
+    assert json.loads(renamed.calls[0].request.content)["name"] != "Legal L1 · old name"
+    asyncio.run(op.aclose())
+
+
+def test_a_database_failure_is_503_with_a_retry_hint() -> None:
+    class Db:
+        def begin(self):  # noqa: ANN202
+            raise OSError("connection refused")
+
+    client = type("C", (), {"slug": "pilot-local", "id": uuid.uuid4()})()
+    ctx = type("Ctx", (), {"db": Db(), "client": client})()
+    with pytest.raises(ServiceUnavailable, match="publish again"):
+        asyncio.run(publish.publish(ctx, None, None))  # type: ignore[arg-type]

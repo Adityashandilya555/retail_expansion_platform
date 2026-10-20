@@ -159,19 +159,15 @@ def test_deploy_changed_only_can_be_switched_on(op: OperatonClient) -> None:
 
 
 @respx.mock
-def test_process_definition_by_id_and_deployments_by_name(op: OperatonClient) -> None:
+def test_process_definition_by_id_and_group_rename(op: OperatonClient) -> None:
     by_id = respx.get(url__regex=r".*/process-definition/zm_p%3A1%3Aabc$").respond(
         200, json={"id": "zm_p:1:abc", "deploymentId": "d1"}
     )
-    listed = respx.get(f"{BASE}/deployment").respond(200, json=[{"id": "d2"}, {"id": "d1"}])
+    rename = respx.put(f"{BASE}/group/legal__L1").respond(204)
     assert run(op.process_definition_by_id("zm_p:1:abc"))["deploymentId"] == "d1"
-    assert [d["id"] for d in run(op.deployments("pilot-release"))] == ["d2", "d1"]
+    run(op.update_group("legal__L1", "Legal L1 · Counsel"))
     assert by_id.called
-    assert dict(sent(listed).url.params) == {
-        "name": "pilot-release",
-        "sortBy": "deploymentTime",
-        "sortOrder": "desc",
-    }
+    assert body(rename) == {"id": "legal__L1", "name": "Legal L1 · Counsel", "type": "zm"}
 
 
 @respx.mock

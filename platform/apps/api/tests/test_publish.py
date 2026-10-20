@@ -31,9 +31,11 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from zm_api import secrets
 from zm_api.context import ClientContext, PlatformRegistry, Resolver
+from zm_api.errors import Conflict
 from zm_api.main import create_app
 from zm_api.operaton import OperatonError
 from zm_api.publish import RELEASE_RESOURCE, publish
+from zm_api.releases import cache_clear as releases_cache_clear
 from zm_api.releases import release_for_task, seed_draft
 
 pytestmark = pytest.mark.integration
@@ -147,6 +149,11 @@ def clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[Clients]:
     c = asyncio.run(setup())
     yield c
 
+    asyncio.run(  # platform.releases rows go with their clients (on delete cascade)
+        platform_sql("delete from platform.clients where id = any(:ids)", ids=list(c.ids.values()))
+    )
+    asyncio.run(platform_sql("delete from platform.owners where id = :o", o=c.owner))
+    releases_cache_clear()
     for vault in VAULTS:  # other tests on this stack expect no release (e.g. the sign-in look)
         vault_sql(vault, "delete from app.releases")
         vault_sql(vault, "delete from app.drafts")
@@ -162,6 +169,11 @@ def deployments(engine: str, name: str) -> list[dict]:
         return op.get("deployment", params={"name": name}).json()
 
 
+def deployment_count(engine: str) -> int:
+    with httpx.Client(base_url=ENGINES[engine], auth=("zm-service", SERVICE_PASSWORD)) as op:
+        return op.get("deployment/count").json()["count"]
+
+
 def definitions(engine: str, deployment_id: str) -> list[str]:
     with httpx.Client(base_url=ENGINES[engine], auth=("zm-service", SERVICE_PASSWORD)) as op:
         found = op.get("process-definition", params={"deploymentId": deployment_id}).json()
@@ -175,8 +187,10 @@ def test_first_publish_goes_to_the_clients_own_engine_and_vault(clients: Clients
             await seed_draft(ctx, "matrix-retail")
             return await publish(ctx, stack.platform(), clients.owner)
 
+    qsr_before = deployment_count("qsr")
     result = asyncio.run(go())
     assert (result.version, result.created) == (1, True)
+    assert deployment_count("qsr") == qsr_before  # nothing at all reached qsr's engine
     name = f"{clients.slugs['pilot']}-release"
 
     # pilot's engine has the deployment with every process; qsr's engine has nothing of it
@@ -273,6 +287,16 @@ def test_a_form_change_is_v2_and_running_cases_keep_v1_forms(clients: Clients) -
         resources = op.get(f"deployment/{v2.deployment_id}/resources").json()
     assert RELEASE_RESOURCE in {r["name"] for r in resources}
     assert task["formKey"].startswith("zm:")
+
+
+def test_publishing_without_a_draft_is_409(clients: Clients) -> None:
+    async def go() -> None:
+        async with Stack(clients) as stack:
+            with pytest.raises(Conflict, match="no draft"):
+                await publish(await stack.ctx("qsr"), stack.platform(), clients.owner)
+
+    asyncio.run(go())
+    assert vault_sql("qsr", "select count(*) from app.releases") == [(0,)]
 
 
 def test_operaton_down_writes_nothing(clients: Clients) -> None:

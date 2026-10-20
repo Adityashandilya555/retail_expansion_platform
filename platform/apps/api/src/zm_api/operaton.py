@@ -174,11 +174,6 @@ class OperatonClient:
         path = f"process-definition/{_id(definition_id)}"
         return await self._call("process_definition_by_id", "GET", path)
 
-    async def deployments(self, name: str) -> list[Json]:
-        """Deployments with exactly this name, newest first."""
-        params = {"name": name, "sortBy": "deploymentTime", "sortOrder": "desc"}
-        return await self._call("deployments", "GET", "deployment", params=params)
-
     # Runtime
     async def start_by_key(
         self, key: str, *, business_key: str | None = None, values: Mapping[str, Any] | None = None
@@ -226,6 +221,14 @@ class OperatonClient:
             "create_group",
             "POST",
             "group/create",
+            json={"id": group_id, "name": name, "type": type},
+        )
+
+    async def update_group(self, group_id: str, name: str, *, type: str = "zm") -> None:  # noqa: A002
+        await self._call(
+            "update_group",
+            "PUT",
+            f"group/{_id(group_id)}",
             json={"id": group_id, "name": name, "type": type},
         )
 

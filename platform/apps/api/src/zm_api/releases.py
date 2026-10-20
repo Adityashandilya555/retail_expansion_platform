@@ -109,27 +109,44 @@ async def insert_release(conn: AsyncConnection, values: dict[str, Any]) -> Relea
     return _row(result.mappings().one())
 
 
+async def activate(conn: AsyncConnection, version: int) -> ReleaseRow:
+    """Make an existing release the active one again. Run inside the publish lock."""
+    await conn.execute(text("update app.releases set active = false where active"))
+    result = await conn.execute(
+        text(f"update app.releases set active = true where version = :v returning {_COLUMNS}"),
+        {"v": version},
+    )
+    return _row(result.mappings().one())
+
+
 # --- task -> release (S1-10) -----------------------------------------------------------------
 
-_CACHE_SIZE = 1024
-_by_definition: OrderedDict[tuple[str, str], ReleaseRow] = OrderedDict()
+_CACHE_SIZE = 4096
+# process definition → deployment never changes; the release row is read fresh (its `active`
+# flag does change with later publishes), so callers never share a cached, mutable row.
+_deployment_of: OrderedDict[tuple[str, str], str] = OrderedDict()
+
+
+def cache_clear() -> None:
+    """Forget every cached definition → deployment (tests, a re-provisioned client)."""
+    _deployment_of.clear()
 
 
 async def release_for_task(ctx: ClientContext, process_definition_id: str) -> ReleaseRow:
     """The release a task belongs to: its process definition's deployment → `app.releases`.
-    A case started on v1 keeps resolving v1's forms after v2 is published. Cached: releases
-    never change once written."""
+    A case started on v1 keeps resolving v1's forms after v2 is published."""
     key = (ctx.client.slug, process_definition_id)
-    cached = _by_definition.get(key)
-    if cached is not None:
-        _by_definition.move_to_end(key)
-        return cached
-    definition = await ctx.operaton.process_definition_by_id(process_definition_id)
+    deployment_id = _deployment_of.get(key)
+    if deployment_id is None:
+        definition = await ctx.operaton.process_definition_by_id(process_definition_id)
+        deployment_id = definition["deploymentId"]
+        _deployment_of[key] = deployment_id
+        while len(_deployment_of) > _CACHE_SIZE:
+            _deployment_of.popitem(last=False)
+    else:
+        _deployment_of.move_to_end(key)
     async with ctx.db.connect() as conn:
-        release = await release_by_deployment(conn, definition["deploymentId"])
+        release = await release_by_deployment(conn, deployment_id)
     if release is None:
         raise NotFound("No release for this process")
-    _by_definition[key] = release
-    while len(_by_definition) > _CACHE_SIZE:
-        _by_definition.popitem(last=False)
     return release

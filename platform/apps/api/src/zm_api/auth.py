@@ -11,6 +11,7 @@
 
 import asyncio
 import hashlib
+import logging
 import secrets
 import time
 from collections import deque
@@ -26,12 +27,11 @@ from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from zm_api import settings
 from zm_api.context import ClientCtx, OwnerCtx, Resolver, UserId, client_router, owner_router
-from zm_api.errors import ApiError, NotFound, TooManyRequests, Unauthorized
+from zm_api.errors import NotFound, TooManyRequests, Unauthorized
 from zm_api.registry import Client
 
 _hasher = PasswordHasher()  # argon2id
@@ -262,7 +262,10 @@ async def _look(resolver: Resolver, row: Client) -> tuple[str, str | None]:
             ctx = await resolver.context(row)
             async with ctx.db.connect() as conn:
                 release = await active_release(conn)
-    except (TimeoutError, ApiError, SQLAlchemyError, OSError):
+    except Exception:  # noqa: BLE001 - unreachable vault, bad secrets, timeout: never fail sign-in
+        logging.getLogger("zm_api.auth").warning(
+            "sign-in look: using defaults", extra={"client": row.slug}, exc_info=True
+        )
         return "quartz", None
     if release is None:
         return "quartz", None

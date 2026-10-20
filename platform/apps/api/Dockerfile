@@ -8,6 +8,8 @@ COPY apps/api apps/api
 COPY apps/worker apps/worker
 COPY packages/compiler packages/compiler
 COPY packages/schema packages/schema
+# starter templates: `zm-api templates sync` and `zm-api drafts seed` read them (#18, #23)
+COPY packages/templates packages/templates
 # Wheels only (--no-build): no setup/build-backend code runs. Our own code is not installed;
 # it runs from source via PYTHONPATH.
 RUN uv sync --frozen --no-dev --no-build --no-install-workspace --package zm-api
