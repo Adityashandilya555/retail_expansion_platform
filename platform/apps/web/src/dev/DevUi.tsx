@@ -23,6 +23,7 @@ import { sampleApproval, sampleDdChecklist, sampleLicences } from "@zm/forms/sam
 import {
   AppFrame,
   DataTable,
+  Notice,
   notifyError,
   Num,
   PageHeader,
@@ -78,6 +79,17 @@ export default function DevUi() {
               <StatusPill tone="warning" />
               <StatusPill tone="open">In Legal</StatusPill>
             </Group>
+          </Section>
+
+          <Section title="Notices">
+            <Stack gap="sm">
+              <Notice tone="error" title="Couldn't load this client.">
+                Check the connection, then retry.
+              </Notice>
+              <Notice tone="warning" title="data_api_off needs a person">
+                Dashboard → zm-matrix-retail → Integrations → Data API → off
+              </Notice>
+            </Stack>
           </Section>
 
           <Section title="Stage tracker">

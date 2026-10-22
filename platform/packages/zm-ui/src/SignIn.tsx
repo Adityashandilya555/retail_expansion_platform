@@ -1,6 +1,7 @@
 import { Button, Center, Paper, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useState, type ReactNode } from "react";
+import { TONE_COLORS } from "./theme";
 
 /** The centred card each sign-in step sits in, in the client app and the owner console (#22). */
 export function AuthCard({ title, description, children }: { title: ReactNode; description?: ReactNode; children: ReactNode }) {
@@ -75,5 +76,10 @@ export function SignInForm({
 
 /** An error the person can act on, as a Mantine notification (inside ZmProvider). */
 export function notifyError(message: string) {
-  notifications.show({ color: "red", title: "Couldn't continue", message });
+  notifications.show({ color: TONE_COLORS.error, title: "Couldn't continue", message });
+}
+
+/** News that isn't a failure, e.g. "nothing to publish", as a Mantine notification. */
+export function notifyInfo(title: string, message: string) {
+  notifications.show({ color: TONE_COLORS.neutral, title, message });
 }
