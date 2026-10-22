@@ -609,3 +609,33 @@ def test_the_same_key_at_the_same_moment_submits_once(world: World, mx1: dict) -
         "select count(*), max(status) from app.submissions where operaton_task_id = %s",
         task["id"],
     ) == [(1, "committed")]
+
+
+def test_a_refused_completion_gives_the_task_back_to_its_group(
+    world: World, mx1: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code = world.start("bd1", "audit", {"audit_store": "Malleshwaram"}).json()["code"]
+    task = world.task("bd1", "zm:audit_check", code)
+
+    async def rejected(self: OperatonClient, task_id: str, values: dict) -> None:
+        raise OperatonError("complete", 400, "BadUserRequestException")
+
+    with monkeypatch.context() as m:
+        m.setattr(OperatonClient, "complete", rejected)
+        response = world.submit("bd1", task["id"], "rejected-1", outcome="pass")
+    assert response.status_code == 400
+    status = "select status from app.submissions where idempotency_key = 'rejected-1'"
+    assert vault_sql("pilot", status) == [("failed",)]
+    with op("pilot") as client:
+        assert client.get(f"task/{task['id']}").json()["assignee"] is None  # unclaimed again
+    # and with a new key it goes through (a failed submission doesn't hold the task)
+    assert world.submit("bd1", task["id"], outcome="pass").json()["status"] == "committed"
+
+
+def test_a_case_starts_with_its_flows_routing_variables_null(world: World, mx1: dict) -> None:
+    with op("pilot") as client:
+        found = client.get(
+            "variable-instance",
+            params={"processInstanceIdIn": mx1["process_instance_id"], "variableName": "lic_fssai"},
+        ).json()
+    assert [(v["name"], v["value"]) for v in found] == [("lic_fssai", None)]

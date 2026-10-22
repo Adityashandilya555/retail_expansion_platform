@@ -117,3 +117,16 @@ def test_one_clients_failure_doesnt_stop_the_others(monkeypatch: pytest.MonkeyPa
     assert out == {"broken": Counter(error=1), "pilot": Counter(committed=1), "qsr": Counter()}
     assert seen == [("pilot", 0), ("qsr", 0)]
     assert FakeResolver.closed
+
+
+def test_an_unconfigured_reconciler_is_reported_once(
+    ticks: list[float], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.delenv("SECRETS_ENCRYPTION_KEY")
+    monkeypatch.setattr(worker_main, "_warned", False)
+    with caplog.at_level(logging.WARNING, logger="zm_worker"):
+        worker_main.tick()
+        worker_main.tick()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == ["reconciler off: set SECRETS_ENCRYPTION_KEY"]
+    assert ticks == []

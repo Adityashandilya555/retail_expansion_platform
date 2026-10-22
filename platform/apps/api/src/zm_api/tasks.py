@@ -12,10 +12,11 @@ reconciler (`reconcile`) finishes the submission from Operaton's history, withou
 task a second time.
 """
 
+import asyncio
 import logging
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
@@ -40,6 +41,7 @@ from zm_api.errors import (
 )
 from zm_api.operaton import Json, OperatonError
 from zm_api.releases import ReleaseRow
+from zm_compiler import level_groups
 from zm_schema import group_id, submission_errors
 
 _log = logging.getLogger("zm_api.tasks")
@@ -88,26 +90,48 @@ def initiator_groups(groups: Iterable[str]) -> str:
 # --- the release's workflow (as published, plain JSON) -----------------------------------------
 
 
-def _levels(workflow: Mapping[str, Any], department: str) -> list[int]:
-    for d in workflow["org"]["departments"]:
-        if d["key"] == department:
-            return sorted(lv["n"] for lv in d["levels"])
-    return []
+def _org_levels(workflow: Mapping[str, Any]) -> dict[str, list[int]]:
+    return {d["key"]: sorted(lv["n"] for lv in d["levels"]) for d in workflow["org"]["departments"]}
 
 
 def starter_groups(workflow: Mapping[str, Any], flow: Mapping[str, Any]) -> set[str]:
-    """The groups that may start `flow`, expanded like the compiler's `candidateStarterGroups`."""
+    """The groups that may start `flow`: the compiler's own `candidateStarterGroups` rule."""
+    levels = _org_levels(workflow)
     out: set[str] = set()
     for p in flow["start"]["performers"]:
         if "department" in p:
-            ns = _levels(workflow, p["department"])
-            ns = [n for n in ns if n >= p["level"]] if p.get("or_above") else [p["level"]]
-            out |= {group_id(p["department"], n) for n in ns}
+            out |= set(level_groups(levels, p["department"], p["level"], p.get("or_above", False)))
     return out
 
 
 def _flow(workflow: Mapping[str, Any], flow_key: str) -> dict[str, Any] | None:
     return next((f for f in workflow["flows"] if f["key"] == flow_key), None)
+
+
+def _flow_tasks(flow: Mapping[str, Any]) -> Iterator[dict[str, Any]]:
+    for stage in flow["stages"]:
+        for item in stage["tasks"]:
+            yield from item.get("parallel", [item])
+
+
+def flow_routing_names(routing_vars: Mapping[str, list[str]], flow: Mapping[str, Any]) -> set[str]:
+    """Every routing variable a step of `flow` passes to Operaton. A case starts with each of
+    them set to null, so a rule reading one that no form has filled yet sees null instead of
+    failing, and a later form that leaves it out doesn't overwrite it."""
+    ids = {t["id"] for t in _flow_tasks(flow)}
+    names: set[str] = set()
+    for key, found in routing_vars.items():
+        if key.split("__appr_", 1)[0] in ids:
+            names |= set(found)
+    return names
+
+
+def assignee_fields(flow: Mapping[str, Any]) -> set[str]:
+    """`user` fields that assign a later step (`performer: {from_field}`): a form that shows one
+    must fill it, or that step would have nobody."""
+    return {
+        t["performer"]["from_field"] for t in _flow_tasks(flow) if "from_field" in t["performer"]
+    }
 
 
 def stage_of(workflow: Mapping[str, Any], task_def_key: str) -> dict[str, Any] | None:
@@ -119,6 +143,11 @@ def stage_of(workflow: Mapping[str, Any], task_def_key: str) -> dict[str, Any] |
                 if any(t["id"] == task_id for t in item.get("parallel", [item])):
                     return stage
     return None
+
+
+def counter_key(pattern: str) -> str:
+    """`MX-{seq:4}` → `MX-{seq}`: widening a pattern keeps its sequence, so codes stay unique."""
+    return _SEQ.sub("{seq}", pattern)
 
 
 def case_code(pattern: str, seq: int) -> str:
@@ -133,8 +162,7 @@ def visible_form(form: Mapping[str, Any], levels: Mapping[str, int]) -> dict[str
     layout = form["layout"]
 
     def hidden(section: Mapping[str, Any]) -> bool:
-        rule = section.get("hidden_below_level")
-        return bool(rule) and levels.get(rule["department"], 0) < rule["level"]
+        return _hidden(section, levels)
 
     shown = [s for s in layout if not hidden(s)]
     if len(shown) == len(layout):
@@ -151,19 +179,48 @@ def visible_form(form: Mapping[str, Any], levels: Mapping[str, int]) -> dict[str
     return {"schema": schema, "layout": shown}
 
 
-def _validate(form: Mapping[str, Any], values: Mapping[str, Any]) -> None:
+def _hidden(section: Mapping[str, Any], levels: Mapping[str, int]) -> bool:
+    rule = section.get("hidden_below_level")
+    return bool(rule) and levels.get(rule["department"], 0) < rule["level"]
+
+
+def hidden_fields(workflow: Mapping[str, Any], levels: Mapping[str, int]) -> set[str]:
+    """Fields the user never sees in any form (every section placing them is hidden from their
+    level): kept out of a task's `show` too."""
+    placed: set[str] = set()
+    shown: set[str] = set()
+    for form in workflow.get("forms", {}).values():
+        for section in form["sections"]:
+            fields = {cell["field"] for row in section["rows"] for cell in row}
+            placed |= fields
+            if not _hidden(section, levels):
+                shown |= fields
+    return placed - shown
+
+
+def _validate(
+    form: Mapping[str, Any], values: Mapping[str, Any], assignees: Iterable[str] = ()
+) -> None:
     errors = submission_errors(form["schema"], dict(values))
+    paths = {e["path"] for e in errors}
+    for field in sorted(assignees):
+        empty = values.get(field) in (None, "")
+        if field in form["schema"].get("properties", {}) and empty and f"/{field}" not in paths:
+            errors.append({"path": f"/{field}", "message": "Required: it assigns a later step"})
     if errors:
+        errors.sort(key=lambda e: e["path"])
         raise FormInvalid([FieldError(**e) for e in errors])
 
 
 def routing_values(names: Iterable[str], values: Mapping[str, Any]) -> dict[str, Any]:
-    """Every routing variable (D5) of a form, so the compiled rules can always read it: a value
-    left blank (or in a section hidden from the user), a list or object, and a string longer
-    than Operaton's text column are sent as null; the full value stays in our database."""
+    """The routing variables (D5) present in `values`; a name left out is not sent, so it keeps
+    what an earlier form set (every one starts as null with the case). A list or object, and a
+    string longer than Operaton's text column, go as null; the full value stays with us."""
     out: dict[str, Any] = {}
     for name in names:
-        value = values.get(name)
+        if name not in values:
+            continue
+        value = values[name]
         if isinstance(value, dict | list) or (
             isinstance(value, str) and len(value) > MAX_ENGINE_TEXT
         ):
@@ -244,11 +301,12 @@ async def start_case(
     if not starter_groups(release.workflow, flow) & me.groups:
         raise Forbidden("You can't start this flow")
     key = f"start:{flow_key}"
-    _validate(visible_form(release.forms[key], me.levels), values)
+    _validate(visible_form(release.forms[key], me.levels), values, assignee_fields(flow))
 
     pattern = flow["case_code"]["pattern"]
-    code = case_code(pattern, await _next_seq(ctx, pattern))
+    code = case_code(pattern, await _next_seq(ctx, counter_key(pattern)))
     engine_values = {
+        **dict.fromkeys(flow_routing_names(release.routing_vars, flow)),
         **routing_values(release.routing_vars.get(key, []), values),
         # set after Operaton's own `initiator` (the service account): ours wins (#26 plan)
         "initiator": str(user_id),
@@ -259,7 +317,22 @@ async def start_case(
     definition = await ctx.operaton.definition_in(
         release.deployment_id, release.process_keys[flow_key]
     )
-    instance = await ctx.operaton.start(definition["id"], business_key=code, values=engine_values)
+    try:
+        instance = await ctx.operaton.start(
+            definition["id"], business_key=code, values=engine_values
+        )
+    except OperatonError as e:
+        if refused(e):
+            raise
+        # no clear answer: the engine may have started it anyway; find it by its code
+        found = await ctx.operaton.find_instances(
+            {"businessKey": code, "processDefinitionId": definition["id"]}
+        )
+        if not found:
+            raise ServiceUnavailable(
+                "The process engine didn't answer; start the case again"
+            ) from e
+        instance = found[0]
     try:
         async with ctx.db.begin() as conn:
             row = (
@@ -369,11 +442,12 @@ async def _items(
 
 def team_groups(workflow: Mapping[str, Any] | None, me: Person) -> set[str]:
     """Every level group of each department where the user is level 2 or above."""
+    levels = _org_levels(workflow) if workflow else {}
     out: set[str] = set()
     for dept, level in me.levels.items():
         if level >= 2:
-            ns = _levels(workflow, dept) if workflow else []
-            out |= {group_id(dept, n) for n in ns or range(1, level + 1)}
+            found = level_groups(levels, dept, 1, or_above=True)
+            out |= set(found) or {group_id(dept, n) for n in range(1, level + 1)}
     return out
 
 
@@ -388,24 +462,26 @@ async def list_tasks(
     (level 2 and above): every task of their departments' groups, assigned or not."""
     async with ctx.db.connect() as conn:
         me = await person(conn, user_id)
-        release = await releases.active_release(conn)
+        if scope == "team":
+            if not any(n >= 2 for n in me.levels.values()):
+                raise Forbidden("Team tasks are for level 2 and above")
+            release = await releases.active_release(conn)
     queries: list[dict[str, Any]] = []
     if scope == "team":
-        if not any(n >= 2 for n in me.levels.values()):
-            raise Forbidden("Team tasks are for level 2 and above")
         groups = team_groups(release.workflow if release else None, me)
         queries.append({"candidateGroups": sorted(groups), "includeAssignedTasks": True})
     else:
         queries.append({"assignee": str(user_id)})
         if me.groups:  # an empty candidateGroups list is an error in Operaton
             queries.append({"candidateGroups": sorted(me.groups), "unassigned": True})
-    found: dict[str, Json] = {}
     for q in queries:
         if case is not None:
             q["processInstanceBusinessKey"] = case
         q["sorting"] = [{"sortBy": "created", "sortOrder": "asc"}]
-        # shortcut: the first 200 per query; paging arrives with the inbox block (#30)
-        for t in await ctx.operaton.list_tasks(q):
+    # shortcut: the first 200 per query; paging arrives with the inbox block (#30)
+    found: dict[str, Json] = {}
+    for result in await asyncio.gather(*(ctx.operaton.list_tasks(q) for q in queries)):
+        for t in result:
             found.setdefault(t["id"], t)
     ordered = sorted(found.values(), key=lambda t: (t["created"], t["id"]))
     return [item for item, _, _ in await _items(ctx, ordered, flow)]
@@ -592,7 +668,8 @@ async def submit(
         merged[f"{key}_outcome"] = outcome
     if comment is not None:
         merged[f"{key}_comment"] = comment
-    _validate(view.form, merged)
+    flow = _flow(view.release.workflow, view.case.flow)
+    _validate(view.form, merged, assignee_fields(flow) if flow else ())
     outcome = merged.pop(f"{key}_outcome", None)
     comment = merged.pop(f"{key}_comment", None)
 
@@ -633,13 +710,20 @@ async def submit(
         raise Conflict("This task already has a submission being processed") from None
     sub = Submission(**row)
 
+    claimed = False
     try:
         if view.task.get("assignee") is None:
             await ctx.operaton.claim(task_id, str(user_id))
+            claimed = True
         await ctx.operaton.complete(
             task_id, sub.engine_values(view.release.routing_vars.get(key, []))
         )
     except ApiError as e:
+        if claimed and refused(e):  # give the task back to its group, as it was
+            try:
+                await ctx.operaton.unclaim(task_id)
+            except ApiError:
+                _log.warning("couldn't unclaim task %s", task_id, extra={"client": ctx.client.slug})
         if not refused(e):
             # no clear answer (timeout, engine error): Operaton may have completed it, so the
             # submission stays pending and the reconciler settles it from the task's history
@@ -660,11 +744,12 @@ def _claimed(e: ApiError) -> bool:
 
 
 def refused(e: ApiError) -> bool:
-    """True when Operaton clearly didn't take the call (nothing changed there): the task is
-    gone, the values were rejected, or someone else claimed it. A timeout, an unreachable
-    engine or another engine error is no clear answer."""
+    """True when Operaton clearly didn't take the call: the task is gone, or Operaton answered
+    with its own error, which it sends after rolling the command back (TaskResourceImpl.java:
+    130-132): rejected values, a failing rule, someone else's claim. A timeout, an unreachable
+    engine or a non-JSON answer (a proxy's 502) is no clear answer: it may have happened."""
     if isinstance(e, OperatonError):
-        return e.upstream_status == 400 or _claimed(e)
+        return e.upstream_type is not None or e.upstream_status == 400
     return True
 
 
@@ -723,9 +808,12 @@ async def _reconcile_one(ctx: ClientContext, sub: Submission) -> str:
         return await _fail(ctx, sub, "the task ended without this submission")
     if sub.attempts >= 1:
         return await _fail(ctx, sub, "the task is still open after a retried completion")
+    assignee = task.get("assignee")
+    if assignee is not None and assignee != str(sub.submitted_by):
+        return await _fail(ctx, sub, "someone else holds the task now")
     await _bump_attempts(ctx, sub.id)
     try:
-        if task.get("assignee") is None:
+        if assignee is None:
             await ctx.operaton.claim(sub.operaton_task_id, str(sub.submitted_by))
         await ctx.operaton.complete(
             sub.operaton_task_id, sub.engine_values(await _routing_names(ctx, sub))
@@ -766,6 +854,7 @@ async def reconcile(
             got = (
                 await lock.execute(text("select pg_try_advisory_lock(hashtext(:k))"), {"k": k})
             ).scalar_one()
+            await lock.commit()
             if not got:
                 counts["skipped"] += 1
                 continue
@@ -774,17 +863,17 @@ async def reconcile(
                 await lock.commit()
                 if sub is None or sub.status not in UNFINISHED:
                     counts["skipped"] += 1
-                    continue
-                try:
+                else:
                     counts[await _reconcile_one(ctx, sub)] += 1
-                except Exception:  # one bad row (or engine hiccup) mustn't stall the rest
-                    _log.exception(
-                        "reconciling submission %s failed",
-                        submission_id,
-                        extra={"client": ctx.client.slug},
-                    )
-                    counts["error"] += 1
+            except Exception:  # one bad row (or engine hiccup) mustn't stall the rest
+                _log.exception(
+                    "reconciling submission %s failed",
+                    submission_id,
+                    extra={"client": ctx.client.slug},
+                )
+                counts["error"] += 1
             finally:
+                await lock.rollback()  # the advisory lock is per session: it survives this
                 await lock.execute(text("select pg_advisory_unlock(hashtext(:k))"), {"k": k})
                 await lock.commit()
     return counts

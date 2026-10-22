@@ -27,6 +27,13 @@ from zm_schema import migrate
 
 from .conftest import bearer, token
 
+START = {
+    "site_name": "Indiranagar",
+    "city": "Bengaluru",
+    "address": "12th Main",
+    "store_model": "kiosk",
+}
+
 
 def matrix_retail() -> dict[str, Any]:
     return copy.deepcopy(next(t.workflow for t in load_templates() if t.key == "matrix-retail"))
@@ -139,7 +146,7 @@ def test_every_routing_variable_is_sent_and_only_scalars_within_the_text_column(
         "unrouted": "secret",
     }
     names = ["ca_amount", "kyc_done", "address", "items", "short", "long", "blank"]
-    # blank, hidden or too big for Operaton: null, so the compiled rules can still read it
+    # too big or not a scalar: null; left out: not sent, so an earlier value stays
     assert tasks.routing_values(names, values) == {
         "ca_amount": 5,
         "kyc_done": True,
@@ -147,8 +154,43 @@ def test_every_routing_variable_is_sent_and_only_scalars_within_the_text_column(
         "items": None,
         "short": "ok",
         "long": None,
-        "blank": None,
     }
+
+
+def test_a_case_starts_with_every_routing_variable_of_its_flow() -> None:
+    doc = matrix_retail()
+    release = compile(migrate(doc), "pilot-local")
+    names = tasks.flow_routing_names(release.routing_vars, doc["flows"][0])
+    assert {"design_exec", "bd_review_draft_outcome", "lic_fssai"} <= names
+    approvals = {k for k in release.routing_vars if "__appr_" in k}
+    assert all(f"{k}_outcome" in names for k in approvals)
+    assert "initiator" not in names  # set from the user at start, never null
+    assert tasks.assignee_fields(doc["flows"][0]) >= {"design_exec", "pe_exec", "project_exec"}
+
+
+def test_a_form_that_shows_an_assignee_field_must_fill_it() -> None:
+    doc = matrix_retail()
+    doc["fields"]["design_exec"]["required"] = False  # optional in the form, yet it assigns
+    spec = form(doc, "design_allocate")
+    tasks._validate(spec, {})  # the schema alone lets it through
+    with pytest.raises(FormInvalid) as e:
+        tasks._validate(spec, {}, {"design_exec"})
+    assert [(err.path, err.message) for err in e.value.errors] == [
+        ("/design_exec", "Required: it assigns a later step")
+    ]
+    tasks._validate(spec, {"design_exec": str(uuid.uuid4())}, {"design_exec"})
+    tasks._validate(form(doc, "start:store_launch"), START, {"design_exec"})  # not on this form
+
+
+def test_hidden_fields_are_the_ones_no_visible_section_places() -> None:
+    doc = with_hidden_section(matrix_retail())
+    assert tasks.hidden_fields(doc, {"legal": 1}) == {"dd_partner_notes"}
+    assert tasks.hidden_fields(doc, {"legal": 2}) == set()
+
+
+def test_widening_a_case_code_keeps_its_counter() -> None:
+    assert tasks.counter_key("MX-{seq:3}") == tasks.counter_key("MX-{seq:4}") == "MX-{seq}"
+    assert tasks.counter_key("AU-{seq:2}") != tasks.counter_key("MX-{seq:2}")
 
 
 def submission(**changes: Any) -> tasks.Submission:
@@ -181,9 +223,11 @@ def test_which_engine_errors_are_a_clear_refusal() -> None:
     assert tasks.refused(NotFound())
     assert tasks.refused(OperatonError("complete", 400, "BadUserRequestException"))
     assert tasks.refused(OperatonError("claim", 500, "TaskAlreadyClaimedException"))
+    # Operaton's own error answer comes after it rolled back: a refusal
+    assert tasks.refused(OperatonError("complete", 500, "ProcessEngineException"))
     # no clear answer: Operaton may have done it
     assert not tasks.refused(OperatonError("complete", None, None))  # timeout, unreachable
-    assert not tasks.refused(OperatonError("complete", 500, "ProcessEngineException"))
+    assert not tasks.refused(OperatonError("complete", 502, None))  # a proxy's non-JSON 502
 
 
 class FakeEngine:
@@ -271,15 +315,25 @@ def test_reconcile_retries_an_open_task_once(ledger: list) -> None:
 
 
 def test_reconcile_fails_an_open_task_after_one_retry(ledger: list) -> None:
-    engine = FakeEngine({"assignee": "u"}, [])
+    engine = FakeEngine({"assignee": None}, [])
     assert settle(engine, submission(attempts=1)) == "failed"
     assert "complete" not in engine.calls and ledger == [("status", "failed")]
 
 
+def test_reconcile_never_completes_a_task_someone_else_holds(ledger: list) -> None:
+    engine = FakeEngine({"assignee": "someone-else"}, [])
+    assert settle(engine, submission()) == "failed"
+    assert engine.calls == ["get_task"] and ledger == [("status", "failed")]
+    mine = submission()
+    engine = FakeEngine({"assignee": str(mine.submitted_by)}, [])
+    assert settle(engine, mine) == "committed"
+    assert engine.calls == ["get_task", "complete"]  # already ours: no claim
+
+
 def test_reconcile_retry_refused_fails_but_no_answer_waits(ledger: list) -> None:
-    refused = FakeEngine({"assignee": "u"}, [], OperatonError("complete", 400, "Bad"))
+    refused = FakeEngine({"assignee": None}, [], OperatonError("complete", 400, "Bad"))
     assert settle(refused, submission()) == "failed"
-    silent = FakeEngine({"assignee": "u"}, [], OperatonError("complete", None, None))
+    silent = FakeEngine({"assignee": None}, [], OperatonError("complete", None, None))
     assert settle(silent, submission()) == "retried"
     assert ledger == [("attempt",), ("status", "failed"), ("attempt",)]
 
@@ -350,9 +404,10 @@ async def _new_operaton_calls() -> None:
     links = respx.get(f"{base}/task/t%201/identity-links", params={"type": "candidate"}).mock(
         return_value=httpx.Response(200, json=[{"groupId": "legal__L1", "type": "candidate"}])
     )
-    instances = respx.get(
-        f"{base}/process-instance", params={"processInstanceIds": "a,b", "maxResults": "2"}
-    ).mock(return_value=httpx.Response(200, json=[{"id": "a", "businessKey": "MX-0001"}]))
+    instances = respx.post(f"{base}/process-instance").mock(
+        return_value=httpx.Response(200, json=[{"id": "a", "businessKey": "MX-0001"}])
+    )
+    unclaim = respx.post(f"{base}/task/t1/unclaim").mock(return_value=httpx.Response(204))
     delete = respx.delete(
         f"{base}/process-instance/a", params={"skipCustomListeners": "true"}
     ).mock(return_value=httpx.Response(204))
@@ -378,8 +433,17 @@ async def _new_operaton_calls() -> None:
             await op.definition_in("d2", "zm_x__f")
         assert await op.identity_links("t 1") == [{"groupId": "legal__L1", "type": "candidate"}]
         assert await op.process_instances(["a", "b"]) == [{"id": "a", "businessKey": "MX-0001"}]
+        # in the body: hundreds of ids would overflow the request line
+        assert json.loads(instances.calls[0].request.content) == {"processInstanceIds": ["a", "b"]}
+        await op.unclaim("t1")
         assert await op.process_instances([]) == []  # no call for nothing
         await op.delete_process_instance("a")
     finally:
         await op.aclose()
-    assert links.called and instances.call_count == 1 and delete.called and definitions.called
+    assert (
+        links.called
+        and instances.call_count == 1
+        and delete.called
+        and definitions.called
+        and unclaim.called
+    )

@@ -11,23 +11,31 @@ from zm_worker import logs, vault_migrate
 log = logging.getLogger("zm_worker")
 
 RECONCILE_EVERY = 60.0  # seconds between reconciler passes (#26)
+RECONCILE_ENV = ("PLATFORM_DATABASE_URL", "SECRETS_ENCRYPTION_KEY")
 _last_reconcile: float | None = None
+_warned = False
 
 
 def tick() -> None:
     """One pass of the worker loop: the submission reconciler (#26) at most every minute, once
     PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY are set. Provisioning arrives with S2-02a/b."""
-    global _last_reconcile
+    global _last_reconcile, _warned
     log.info("tick")
     now = time.monotonic()
-    if not (os.environ.get("PLATFORM_DATABASE_URL") and os.environ.get("SECRETS_ENCRYPTION_KEY")):
-        return  # not configured for it yet (both are needed to reach the clients)
+    missing = [v for v in RECONCILE_ENV if not os.environ.get(v)]
+    if missing:
+        if not _warned:  # stuck submissions then block their tasks: say why, once
+            log.warning("reconciler off: set %s", " and ".join(missing))
+            _warned = True
+        return
     if _last_reconcile is not None and now - _last_reconcile < RECONCILE_EVERY:
         return
     _last_reconcile = now
-    from zm_worker import reconcile  # imports zm_api: only once there is something to reconcile
-
     try:
+        # imports zm_api: only once there is something to reconcile, and inside the try so a
+        # broken image logs instead of crash-looping
+        from zm_worker import reconcile
+
         reconcile.run_once()
     except Exception:  # the registry is down: try again next minute, keep the loop alive
         log.exception("reconcile pass failed")

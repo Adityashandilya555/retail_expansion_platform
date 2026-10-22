@@ -107,7 +107,9 @@ async def list_tasks(
 async def get_task(task_id: str, ctx: ClientCtx, uid: UserId) -> TaskDetail:
     """One task with its case, its form as this user sees it, and the values it shows."""
     view = await tasks.open_task(ctx, uid, task_id)
-    show = await tasks.shown_values(ctx, view.case.id, view.form["schema"].get("x-zm-show", []))
+    hidden = tasks.hidden_fields(view.release.workflow, view.me.levels)
+    fields = [f for f in view.form["schema"].get("x-zm-show", []) if f not in hidden]
+    show = await tasks.shown_values(ctx, view.case.id, fields)
     return TaskDetail(
         task=_task(view.item),
         case=CaseOut(**view.case.__dict__),

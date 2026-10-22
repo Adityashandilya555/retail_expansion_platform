@@ -146,18 +146,21 @@ The client app works cases and tasks through `/app` (a client user's token; `zm_
 | `GET /app/tasks/{id}` | The task, its case, its form `{schema, layout}` minus the sections hidden below the user's level, and its `show` values. |
 | `POST /app/tasks/{id}/submit {values, outcome?, comment?}` | Needs an `Idempotency-Key` header. Repeating a key returns the first result. |
 
-**Where values go:** only routing variables reach Operaton (D5), and every one of them is always sent, so the compiled rules can read it. A blank value, a list or object, or a string over 4000 characters goes as `null`. Every value a person enters is stored in `app.submissions` and `app.case_values`.
+**Where values go:** only routing variables reach Operaton (D5). A case starts with every routing variable of its flow set to `null`, so a rule always has a value to read. Each submission then sends only the routing values it contains, which leaves earlier values in place. A list or object, or a string over 4000 characters, is sent as `null`. Every value a person enters is stored in `app.submissions` and `app.case_values`.
 
-**Submission lifecycle:** a submission is `pending`, then `completed` (Operaton took it), then `committed` (its values are written). Each task has at most one live submission. A submission is `failed` only when Operaton clearly refused it:
-- the values were rejected, or the task is gone;
-- someone else claimed the task, which gives 409.
+A form that shows a `user` field assigning a later step must fill it. Fields hidden from a user's level are also kept out of their `show`.
 
-A timeout or an engine error gives 503, and the submission stays `pending` for the reconciler.
+**Submission lifecycle:** a submission is `pending`, then `completed` (Operaton took it), then `committed` (its values are written). Each task has at most one live submission. A submission is `failed` when Operaton answered with its own error, which it sends after rolling back:
+- rejected values or a failing rule: the task is unclaimed again;
+- the task is gone;
+- someone else claimed it, which gives 409.
+
+A timeout, an unreachable engine or a non-JSON answer gives 503, and the submission stays `pending` for the reconciler. A start with no clear answer looks the case up by its code before giving up.
 
 **Reconciler:** the worker (`zm-worker`, or by hand with `zm-worker reconcile`) runs it every minute on every ready client. It settles submissions left `pending`/`completed` for more than 2 minutes:
 - a `completed` one gets its values written;
 - a `pending` one whose task completed is committed from Operaton's history, without completing it again;
-- a `pending` one whose task is still open gets one more completion attempt; if the task is still open after that, it is `failed`.
+- a `pending` one whose task is still open, and isn't held by someone else, gets one more completion attempt; if the task is still open after that, it is `failed`.
 
 One bad row doesn't stop the pass. The worker needs `PLATFORM_DATABASE_URL` and `SECRETS_ENCRYPTION_KEY`, like the API.
 
