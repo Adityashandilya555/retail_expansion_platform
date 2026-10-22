@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 
 // Every package source file as text (Vite's raw glob). Colours live only in theme.ts.
-const sources = import.meta.glob<string>("../../*/src/**/*.{ts,tsx}", { query: "?raw", import: "default", eager: true });
+const sources = import.meta.glob<string>("../../*/{src,layouts,blocks}/**/*.{ts,tsx}", { query: "?raw", import: "default", eager: true });
 const COLOUR = /#[0-9a-fA-F]{3,8}\b|\brgba?\(/;
 
 test("no hex or rgb colours in packages/*/src outside theme.ts", () => {
