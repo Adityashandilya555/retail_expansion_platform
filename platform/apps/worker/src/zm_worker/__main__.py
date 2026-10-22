@@ -4,15 +4,33 @@ import os
 import signal
 import sys
 import threading
+import time
 
 from zm_worker import logs, vault_migrate
 
 log = logging.getLogger("zm_worker")
 
+RECONCILE_EVERY = 60.0  # seconds between reconciler passes (#26)
+_last_reconcile: float | None = None
+
 
 def tick() -> None:
-    """One pass of the worker loop. Provisioning and reconciling arrive with S2-02a/b."""
+    """One pass of the worker loop: the submission reconciler (#26) at most every minute, once
+    PLATFORM_DATABASE_URL is set. Provisioning arrives with S2-02a/b."""
+    global _last_reconcile
     log.info("tick")
+    now = time.monotonic()
+    if not os.environ.get("PLATFORM_DATABASE_URL"):
+        return
+    if _last_reconcile is not None and now - _last_reconcile < RECONCILE_EVERY:
+        return
+    _last_reconcile = now
+    from zm_worker import reconcile  # imports zm_api: only once there is something to reconcile
+
+    try:
+        reconcile.run_once()
+    except Exception:  # the registry is down: try again next minute, keep the loop alive
+        log.exception("reconcile pass failed")
 
 
 def run(stop: threading.Event, interval: float) -> None:
@@ -42,8 +60,15 @@ def main(argv: list[str] | None = None) -> None:
     if args[:1] == ["vault-migrate"]:
         migrate(args[1:])
         return
+    if args[:1] == ["reconcile"]:  # one pass by hand: `zm-worker reconcile`
+        from zm_worker import reconcile
+
+        reconcile.run_once()
+        return
     if args:
-        sys.exit(f"unknown command {args[0]!r}; usage: zm-worker [vault-migrate --dsn URL]")
+        sys.exit(
+            f"unknown command {args[0]!r}; usage: zm-worker [vault-migrate --dsn URL | reconcile]"
+        )
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())

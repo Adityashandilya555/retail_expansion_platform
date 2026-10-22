@@ -62,6 +62,10 @@ class ApiError(Exception):
         self.headers = headers
 
 
+class BadRequest(ApiError):
+    status = 400
+
+
 class NotFound(ApiError):
     status = 404
 
@@ -87,6 +91,14 @@ class UnprocessableContent(ApiError):
     """A well-formed request about something that can't be processed, e.g. an invalid draft."""
 
     status = 422
+
+
+class FormInvalid(UnprocessableContent):
+    """Submitted values that fail their form's schema: one entry per field, as @zm/forms shows."""
+
+    def __init__(self, errors: list[FieldError]) -> None:
+        super().__init__("Some values are not valid")
+        self.errors = errors
 
 
 class TooManyRequests(ApiError):
@@ -125,7 +137,7 @@ def _pointer(loc: tuple[int | str, ...]) -> str:
 
 async def _api_error(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, ApiError)
-    return problem(exc.status, exc.detail, exc.headers)
+    return problem(exc.status, exc.detail, exc.headers, getattr(exc, "errors", None))
 
 
 async def _http_error(_: Request, exc: Exception) -> JSONResponse:

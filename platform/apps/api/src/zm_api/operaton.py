@@ -184,6 +184,19 @@ class OperatonClient:
         path = f"process-definition/key/{_id(key)}/start"
         return await self._call("start_by_key", "POST", path, json=body)
 
+    async def process_instances(self, ids: list[str]) -> list[Json]:
+        """Running process instances by id, in one call (ProcessInstanceQueryDto.java:75); each has
+        `businessKey`. Stage processes get the case's business key from their call activity."""
+        if not ids:
+            return []
+        params = {"processInstanceIds": ",".join(ids), "maxResults": len(ids)}
+        return await self._call("process_instances", "GET", "process-instance", params=params)
+
+    async def delete_process_instance(self, instance_id: str) -> None:
+        path = f"process-instance/{_id(instance_id)}"
+        params = {"skipCustomListeners": "true"}
+        await self._call("delete_process_instance", "DELETE", path, params=params)
+
     async def list_tasks(
         self, query: Mapping[str, Any], *, first: int = 0, max_results: int = 200
     ) -> list[Json]:
@@ -193,6 +206,11 @@ class OperatonClient:
 
     async def get_task(self, task_id: str) -> Json:
         return await self._call("get_task", "GET", f"task/{_id(task_id)}")
+
+    async def identity_links(self, task_id: str) -> list[Json]:
+        """The task's candidate users and groups: `[{userId, groupId, type: "candidate"}]`."""
+        path = f"task/{_id(task_id)}/identity-links"
+        return await self._call("identity_links", "GET", path, params={"type": "candidate"})
 
     async def claim(self, task_id: str, user_id: str) -> None:
         await self._call("claim", "POST", f"task/{_id(task_id)}/claim", json={"userId": user_id})

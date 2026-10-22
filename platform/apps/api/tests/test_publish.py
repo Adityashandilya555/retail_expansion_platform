@@ -130,6 +130,7 @@ def clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[Clients]:
     cfg.cmd_opts = argparse.Namespace(x=["db=platform"])
     command.upgrade(cfg, "head")
     for vault in VAULTS:
+        vault_sql(vault, "delete from app.cases")  # cases (#26) point at their release
         vault_sql(vault, "delete from app.releases")
         vault_sql(vault, "delete from app.drafts")
 
@@ -155,6 +156,7 @@ def clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[Clients]:
     asyncio.run(platform_sql("delete from platform.owners where id = :o", o=c.owner))
     releases_cache_clear()
     for vault in VAULTS:  # other tests on this stack expect no release (e.g. the sign-in look)
+        vault_sql(vault, "delete from app.cases")  # cases (#26) point at their release
         vault_sql(vault, "delete from app.releases")
         vault_sql(vault, "delete from app.drafts")
     for name in ("pilot", "qsr"):

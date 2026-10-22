@@ -136,6 +136,26 @@ curl -X POST -H "Authorization: Bearer <owner token>" $API_BASE_URL/owner/client
 
 Running cases keep their version: `release_for_task()` resolves a task's forms through its process definition's deployment.
 
+## Cases and tasks (#26)
+The client app works cases and tasks through `/app` (a client user's token; `zm_api.tasks`):
+
+| Endpoint | What it does |
+|---|---|
+| `POST /app/cases {flow, values}` | Starts a case of any flow on the active release. The user must hold one of the flow's start groups. The values are checked against `start:<flow>`. The code (`MX-0001`) is the Operaton business key. |
+| `GET /app/tasks?scope=mine\|team&flow=&case=` | `mine` is the user's tasks plus their groups' unclaimed ones. `team` (level 2 and up) is every task of their departments. |
+| `GET /app/tasks/{id}` | The task, its case, its form `{schema, layout}` minus the sections hidden below the user's level, and its `show` values. |
+| `POST /app/tasks/{id}/submit {values, outcome?, comment?}` | Needs an `Idempotency-Key` header. Repeating a key returns the first result. |
+
+**Where values go:** only routing variables reach Operaton (D5): scalars of at most 4000 characters. Every value a person enters is stored in `app.submissions` and `app.case_values`.
+
+**Submission lifecycle:** a submission is `pending`, then `completed` (Operaton took it), then `committed` (its values are written). It is `failed` when Operaton refused it.
+
+**Reconciler:** the worker (`zm-worker`, or by hand with `zm-worker reconcile`) runs it every minute on every ready client. It finishes submissions left `pending`/`completed` for more than 2 minutes:
+- if the task already completed, it writes the values;
+- if the task is still open, it retries the completion once.
+
+The worker needs `PLATFORM_DATABASE_URL` and `SECRETS_ENCRYPTION_KEY`, like the API.
+
 ## Layout
 ```
 apps/api            FastAPI platform API              (Python, uv workspace)

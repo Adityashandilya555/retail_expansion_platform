@@ -948,7 +948,11 @@ version = "0.0.0"
 source = { editable = "apps/worker" }
 dependencies = [
     { name = "psycopg", extra = ["binary"] },
+    { name = "zm-api" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "psycopg", extras = ["binary"], specifier = ">=3.3" }]
+requires-dist = [
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3" },
+    { name = "zm-api", editable = "apps/api" },
+]

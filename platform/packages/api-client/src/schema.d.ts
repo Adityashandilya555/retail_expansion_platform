@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/app/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Case
+         * @description Start a case of one of the workflow's flows, with its start form's values.
+         */
+        post: operations["start_case_app_cases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/app/me": {
         parameters: {
             query?: never;
@@ -18,6 +38,68 @@ export interface paths {
         get: operations["me_app_me_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tasks
+         * @description `mine`: the user's tasks and their groups' unclaimed ones. `team` (level 2+): every task
+         *     of their departments. `flow` and `case` (a case code) narrow the list.
+         */
+        get: operations["list_tasks_app_tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Task
+         * @description One task with its case, its form as this user sees it, and the values it shows.
+         */
+        get: operations["get_task_app_tasks__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/tasks/{task_id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Task
+         * @description Submit a task. Send a fresh `Idempotency-Key` per submission; repeating a key returns the
+         *     first result instead of submitting again.
+         */
+        post: operations["submit_task_app_tasks__task_id__submit_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -204,6 +286,46 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CaseIn */
+        CaseIn: {
+            /**
+             * Flow
+             * @description Key of one of the workflow's flows.
+             */
+            flow: string;
+            /**
+             * Values
+             * @description The flow's start form, field key → value.
+             * @default {}
+             */
+            values: {
+                [key: string]: unknown;
+            };
+        };
+        /** CaseOut */
+        CaseOut: {
+            /**
+             * Code
+             * @description e.g. `MX-0001`; also the Operaton business key.
+             */
+            code: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Flow */
+            flow: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Process Instance Id */
+            process_instance_id: string;
+            /** Release Version */
+            release_version: number;
+        };
         /** ClientInfo */
         ClientInfo: {
             /** Name */
@@ -220,6 +342,20 @@ export interface components {
              * @description JSON Pointer to the field, e.g. `/ca_amount`.
              */
             path: string;
+        };
+        /** FormOut */
+        FormOut: {
+            /** Layout */
+            layout: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Schema
+             * @description JSON Schema 2020-12 for the submission, without sections hidden from this user.
+             */
+            schema: {
+                [key: string]: unknown;
+            };
         };
         /** LoginIn */
         LoginIn: {
@@ -316,6 +452,87 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** SubmitIn */
+        SubmitIn: {
+            /** Comment */
+            comment?: string | null;
+            /**
+             * Outcome
+             * @description One of the task's outcome ids, when it has outcomes.
+             */
+            outcome?: string | null;
+            /**
+             * Values
+             * @default {}
+             */
+            values: {
+                [key: string]: unknown;
+            };
+        };
+        /** SubmitOut */
+        SubmitOut: {
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            /** Release Version */
+            release_version: number;
+            /**
+             * Status
+             * @description `committed` normally; `pending`/`completed` while a repeated request's first is running.
+             * @enum {string}
+             */
+            status: "pending" | "completed" | "committed" | "failed";
+            /**
+             * Submission Id
+             * Format: uuid
+             */
+            submission_id: string;
+        };
+        /** TaskDetail */
+        TaskDetail: {
+            case: components["schemas"]["CaseOut"];
+            /**
+             * Editable
+             * @description False when the user may only read the task (level 2+ in its department).
+             */
+            editable: boolean;
+            form: components["schemas"]["FormOut"];
+            /**
+             * Show
+             * @description Read-only values from earlier steps, by field key.
+             */
+            show: {
+                [key: string]: unknown;
+            };
+            task: components["schemas"]["TaskItem"];
+        };
+        /** TaskItem */
+        TaskItem: {
+            /** Assignee */
+            assignee: string | null;
+            /** Case Code */
+            case_code: string;
+            /** Created */
+            created: string;
+            /** Flow */
+            flow: string;
+            /**
+             * Form Key
+             * @description Operaton's form key, `zm:<task id>`.
+             */
+            form_key: string | null;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Stage
+             * @description Key of the stage the task belongs to.
+             */
+            stage: string | null;
+        };
         /** TokenOut */
         TokenOut: {
             /** Access Token */
@@ -352,6 +569,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    start_case_app_cases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     me_app_me_get: {
         parameters: {
             query?: never;
@@ -368,6 +618,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_tasks_app_tasks_get: {
+        parameters: {
+            query?: {
+                scope?: "mine" | "team";
+                flow?: string | null;
+                case?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskItem"][];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_task_app_tasks__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDetail"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    submit_task_app_tasks__task_id__submit_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmitOut"];
                 };
             };
             /** @description Problem details (RFC 9457) */

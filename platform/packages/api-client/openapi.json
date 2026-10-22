@@ -1,6 +1,68 @@
 {
   "components": {
     "schemas": {
+      "CaseIn": {
+        "properties": {
+          "flow": {
+            "description": "Key of one of the workflow's flows.",
+            "title": "Flow",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": true,
+            "default": {},
+            "description": "The flow's start form, field key \u2192 value.",
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "flow"
+        ],
+        "title": "CaseIn",
+        "type": "object"
+      },
+      "CaseOut": {
+        "properties": {
+          "code": {
+            "description": "e.g. `MX-0001`; also the Operaton business key.",
+            "title": "Code",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "flow": {
+            "title": "Flow",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "process_instance_id": {
+            "title": "Process Instance Id",
+            "type": "string"
+          },
+          "release_version": {
+            "title": "Release Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "flow",
+          "release_version",
+          "process_instance_id",
+          "created_at"
+        ],
+        "title": "CaseOut",
+        "type": "object"
+      },
       "ClientInfo": {
         "properties": {
           "name": {
@@ -36,6 +98,30 @@
           "message"
         ],
         "title": "FieldError",
+        "type": "object"
+      },
+      "FormOut": {
+        "properties": {
+          "layout": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Layout",
+            "type": "array"
+          },
+          "schema": {
+            "additionalProperties": true,
+            "description": "JSON Schema 2020-12 for the submission, without sections hidden from this user.",
+            "title": "Schema",
+            "type": "object"
+          }
+        },
+        "required": [
+          "schema",
+          "layout"
+        ],
+        "title": "FormOut",
         "type": "object"
       },
       "LoginIn": {
@@ -276,6 +362,182 @@
         "title": "PublishOut",
         "type": "object"
       },
+      "SubmitIn": {
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One of the task's outcome ids, when it has outcomes.",
+            "title": "Outcome"
+          },
+          "values": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "title": "SubmitIn",
+        "type": "object"
+      },
+      "SubmitOut": {
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "title": "Case Id",
+            "type": "string"
+          },
+          "release_version": {
+            "title": "Release Version",
+            "type": "integer"
+          },
+          "status": {
+            "description": "`committed` normally; `pending`/`completed` while a repeated request's first is running.",
+            "enum": [
+              "pending",
+              "completed",
+              "committed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submission_id": {
+            "format": "uuid",
+            "title": "Submission Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "submission_id",
+          "status",
+          "case_id",
+          "release_version"
+        ],
+        "title": "SubmitOut",
+        "type": "object"
+      },
+      "TaskDetail": {
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/CaseOut"
+          },
+          "editable": {
+            "description": "False when the user may only read the task (level 2+ in its department).",
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "form": {
+            "$ref": "#/components/schemas/FormOut"
+          },
+          "show": {
+            "additionalProperties": true,
+            "description": "Read-only values from earlier steps, by field key.",
+            "title": "Show",
+            "type": "object"
+          },
+          "task": {
+            "$ref": "#/components/schemas/TaskItem"
+          }
+        },
+        "required": [
+          "task",
+          "case",
+          "editable",
+          "form",
+          "show"
+        ],
+        "title": "TaskDetail",
+        "type": "object"
+      },
+      "TaskItem": {
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "case_code": {
+            "title": "Case Code",
+            "type": "string"
+          },
+          "created": {
+            "title": "Created",
+            "type": "string"
+          },
+          "flow": {
+            "title": "Flow",
+            "type": "string"
+          },
+          "form_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Operaton's form key, `zm:<task id>`.",
+            "title": "Form Key"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Key of the stage the task belongs to.",
+            "title": "Stage"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "flow",
+          "case_code",
+          "stage",
+          "created",
+          "assignee",
+          "form_key"
+        ],
+        "title": "TaskItem",
+        "type": "object"
+      },
       "TokenOut": {
         "properties": {
           "access_token": {
@@ -354,6 +616,48 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/app/cases": {
+      "post": {
+        "description": "Start a case of one of the workflow's flows, with its start form's values.",
+        "operationId": "start_case_app_cases_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Start Case",
+        "tags": [
+          "app"
+        ]
+      }
+    },
     "/app/me": {
       "get": {
         "description": "The signed-in user and memberships, read on every call so level changes apply at once.",
@@ -381,6 +685,202 @@
           }
         },
         "summary": "Me",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/tasks": {
+      "get": {
+        "description": "`mine`: the user's tasks and their groups' unclaimed ones. `team` (level 2+): every task\nof their departments. `flow` and `case` (a case code) narrow the list.",
+        "operationId": "list_tasks_app_tasks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "default": "mine",
+              "enum": [
+                "mine",
+                "team"
+              ],
+              "title": "Scope",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flow",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Flow"
+            }
+          },
+          {
+            "in": "query",
+            "name": "case",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Case"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TaskItem"
+                  },
+                  "title": "Response List Tasks App Tasks Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Tasks",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/tasks/{task_id}": {
+      "get": {
+        "description": "One task with its case, its form as this user sees it, and the values it shows.",
+        "operationId": "get_task_app_tasks__task_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Get Task",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/tasks/{task_id}/submit": {
+      "post": {
+        "description": "Submit a task. Send a fresh `Idempotency-Key` per submission; repeating a key returns the\nfirst result instead of submitting again.",
+        "operationId": "submit_task_app_tasks__task_id__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Submit Task",
         "tags": [
           "app"
         ]
