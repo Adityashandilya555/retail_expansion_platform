@@ -1,0 +1,23 @@
+[
+  {
+    "name": "every answer given",
+    "values": {
+      "dd_title_doc": true,
+      "dd_sanctioned_plan": true,
+      "dd_oc_cc": false,
+      "dd_commercial_use": true,
+      "dd_property_tax": true,
+      "dd_electricity": false,
+      "dd_notes": "OC pending with the municipality."
+    },
+    "paths": []
+  },
+  { "name": "nothing answered (every field is optional)", "values": {}, "paths": [] },
+  { "name": "a yes/no answer must be a boolean", "values": { "dd_title_doc": "yes" }, "paths": ["/dd_title_doc"] },
+  { "name": "a field the form doesn't have", "values": { "dd_extra": 1 }, "paths": ["/dd_extra"] },
+  {
+    "name": "a document reference with a bad hash",
+    "values": { "dd_report": { "key": "sites/MX-0001/legal_dd_checklist/dd_report/1-dd.pdf", "sha256": "abc", "name": "dd.pdf" } },
+    "paths": ["/dd_report/sha256"]
+  }
+]

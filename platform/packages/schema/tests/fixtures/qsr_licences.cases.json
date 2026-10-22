@@ -1,0 +1,6 @@
+[
+  { "name": "licence number and a valid date", "values": { "fssai_no": "10019022000123", "licence_valid_until": "2027-01-31" }, "paths": [] },
+  { "name": "licence number missing", "values": { "licence_valid_until": "2027-01-31" }, "paths": ["/fssai_no"] },
+  { "name": "a date that doesn't exist", "values": { "fssai_no": "10019022000123", "licence_valid_until": "2027-02-30" }, "paths": ["/licence_valid_until"] },
+  { "name": "a date in another format", "values": { "fssai_no": "10019022000123", "licence_valid_until": "31/01/2027" }, "paths": ["/licence_valid_until"] }
+]

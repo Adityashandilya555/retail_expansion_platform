@@ -99,7 +99,16 @@ CI fails if either generated file is stale. In Python, use `zm_schema.validate(d
 - the routing variables per task (D5);
 - the process keys.
 
-Golden files live in `packages/compiler/tests/golden/`. After an intended change, regenerate them with `ZM_UPDATE_GOLDEN=1 uv run pytest packages/compiler`. `pytest -m integration packages/compiler` deploys both templates to the local `operaton-pilot` and runs cases to `closed:legal` and `completed`.
+Golden files live in `packages/compiler/tests/golden/`, and the shared form fixtures in `packages/schema/tests/fixtures/*.schema.json`. After an intended change, regenerate both with `ZM_UPDATE_GOLDEN=1 uv run pytest packages/compiler`. `pytest -m integration packages/compiler` deploys both templates to the local `operaton-pilot` and runs cases to `closed:legal` and `completed`.
+
+## Forms
+`@zm/forms` (#28) renders a compiled form: `<ZmForm schema layout values? readOnly? caseLabel? caseData? onSubmit>`.
+- Sections become fieldsets; each row is a Mantine `Grid` with `span={{ base: 12, sm: n }}`, so phones get one column.
+- Fields by `x-zm-type`: `text`, `textarea`, `number`, `currency` (₹, lakh grouping), `date` (native), `select`, `yes_no` (Yes/No radios). `document` shows "Uploads arrive with Files"; any other type shows "unsupported in v1".
+- The outcome becomes buttons (the first is primary, `reject` is red) with the comment field above them. `caseData` fills the read-only "<case_label> data" panel for `x-zm-show`.
+- Ajv 2020 (`ajv`, `formErrors`, both exported) checks the values first. `onSubmit` gets them without unanswered fields and can resolve with the API's 422 errors (`[{path, message}]`) to show them under their fields.
+
+The API checks the same schema with `zm_schema.submission_errors(schema, values)`, which returns the same JSON Pointer paths. `packages/schema/tests/fixtures/*.cases.json` hold the shared cases, run by both vitest and pytest. Preview: `pnpm --filter @zm/web dev`, then open `/dev/ui`.
 
 ## Starter templates
 `packages/templates/<key>/workflow.json` holds the starter `workflow.json` documents. It's a data folder, not a code package:
