@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "fire_noc": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "sha256",
+        "name"
+      ],
+      "title": "Fire NOC",
+      "type": "object",
+      "x-zm-document": {
+        "accept": [
+          "pdf"
+        ],
+        "keep_versions": true,
+        "max_mb": 25
+      },
+      "x-zm-type": "document"
+    },
+    "fssai_no": {
+      "title": "FSSAI number",
+      "type": "string",
+      "x-zm-type": "text"
+    },
+    "licence_valid_until": {
+      "format": "date",
+      "title": "Valid until",
+      "type": "string",
+      "x-zm-type": "date"
+    }
+  },
+  "required": [
+    "fssai_no"
+  ],
+  "type": "object",
+  "x-zm-layout": [
+    {
+      "key": "licence",
+      "rows": [
+        [
+          {
+            "field": "fssai_no",
+            "span": 6
+          },
+          {
+            "field": "licence_valid_until",
+            "span": 6
+          }
+        ]
+      ],
+      "title": "Licence details"
+    },
+    {
+      "key": "documents",
+      "rows": [
+        [
+          {
+            "field": "fire_noc",
+            "span": 12
+          }
+        ]
+      ],
+      "title": "Documents"
+    }
+  ],
+  "x-zm-show": [
+    "store_name"
+  ]
+}

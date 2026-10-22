@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "ca_amount": {
+      "title": "Amount (INR)",
+      "type": "number",
+      "x-zm-type": "number"
+    },
+    "ca_code": {
+      "title": "CA code",
+      "type": "string",
+      "x-zm-type": "text"
+    },
+    "kyc_done": {
+      "title": "KYC complete",
+      "type": "boolean",
+      "x-zm-type": "yes_no"
+    },
+    "kyc_file": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "sha256",
+        "name"
+      ],
+      "title": "KYC documents",
+      "type": "object",
+      "x-zm-document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "keep_versions": false,
+        "max_mb": 25
+      },
+      "x-zm-type": "document"
+    }
+  },
+  "required": [
+    "ca_code",
+    "ca_amount"
+  ],
+  "type": "object",
+  "x-zm-layout": [
+    {
+      "key": "details",
+      "rows": [
+        [
+          {
+            "field": "ca_code",
+            "span": 12
+          }
+        ],
+        [
+          {
+            "field": "kyc_done",
+            "span": 12
+          }
+        ],
+        [
+          {
+            "field": "ca_amount",
+            "span": 12
+          }
+        ],
+        [
+          {
+            "field": "kyc_file",
+            "span": 12
+          }
+        ]
+      ],
+      "title": "Enter CA code, KYC and amount"
+    }
+  ]
+}

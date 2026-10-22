@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "dd_commercial_use": {
+      "title": "Commercial use permitted",
+      "type": "boolean",
+      "x-zm-type": "yes_no"
+    },
+    "dd_electricity": {
+      "title": "Electricity load OK",
+      "type": "boolean",
+      "x-zm-type": "yes_no"
+    },
+    "dd_notes": {
+      "title": "Notes",
+      "type": "string",
+      "x-zm-type": "textarea"
+    },
+    "dd_oc_cc": {
+      "title": "OC / CC",
+      "type": "boolean",
+      "x-zm-type": "yes_no"
+    },
+    "dd_property_tax": {
+      "title": "Property tax paid",
+      "type": "boolean",
+      "x-zm-type": "yes_no"
+    },
+    "dd_report": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "sha256",
+        "name"
+      ],
+      "title": "DD report",
+      "type": "object",
+      "x-zm-document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "keep_versions": false,
+        "max_mb": 25
+      },
+      "x-zm-type": "document"
+    },
+    "dd_sanctioned_plan": {
+      "title": "Sanctioned plan",
+      "type": "boolean",
+      "x-zm-type": "yes_no"
+    },
+    "dd_title_doc": {
+      "title": "Title document clear",
+      "type": "boolean",
+      "x-zm-type": "yes_no"
+    }
+  },
+  "required": [],
+  "type": "object",
+  "x-zm-layout": [
+    {
+      "key": "details",
+      "rows": [
+        [
+          {
+            "field": "dd_title_doc",
+            "span": 12
+          }
+        ],
+        [
+          {
+            "field": "dd_sanctioned_plan",
+            "span": 12
+          }
+        ],
+        [
+          {
+            "field": "dd_oc_cc",
+            "span": 12
+          }
+        ],
+        [
+          {
+            "field": "dd_commercial_use",
+            "span": 12
+          }
+        ],
+        [
+          {
+            "field": "dd_property_tax",
+            "span": 12
+          }
+        ],
+        [
+          {
+            "field": "dd_electricity",
+            "span": 12
+          }
+        ],
+        [
+          {
+            "field": "dd_report",
+            "span": 12
+          }
+        ],
+        [
+          {
+            "field": "dd_notes",
+            "span": 12
+          }
+        ]
+      ],
+      "title": "Fill DD checklist"
+    }
+  ],
+  "x-zm-show": [
+    "loi_file"
+  ]
+}

@@ -930,11 +930,15 @@ name = "zm-schema"
 version = "0.1.0"
 source = { editable = "packages/schema" }
 dependencies = [
+    { name = "jsonschema" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.11" }]
+requires-dist = [
+    { name = "jsonschema", specifier = ">=4.23" },
+    { name = "pydantic", specifier = ">=2.11" },
+]
 
 [[package]]
 name = "zm-worker"

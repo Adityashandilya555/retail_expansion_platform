@@ -1,0 +1,6 @@
+[
+  { "name": "required fields given", "values": { "ca_code": "CA-17", "ca_amount": 250000, "kyc_done": true }, "paths": [] },
+  { "name": "a required field missing", "values": { "ca_code": "CA-17" }, "paths": ["/ca_amount"] },
+  { "name": "both required fields missing", "values": { "kyc_done": false }, "paths": ["/ca_amount", "/ca_code"] },
+  { "name": "an amount that isn't a number", "values": { "ca_code": "CA-17", "ca_amount": "2.5L" }, "paths": ["/ca_amount"] }
+]

@@ -32,3 +32,6 @@ class ResizeObserver {
   disconnect() {}
 }
 window.ResizeObserver = ResizeObserver;
+
+// Textarea autosize listens for font loads.
+Object.defineProperty(document, "fonts", { configurable: true, value: new EventTarget() });

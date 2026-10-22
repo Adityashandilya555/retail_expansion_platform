@@ -1,0 +1,20 @@
+[
+  { "name": "approve without a comment", "values": { "qsr_licences__appr_legal_L3_outcome": "approve" }, "paths": [] },
+  {
+    "name": "send back without a comment",
+    "values": { "qsr_licences__appr_legal_L3_outcome": "send_back" },
+    "paths": ["/qsr_licences__appr_legal_L3_comment"]
+  },
+  {
+    "name": "send back with an empty comment",
+    "values": { "qsr_licences__appr_legal_L3_outcome": "send_back", "qsr_licences__appr_legal_L3_comment": "" },
+    "paths": ["/qsr_licences__appr_legal_L3_comment"]
+  },
+  {
+    "name": "reject with a comment",
+    "values": { "qsr_licences__appr_legal_L3_outcome": "reject", "qsr_licences__appr_legal_L3_comment": "FSSAI expired." },
+    "paths": []
+  },
+  { "name": "no decision", "values": { "qsr_licences__appr_legal_L3_comment": "Looks fine." }, "paths": ["/qsr_licences__appr_legal_L3_outcome"] },
+  { "name": "a decision that isn't offered", "values": { "qsr_licences__appr_legal_L3_outcome": "maybe" }, "paths": ["/qsr_licences__appr_legal_L3_outcome"] }
+]
