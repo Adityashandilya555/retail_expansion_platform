@@ -2,6 +2,10 @@
 // This is the only file in packages/*/src allowed to hold colour literals (no-hex.test.ts).
 import { createTheme, type MantineColorsTuple, type MantineThemeOverride } from "@mantine/core";
 
+/** Meaning → palette for states that aren't the accent. Components take these through @zm/ui
+ * (StatusPill, StageTracker, Notice, …); colour never carries meaning alone. */
+export const TONE_COLORS = { success: "green", error: "red", warning: "orange", neutral: "gray" } as const;
+
 /** Accents a user (or a client default) can pick. The first one is the default. */
 export const ACCENTS = ["slate", "blue", "indigo", "teal", "green", "copper", "plum", "pink"] as const;
 export type Accent = (typeof ACCENTS)[number];

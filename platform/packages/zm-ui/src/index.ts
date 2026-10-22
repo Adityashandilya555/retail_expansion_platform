@@ -4,6 +4,7 @@ export { AppFrame, type NavItem } from "./AppFrame";
 export { AppearanceMenu } from "./AppearanceMenu";
 export { AuthCard, SignInForm, notifyError } from "./SignIn";
 export { DataTable, type Column } from "./DataTable";
+export { Notice } from "./Notice";
 export { Num, formatNum } from "./Num";
 export { PageHeader } from "./PageHeader";
 export { StageTracker, type Stage, type StageState } from "./StageTracker";
@@ -12,6 +13,7 @@ export {
   ACCENTS,
   DEFAULT_PRESET,
   PRESETS,
+  TONE_COLORS,
   createZmTheme,
   isAccent,
   resolveAccent,

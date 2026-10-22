@@ -1,9 +1,9 @@
 // Clients, their provisioning and publishing (#29). Provisioning itself is the worker's
 // (#24, #25): the API queues the steps, and the client page polls them every 5 s.
-import { Alert, Button, Code, Group, Modal, NativeSelect, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Button, Code, Group, Modal, NativeSelect, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
-import { DataTable, notifyError, PageHeader, StatusPill, type StatusTone } from "@zm/ui";
+import { DataTable, Notice, notifyError, PageHeader, StatusPill, type StatusTone } from "@zm/ui";
 import { useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
 import { api } from "./session";
@@ -186,11 +186,11 @@ export function ClientPage() {
   if (client.isPending) return null;
   if (!client.data) {
     return (
-      <Alert color="red" title="Couldn't load this client.">
+      <Notice tone="error" title="Couldn't load this client.">
         <Button mt="sm" variant="default" onClick={() => void client.refetch()}>
           Retry
         </Button>
-      </Alert>
+      </Notice>
     );
   }
   const c = client.data;
@@ -243,12 +243,12 @@ export function ClientPage() {
         {stuck
           .filter((s) => s.status === "needs_human")
           .map((s) => (
-            <Alert key={s.step} color="orange" title={`${s.step} needs a person`}>
+            <Notice key={s.step} tone="warning" title={`${s.step} needs a person`}>
               <Text size="sm">{s.last_error}</Text>
               <Text size="sm" c="dimmed">
                 Then click Retry failed step.
               </Text>
-            </Alert>
+            </Notice>
           ))}
         <DataTable
           caption="Provisioning"
