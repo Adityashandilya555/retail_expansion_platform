@@ -1,8 +1,10 @@
-import { Anchor, Button, Center, Loader, Stack, Text, TextInput } from "@mantine/core";
+import { Anchor, Button, Stack, TextInput } from "@mantine/core";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { AuthCard, notifyError, SignInForm, ZmProvider } from "@zm/ui";
-import { useEffect, useState } from "react";
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from "react-router";
-import { findWorkspace, loadMe, refresh, savedWorkspace, signedIn, signIn, signOut, type Me, type Workspace } from "./session";
+import { useState } from "react";
+import { BrowserRouter, Link, Navigate, Outlet, Route, Routes, useNavigate } from "react-router";
+import { findWorkspace, savedWorkspace, signIn, type Workspace } from "./session";
+import { Shell } from "./Shell";
 
 /** `/`: the workspace code. */
 function Landing({ onWorkspace }: { onWorkspace: (w: Workspace) => void }) {
@@ -43,6 +45,7 @@ function Landing({ onWorkspace }: { onWorkspace: (w: Workspace) => void }) {
 /** `/login`: email and password, on the client's look. */
 function Login({ workspace }: { workspace: Workspace | null }) {
   const navigate = useNavigate();
+  const queries = useQueryClient();
   const [pending, setPending] = useState(false);
   if (!workspace) return <Navigate to="/" replace />;
   return (
@@ -54,6 +57,7 @@ function Login({ workspace }: { workspace: Workspace | null }) {
           const done = await signIn(workspace.code, email, password);
           setPending(false);
           if (!done.ok) return notifyError(done.message);
+          queries.clear(); // e.g. a "signed out" answer cached by an earlier visit to /app
           navigate("/app");
         }}
       />
@@ -64,60 +68,28 @@ function Login({ workspace }: { workspace: Workspace | null }) {
   );
 }
 
-/** `/app`: signed in (silently from the refresh cookie after a reload). The site screens come with #27. */
-function Home() {
-  const navigate = useNavigate();
-  const [me, setMe] = useState<Me | null | undefined>(undefined);
-  useEffect(() => {
-    let live = true;
-    void (async () => {
-      const ok = signedIn() || (await refresh());
-      const found = ok ? await loadMe() : null;
-      if (live) setMe(found);
-    })();
-    return () => {
-      live = false;
-    };
-  }, []);
-  if (me === null) return <Navigate to="/" replace />;
-  if (me === undefined) {
-    return (
-      <Center mih="100vh">
-        <Loader aria-label="Signing in" />
-      </Center>
-    );
-  }
-  const levels = me.memberships.map((m) => `${m.department} L${m.level}`).join(", ");
-  return (
-    <AuthCard title={`Signed in as ${me.name}`} description={`${me.client.name} · ${levels}`}>
-      <Text size="sm" c="dimmed">
-        The site screens arrive with #27.
-      </Text>
-      <Button
-        variant="default"
-        onClick={async () => {
-          await signOut();
-          navigate("/");
-        }}
-      >
-        Sign out
-      </Button>
-    </AuthCard>
-  );
-}
-
 /** The client app's routes, inside a router (BrowserRouter in the app, MemoryRouter in tests). */
 export function ClientApp() {
   const [workspace, setWorkspace] = useState(savedWorkspace);
+  const [queries] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   return (
-    <ZmProvider client={workspace ? { theme: workspace.theme, accent: workspace.accent } : undefined}>
+    <QueryClientProvider client={queries}>
       <Routes>
-        <Route path="/" element={<Landing onWorkspace={setWorkspace} />} />
-        <Route path="/login" element={<Login workspace={workspace} />} />
-        <Route path="/app/*" element={<Home />} />
+        {/* Signed out: the workspace's look. Signed in, the shell wears the release's look and the user's own. */}
+        <Route
+          element={
+            <ZmProvider client={workspace ?? undefined}>
+              <Outlet />
+            </ZmProvider>
+          }
+        >
+          <Route path="/" element={<Landing onWorkspace={setWorkspace} />} />
+          <Route path="/login" element={<Login workspace={workspace} />} />
+        </Route>
+        <Route path="/app/*" element={<Shell workspace={workspace} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </ZmProvider>
+    </QueryClientProvider>
   );
 }
 
