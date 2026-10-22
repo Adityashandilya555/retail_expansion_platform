@@ -4,7 +4,9 @@ and open what, routing variables, and the routes' guards. The full flow runs in 
 
 import asyncio
 import copy
+import json
 import uuid
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -17,7 +19,7 @@ from zm_api import errors, tasks
 from zm_api.context import Resolver
 from zm_api.errors import FieldError, FormInvalid, NotFound
 from zm_api.main import create_app
-from zm_api.operaton import OperatonClient
+from zm_api.operaton import OperatonClient, OperatonError
 from zm_api.registry import Client
 from zm_api.templates import load_templates
 from zm_compiler import compile
@@ -126,7 +128,7 @@ def test_team_groups_cover_every_level_of_l2_departments() -> None:
     assert tasks.team_groups(doc, tasks.Person(uuid.uuid4(), {"bd": 1})) == set()
 
 
-def test_routing_values_are_scalars_within_operatons_text_column() -> None:
+def test_every_routing_variable_is_sent_and_only_scalars_within_the_text_column() -> None:
     values = {
         "ca_amount": 5,
         "kyc_done": True,
@@ -134,35 +136,152 @@ def test_routing_values_are_scalars_within_operatons_text_column() -> None:
         "items": [1],
         "short": "ok",
         "long": "x" * 4001,
-        "none": None,
         "unrouted": "secret",
     }
-    names = ["ca_amount", "kyc_done", "address", "items", "short", "long", "none", "missing"]
+    names = ["ca_amount", "kyc_done", "address", "items", "short", "long", "blank"]
+    # blank, hidden or too big for Operaton: null, so the compiled rules can still read it
     assert tasks.routing_values(names, values) == {
         "ca_amount": 5,
         "kyc_done": True,
+        "address": None,
+        "items": None,
         "short": "ok",
-        "none": None,
+        "long": None,
+        "blank": None,
     }
 
 
+def submission(**changes: Any) -> tasks.Submission:
+    base: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "case_id": uuid.uuid4(),
+        "operaton_task_id": "t1",
+        "form_key": "fin_supervisor",
+        "release_version": 1,
+        "values": {"ca_amount": 5},
+        "outcome": "send_back",
+        "comment": "x" * 5000,
+        "status": "pending",
+        "attempts": 0,
+        "submitted_by": uuid.uuid4(),
+        "idempotency_key": "k",
+    }
+    return tasks.Submission(**{**base, **changes})
+
+
 def test_engine_values_fold_outcome_and_comment_back() -> None:
-    sub = tasks.Submission(
-        id=uuid.uuid4(),
-        case_id=uuid.uuid4(),
-        operaton_task_id="t1",
-        form_key="fin_supervisor",
-        release_version=1,
-        values={"ca_amount": 5},
-        outcome="send_back",
-        comment="x" * 5000,
-        status="completed",
-        attempts=0,
-        submitted_by=uuid.uuid4(),
-        idempotency_key="k",
-    )
     names = ["fin_supervisor_outcome", "fin_supervisor_comment"]
-    assert sub.engine_values(names) == {"fin_supervisor_outcome": "send_back"}
+    assert submission().engine_values(names) == {
+        "fin_supervisor_outcome": "send_back",
+        "fin_supervisor_comment": None,  # 5000 characters stay in app.submissions
+    }
+
+
+def test_which_engine_errors_are_a_clear_refusal() -> None:
+    assert tasks.refused(NotFound())
+    assert tasks.refused(OperatonError("complete", 400, "BadUserRequestException"))
+    assert tasks.refused(OperatonError("claim", 500, "TaskAlreadyClaimedException"))
+    # no clear answer: Operaton may have done it
+    assert not tasks.refused(OperatonError("complete", None, None))  # timeout, unreachable
+    assert not tasks.refused(OperatonError("complete", 500, "ProcessEngineException"))
+
+
+class FakeEngine:
+    """The reconciler's Operaton calls, scripted per test."""
+
+    def __init__(self, task: dict | None, history: list[dict], complete: Exception | None = None):
+        self.task, self.history, self.error = task, history, complete
+        self.calls: list[str] = []
+
+    async def get_task(self, task_id: str) -> dict:
+        self.calls.append("get_task")
+        if self.task is None:
+            raise NotFound()
+        return self.task
+
+    async def history_task(self, task_id: str) -> list[dict]:
+        self.calls.append("history_task")
+        return self.history
+
+    async def claim(self, task_id: str, user_id: str) -> None:
+        self.calls.append("claim")
+
+    async def complete(self, task_id: str, values: dict) -> None:
+        self.calls.append("complete")
+        if self.error:
+            raise self.error
+
+
+@pytest.fixture
+def ledger(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
+    """What the reconciler wrote, instead of a database."""
+    out: list[tuple[str, ...]] = []
+
+    async def commit(ctx: Any, sid: uuid.UUID) -> None:
+        out.append(("commit",))
+
+    async def set_status(ctx: Any, sid: uuid.UUID, status: str, error: str | None = None) -> None:
+        out.append(("status", status))
+
+    async def bump(ctx: Any, sid: uuid.UUID) -> None:
+        out.append(("attempt",))
+
+    async def names(ctx: Any, sub: tasks.Submission) -> list[str]:
+        return ["fin_supervisor_outcome"]
+
+    monkeypatch.setattr(tasks, "commit", commit)
+    monkeypatch.setattr(tasks, "_set_status", set_status)
+    monkeypatch.setattr(tasks, "_bump_attempts", bump)
+    monkeypatch.setattr(tasks, "_routing_names", names)
+    return out
+
+
+def settle(engine: FakeEngine, sub: tasks.Submission) -> str:
+    ctx = SimpleNamespace(operaton=engine, client=SimpleNamespace(slug="pilot-local"))
+    return asyncio.run(tasks._reconcile_one(ctx, sub))  # type: ignore[arg-type]
+
+
+DONE = [{"endTime": "2026-10-22T10:00:00.000+0000", "deleteReason": "completed"}]
+
+
+def test_reconcile_commits_a_completed_one_without_asking_operaton(ledger: list) -> None:
+    engine = FakeEngine(None, [])
+    assert settle(engine, submission(status="completed")) == "committed"
+    assert engine.calls == [] and ledger == [("commit",)]
+
+
+def test_reconcile_commits_a_pending_one_operaton_already_completed(ledger: list) -> None:
+    engine = FakeEngine(None, DONE)
+    assert settle(engine, submission()) == "committed"
+    assert "complete" not in engine.calls and ledger == [("commit",)]
+
+
+def test_reconcile_fails_one_whose_task_ended_otherwise(ledger: list) -> None:
+    deleted = [{"endTime": "2026-10-22T10:00:00.000+0000", "deleteReason": "deleted"}]
+    assert settle(FakeEngine(None, deleted), submission()) == "failed"
+    assert settle(FakeEngine(None, []), submission()) == "failed"
+    assert ledger == [("status", "failed"), ("status", "failed")]
+
+
+def test_reconcile_retries_an_open_task_once(ledger: list) -> None:
+    engine = FakeEngine({"assignee": None}, [])
+    assert settle(engine, submission()) == "committed"
+    assert engine.calls == ["get_task", "claim", "complete"]
+    assert ledger == [("attempt",), ("status", "completed"), ("commit",)]
+
+
+def test_reconcile_fails_an_open_task_after_one_retry(ledger: list) -> None:
+    engine = FakeEngine({"assignee": "u"}, [])
+    assert settle(engine, submission(attempts=1)) == "failed"
+    assert "complete" not in engine.calls and ledger == [("status", "failed")]
+
+
+def test_reconcile_retry_refused_fails_but_no_answer_waits(ledger: list) -> None:
+    refused = FakeEngine({"assignee": "u"}, [], OperatonError("complete", 400, "Bad"))
+    assert settle(refused, submission()) == "failed"
+    silent = FakeEngine({"assignee": "u"}, [], OperatonError("complete", None, None))
+    assert settle(silent, submission()) == "retried"
+    assert ledger == [("attempt",), ("status", "failed"), ("attempt",)]
 
 
 def test_who_may_open_a_task() -> None:
@@ -237,11 +356,30 @@ async def _new_operaton_calls() -> None:
     delete = respx.delete(
         f"{base}/process-instance/a", params={"skipCustomListeners": "true"}
     ).mock(return_value=httpx.Response(204))
+    definitions = respx.get(
+        f"{base}/process-definition", params={"deploymentId": "d1", "key": "zm_x__f"}
+    ).mock(return_value=httpx.Response(200, json=[{"id": "zm_x__f:2:abc"}]))
+    started = respx.post(f"{base}/process-definition/zm_x__f%3A2%3Aabc/start").mock(
+        return_value=httpx.Response(200, json={"id": "pi1"})
+    )
     try:
+        definition = await op.definition_in("d1", "zm_x__f")
+        assert await op.start(definition["id"], business_key="MX-0001", values={"a": 1}) == {
+            "id": "pi1"
+        }
+        assert json.loads(started.calls[0].request.content) == {
+            "variables": {"a": {"value": 1, "type": "Long"}},
+            "businessKey": "MX-0001",
+        }
+        respx.get(f"{base}/process-definition", params={"deploymentId": "d2"}).mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        with pytest.raises(NotFound):
+            await op.definition_in("d2", "zm_x__f")
         assert await op.identity_links("t 1") == [{"groupId": "legal__L1", "type": "candidate"}]
         assert await op.process_instances(["a", "b"]) == [{"id": "a", "businessKey": "MX-0001"}]
         assert await op.process_instances([]) == []  # no call for nothing
         await op.delete_process_instance("a")
     finally:
         await op.aclose()
-    assert links.called and instances.call_count == 1 and delete.called
+    assert links.called and instances.call_count == 1 and delete.called and definitions.called

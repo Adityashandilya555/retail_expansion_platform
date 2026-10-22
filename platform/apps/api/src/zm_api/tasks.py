@@ -38,7 +38,7 @@ from zm_api.errors import (
     ServiceUnavailable,
     Unauthorized,
 )
-from zm_api.operaton import Json
+from zm_api.operaton import Json, OperatonError
 from zm_api.releases import ReleaseRow
 from zm_schema import group_id, submission_errors
 
@@ -158,15 +158,16 @@ def _validate(form: Mapping[str, Any], values: Mapping[str, Any]) -> None:
 
 
 def routing_values(names: Iterable[str], values: Mapping[str, Any]) -> dict[str, Any]:
-    """The routing variables (D5) among `values`: scalars only, and no string longer than
-    Operaton's text column (such a comment stays in `app.submissions`)."""
+    """Every routing variable (D5) of a form, so the compiled rules can always read it: a value
+    left blank (or in a section hidden from the user), a list or object, and a string longer
+    than Operaton's text column are sent as null; the full value stays in our database."""
     out: dict[str, Any] = {}
     for name in names:
         value = values.get(name)
-        if name not in values or isinstance(value, dict | list):
-            continue
-        if isinstance(value, str) and len(value) > MAX_ENGINE_TEXT:
-            continue
+        if isinstance(value, dict | list) or (
+            isinstance(value, str) and len(value) > MAX_ENGINE_TEXT
+        ):
+            value = None
         out[name] = value
     return out
 
@@ -187,16 +188,17 @@ class Case:
 _CASE_COLUMNS = "id, code, flow_key as flow, release_version, process_instance_id, created_at"
 
 
-async def _next_seq(ctx: ClientContext, flow_key: str) -> int:
+async def _next_seq(ctx: ClientContext, pattern: str) -> int:
+    """Next number for a case-code pattern; per pattern, so flows sharing one never collide."""
     async with ctx.db.begin() as conn:
         return (
             await conn.execute(
                 text(
-                    "insert into app.case_counters (flow_key, last) values (:f, 1)"
-                    " on conflict (flow_key) do update set last = app.case_counters.last + 1"
+                    "insert into app.case_counters (pattern, last) values (:p, 1)"
+                    " on conflict (pattern) do update set last = app.case_counters.last + 1"
                     " returning last"
                 ),
-                {"f": flow_key},
+                {"p": pattern},
             )
         ).scalar_one()
 
@@ -244,16 +246,20 @@ async def start_case(
     key = f"start:{flow_key}"
     _validate(visible_form(release.forms[key], me.levels), values)
 
-    code = case_code(flow["case_code"]["pattern"], await _next_seq(ctx, flow_key))
+    pattern = flow["case_code"]["pattern"]
+    code = case_code(pattern, await _next_seq(ctx, pattern))
     engine_values = {
         **routing_values(release.routing_vars.get(key, []), values),
         # set after Operaton's own `initiator` (the service account): ours wins (#26 plan)
         "initiator": str(user_id),
         "initiator_groups": initiator_groups(me.groups),
     }
-    instance = await ctx.operaton.start_by_key(
-        release.process_keys[flow_key], business_key=code, values=engine_values
+    # the active release's own definition, not the latest by key: a deploy whose release
+    # wasn't recorded (a publish that failed halfway) must not get cases
+    definition = await ctx.operaton.definition_in(
+        release.deployment_id, release.process_keys[flow_key]
     )
+    instance = await ctx.operaton.start(definition["id"], business_key=code, values=engine_values)
     try:
         async with ctx.db.begin() as conn:
             row = (
@@ -281,7 +287,12 @@ async def start_case(
         try:  # don't leave a running case nobody can see
             await ctx.operaton.delete_process_instance(instance["id"])
         except ApiError:
-            _log.exception("orphan process instance %s for case %s", instance["id"], code)
+            _log.exception(
+                "orphan process instance %s for case %s",
+                instance["id"],
+                code,
+                extra={"client": ctx.client.slug},
+            )
         raise ServiceUnavailable("Couldn't record the case; start it again") from e
     return Case(**row)
 
@@ -613,12 +624,13 @@ async def submit(
                 .mappings()
                 .one()
             )
-    except IntegrityError:  # the same key raced us in: theirs is the first result
+    except IntegrityError:
         async with ctx.db.connect() as conn:
             prior = await _submission(conn, "idempotency_key = :v", idempotency_key)
-        if prior is None:
-            raise
-        return _same_request(prior, user_id, task_id)
+        if prior is not None:  # the same key raced us in: theirs is the first result
+            return _same_request(prior, user_id, task_id)
+        # one live submission per task (submissions_one_per_task)
+        raise Conflict("This task already has a submission being processed") from None
     sub = Submission(**row)
 
     try:
@@ -628,10 +640,37 @@ async def submit(
             task_id, sub.engine_values(view.release.routing_vars.get(key, []))
         )
     except ApiError as e:
-        await _set_status(ctx, sub.id, "failed", f"{type(e).__name__}: {e.detail}")
+        if not refused(e):
+            # no clear answer (timeout, engine error): Operaton may have completed it, so the
+            # submission stays pending and the reconciler settles it from the task's history
+            await _set_status(ctx, sub.id, "pending", _reason(e))
+            raise ServiceUnavailable(
+                "The process engine didn't answer; your submission is saved and will finish shortly"
+            ) from e
+        await _set_status(ctx, sub.id, "failed", _reason(e))
+        if _claimed(e):
+            raise Conflict("Someone else has taken this task") from e
         raise
     await _set_status(ctx, sub.id, "completed")
     return await commit(ctx, sub.id)
+
+
+def _claimed(e: ApiError) -> bool:
+    return isinstance(e, OperatonError) and e.upstream_type == "TaskAlreadyClaimedException"
+
+
+def refused(e: ApiError) -> bool:
+    """True when Operaton clearly didn't take the call (nothing changed there): the task is
+    gone, the values were rejected, or someone else claimed it. A timeout, an unreachable
+    engine or another engine error is no clear answer."""
+    if isinstance(e, OperatonError):
+        return e.upstream_status == 400 or _claimed(e)
+    return True
+
+
+def _reason(e: ApiError) -> str:
+    kind = getattr(e, "upstream_type", None)
+    return f"{type(e).__name__}{f' ({kind})' if kind else ''}: {e.detail}"
 
 
 # --- reconciler (run by the worker) ----------------------------------------------------------
@@ -648,7 +687,30 @@ async def _routing_names(ctx: ClientContext, sub: Submission) -> list[str]:
     return list(names or [])
 
 
+async def _bump_attempts(ctx: ClientContext, submission_id: UUID) -> None:
+    async with ctx.db.begin() as conn:
+        await conn.execute(
+            text(
+                "update app.submissions set attempts = attempts + 1, updated_at = now()"
+                " where id = :id"
+            ),
+            {"id": submission_id},
+        )
+
+
+async def _fail(ctx: ClientContext, sub: Submission, reason: str) -> str:
+    await _set_status(ctx, sub.id, "failed", reason)
+    _log.error("submission %s failed: %s", sub.id, reason, extra={"client": ctx.client.slug})
+    return "failed"
+
+
 async def _reconcile_one(ctx: ClientContext, sub: Submission) -> str:
+    """Settle one stuck submission. Only one live submission exists per task
+    (submissions_one_per_task), so a completed task with this one still live was completed by
+    it."""
+    if sub.status == "completed":  # Operaton took it: only the values are missing
+        await commit(ctx, sub.id)
+        return "committed"
     try:
         task: Json | None = await ctx.operaton.get_task(sub.operaton_task_id)
     except NotFound:
@@ -658,18 +720,10 @@ async def _reconcile_one(ctx: ClientContext, sub: Submission) -> str:
         if history and history[0].get("endTime") and history[0].get("deleteReason") == "completed":
             await commit(ctx, sub.id)  # Operaton has it: write the values, don't complete again
             return "committed"
-        await _set_status(ctx, sub.id, "failed", "the task ended without this submission")
-        _log.error("submission %s failed: its task ended without it", sub.id)
-        return "failed"
+        return await _fail(ctx, sub, "the task ended without this submission")
     if sub.attempts >= 1:
-        await _set_status(ctx, sub.id, "failed", "still open after a retried completion")
-        _log.error("submission %s failed: task %s is still open", sub.id, sub.operaton_task_id)
-        return "failed"
-    async with ctx.db.begin() as conn:
-        await conn.execute(
-            text("update app.submissions set attempts = attempts + 1 where id = :id"),
-            {"id": sub.id},
-        )
+        return await _fail(ctx, sub, "the task is still open after a retried completion")
+    await _bump_attempts(ctx, sub.id)
     try:
         if task.get("assignee") is None:
             await ctx.operaton.claim(sub.operaton_task_id, str(sub.submitted_by))
@@ -677,9 +731,9 @@ async def _reconcile_one(ctx: ClientContext, sub: Submission) -> str:
             sub.operaton_task_id, sub.engine_values(await _routing_names(ctx, sub))
         )
     except ApiError as e:
-        await _set_status(ctx, sub.id, "failed", f"{type(e).__name__}: {e.detail}")
-        _log.error("submission %s failed on retry: %s", sub.id, e.detail)
-        return "failed"
+        if refused(e):
+            return await _fail(ctx, sub, f"retry refused: {_reason(e)}")
+        return "retried"  # no clear answer again: the next pass reads the task's history
     await _set_status(ctx, sub.id, "completed")
     await commit(ctx, sub.id)
     return "committed"
@@ -721,7 +775,15 @@ async def reconcile(
                 if sub is None or sub.status not in UNFINISHED:
                     counts["skipped"] += 1
                     continue
-                counts[await _reconcile_one(ctx, sub)] += 1
+                try:
+                    counts[await _reconcile_one(ctx, sub)] += 1
+                except Exception:  # one bad row (or engine hiccup) mustn't stall the rest
+                    _log.exception(
+                        "reconciling submission %s failed",
+                        submission_id,
+                        extra={"client": ctx.client.slug},
+                    )
+                    counts["error"] += 1
             finally:
                 await lock.execute(text("select pg_advisory_unlock(hashtext(:k))"), {"k": k})
                 await lock.commit()

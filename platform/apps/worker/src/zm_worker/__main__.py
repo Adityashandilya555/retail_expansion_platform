@@ -16,12 +16,12 @@ _last_reconcile: float | None = None
 
 def tick() -> None:
     """One pass of the worker loop: the submission reconciler (#26) at most every minute, once
-    PLATFORM_DATABASE_URL is set. Provisioning arrives with S2-02a/b."""
+    PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY are set. Provisioning arrives with S2-02a/b."""
     global _last_reconcile
     log.info("tick")
     now = time.monotonic()
-    if not os.environ.get("PLATFORM_DATABASE_URL"):
-        return
+    if not (os.environ.get("PLATFORM_DATABASE_URL") and os.environ.get("SECRETS_ENCRYPTION_KEY")):
+        return  # not configured for it yet (both are needed to reach the clients)
     if _last_reconcile is not None and now - _last_reconcile < RECONCILE_EVERY:
         return
     _last_reconcile = now

@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 from zm_api import tasks
 from zm_api.context import ClientContext, PlatformRegistry, Resolver
 from zm_api.main import create_app
-from zm_api.operaton import OperatonClient
+from zm_api.operaton import OperatonClient, OperatonError
 from zm_api.publish import publish
 from zm_api.releases import cache_clear, seed_draft
 from zm_api.users import seed_users
@@ -461,8 +461,8 @@ def test_a_crash_after_completing_is_finished_by_the_reconciler(
 def test_a_submission_operaton_refuses_is_failed(
     world: World, mx1: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Someone claims the task between our check and our claim: Operaton refuses (502), the
-    submission is failed with the reason, and its key can't be replayed."""
+    """Someone claims the task between our check and our claim: Operaton refuses, the user gets
+    409, the submission is failed with the reason, and its key can't be replayed."""
     task = world.task("bd2", "zm:fin_supervisor", "MX-0001")
     real_claim = OperatonClient.claim
 
@@ -472,12 +472,12 @@ def test_a_submission_operaton_refuses_is_failed(
 
     monkeypatch.setattr(OperatonClient, "claim", raced)
     response = world.submit("bd2", task["id"], "refused-1", outcome="approve")
-    assert response.status_code == 502, response.text
+    assert response.status_code == 409, response.text
     rows = vault_sql(
         "pilot",
         "select status, last_error from app.submissions where idempotency_key = 'refused-1'",
     )
-    assert rows[0][0] == "failed" and "OperatonError" in rows[0][1]
+    assert rows[0][0] == "failed" and "TaskAlreadyClaimedException" in rows[0][1]
     assert world.submit("bd2", task["id"], "refused-1", outcome="approve").status_code == 409
     # claimed by someone else now: bd2 may read it, not submit it
     detail = world.http.get(f"/app/tasks/{task['id']}", headers=world.auth("bd2")).json()
@@ -530,3 +530,82 @@ def test_two_flows_run_their_own_processes_and_filter(world: World, mx1: dict) -
     assert bad.status_code == 422
     assert bad.json()["errors"] == [{"path": "/audit_store", "message": "Required"}]
     assert vault_sql("pilot", "select count(*) from app.cases where flow_key = 'audit'") == [(1,)]
+
+
+def test_no_answer_from_the_engine_keeps_it_pending_for_the_reconciler(
+    world: World, mx1: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timeout around `complete`: Operaton may or may not have it. The user gets 503, the
+    submission stays pending (a second one for the task is refused), and the reconciler settles
+    both ways: from history when the completion landed, by retrying once when it didn't."""
+    landed = world.start("bd1", "audit", {"audit_store": "Whitefield"}).json()["code"]
+    lost = world.start("bd1", "audit", {"audit_store": "Hebbal"}).json()["code"]
+    completions: list[str] = []
+    real_complete = OperatonClient.complete
+
+    async def timeout_after(self: OperatonClient, task_id: str, values: dict) -> None:
+        completions.append(task_id)
+        await real_complete(self, task_id, values)
+        raise OperatonError("complete", None, None)
+
+    async def timeout_before(self: OperatonClient, task_id: str, values: dict) -> None:
+        raise OperatonError("complete", None, None)
+
+    first = world.task("bd1", "zm:audit_check", landed)
+    with monkeypatch.context() as m:
+        m.setattr(OperatonClient, "complete", timeout_after)
+        response = world.submit("bd1", first["id"], "lost-1", outcome="pass")
+    assert response.status_code == 503, response.text
+    second = world.task("bd1", "zm:audit_check", lost)
+    with monkeypatch.context() as m:
+        m.setattr(OperatonClient, "complete", timeout_before)
+        assert world.submit("bd1", second["id"], "lost-2", outcome="fail").status_code == 503
+    # a new key for a task whose submission is still being settled is refused
+    again = world.submit("bd1", second["id"], "lost-3", outcome="fail")
+    assert again.status_code == 409 and "being processed" in again.json()["detail"]
+
+    status = "select status, attempts from app.submissions where idempotency_key = %s"
+    assert vault_sql("pilot", status, "lost-1") == [("pending", 0)]
+    assert vault_sql("pilot", status, "lost-2") == [("pending", 0)]
+
+    counts = asyncio.run(reconcile_all(older_than=0))
+    assert counts[world.slugs["pilot"]]["committed"] == 2
+    assert vault_sql("pilot", status, "lost-1") == [("committed", 0)]  # from history
+    assert vault_sql("pilot", status, "lost-2") == [("committed", 1)]  # retried once
+    assert completions == [first["id"]]
+    with op("pilot") as client:
+        for task in (first, second):
+            done = client.get("history/task", params={"taskId": task["id"]}).json()
+            assert [d["deleteReason"] for d in done] == ["completed"]
+
+
+def test_the_same_key_at_the_same_moment_submits_once(world: World, mx1: dict) -> None:
+    code = world.start("bd1", "audit", {"audit_store": "Jayanagar"}).json()["code"]
+    task = world.task("bd1", "zm:audit_check", code)
+
+    async def both() -> list:
+        async with Stack() as stack:
+            ctx = await stack.ctx(world.slugs["pilot"])
+            return await asyncio.gather(
+                *(
+                    tasks.submit(
+                        ctx,
+                        world.users["bd1"],
+                        task["id"],
+                        {},
+                        outcome="pass",
+                        idempotency_key="same-moment",
+                    )
+                    for _ in range(2)
+                ),
+                return_exceptions=True,
+            )
+
+    results = asyncio.run(both())
+    assert not [r for r in results if isinstance(r, BaseException)], results
+    assert results[0].id == results[1].id
+    assert vault_sql(
+        "pilot",
+        "select count(*), max(status) from app.submissions where operaton_task_id = %s",
+        task["id"],
+    ) == [(1, "committed")]

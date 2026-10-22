@@ -146,15 +146,20 @@ The client app works cases and tasks through `/app` (a client user's token; `zm_
 | `GET /app/tasks/{id}` | The task, its case, its form `{schema, layout}` minus the sections hidden below the user's level, and its `show` values. |
 | `POST /app/tasks/{id}/submit {values, outcome?, comment?}` | Needs an `Idempotency-Key` header. Repeating a key returns the first result. |
 
-**Where values go:** only routing variables reach Operaton (D5): scalars of at most 4000 characters. Every value a person enters is stored in `app.submissions` and `app.case_values`.
+**Where values go:** only routing variables reach Operaton (D5), and every one of them is always sent, so the compiled rules can read it. A blank value, a list or object, or a string over 4000 characters goes as `null`. Every value a person enters is stored in `app.submissions` and `app.case_values`.
 
-**Submission lifecycle:** a submission is `pending`, then `completed` (Operaton took it), then `committed` (its values are written). It is `failed` when Operaton refused it.
+**Submission lifecycle:** a submission is `pending`, then `completed` (Operaton took it), then `committed` (its values are written). Each task has at most one live submission. A submission is `failed` only when Operaton clearly refused it:
+- the values were rejected, or the task is gone;
+- someone else claimed the task, which gives 409.
 
-**Reconciler:** the worker (`zm-worker`, or by hand with `zm-worker reconcile`) runs it every minute on every ready client. It finishes submissions left `pending`/`completed` for more than 2 minutes:
-- if the task already completed, it writes the values;
-- if the task is still open, it retries the completion once.
+A timeout or an engine error gives 503, and the submission stays `pending` for the reconciler.
 
-The worker needs `PLATFORM_DATABASE_URL` and `SECRETS_ENCRYPTION_KEY`, like the API.
+**Reconciler:** the worker (`zm-worker`, or by hand with `zm-worker reconcile`) runs it every minute on every ready client. It settles submissions left `pending`/`completed` for more than 2 minutes:
+- a `completed` one gets its values written;
+- a `pending` one whose task completed is committed from Operaton's history, without completing it again;
+- a `pending` one whose task is still open gets one more completion attempt; if the task is still open after that, it is `failed`.
+
+One bad row doesn't stop the pass. The worker needs `PLATFORM_DATABASE_URL` and `SECRETS_ENCRYPTION_KEY`, like the API.
 
 ## Layout
 ```

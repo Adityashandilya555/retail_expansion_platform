@@ -174,7 +174,29 @@ class OperatonClient:
         path = f"process-definition/{_id(definition_id)}"
         return await self._call("process_definition_by_id", "GET", path)
 
+    async def definition_in(self, deployment_id: str, key: str) -> Json:
+        """The definition of `key` deployed by one deployment (a release), whatever is latest."""
+        params = {"deploymentId": deployment_id, "key": key}
+        found = await self._call("definition_in", "GET", "process-definition", params=params)
+        if not found:
+            raise NotFound("No such process in this release")
+        return found[0]
+
     # Runtime
+    async def start(
+        self,
+        definition_id: str,
+        *,
+        business_key: str | None = None,
+        values: Mapping[str, Any] | None = None,
+    ) -> Json:
+        """Start one exact process definition (`POST /process-definition/{id}/start`)."""
+        body: Json = {"variables": variables(values or {})}
+        if business_key is not None:
+            body["businessKey"] = business_key
+        path = f"process-definition/{_id(definition_id)}/start"
+        return await self._call("start", "POST", path, json=body)
+
     async def start_by_key(
         self, key: str, *, business_key: str | None = None, values: Mapping[str, Any] | None = None
     ) -> Json:

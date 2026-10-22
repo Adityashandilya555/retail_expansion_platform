@@ -17,6 +17,7 @@ from zm_worker import reconcile
 def ticks(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     calls: list[float] = []
     monkeypatch.setenv("PLATFORM_DATABASE_URL", "postgresql://unused/postgres")
+    monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", "unused")
     monkeypatch.setattr(worker_main, "_last_reconcile", None)
     monkeypatch.setattr(reconcile, "run_once", lambda older_than=120.0: calls.append(older_than))
     return calls
@@ -36,8 +37,11 @@ def test_tick_reconciles_at_most_once_a_minute(
     assert len(ticks) == 2
 
 
-def test_tick_skips_without_a_registry(ticks: list[float], monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("PLATFORM_DATABASE_URL")
+@pytest.mark.parametrize("missing", ["PLATFORM_DATABASE_URL", "SECRETS_ENCRYPTION_KEY"])
+def test_tick_skips_until_configured(
+    ticks: list[float], monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    monkeypatch.delenv(missing)
     worker_main.tick()
     assert ticks == []
 
@@ -46,6 +50,7 @@ def test_a_failing_pass_is_logged_and_the_loop_goes_on(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setenv("PLATFORM_DATABASE_URL", "postgresql://unused/postgres")
+    monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", "unused")
     monkeypatch.setattr(worker_main, "_last_reconcile", None)
 
     def boom(older_than: float = 120.0) -> None:

@@ -13,10 +13,11 @@ create table app.cases (
   created_at          timestamptz not null default now()
 );
 
--- the `{seq:N}` part of each flow's case code; gaps are fine, duplicates are not
+-- the `{seq:N}` part of case codes, per pattern (flows sharing a pattern share the sequence,
+-- so codes stay unique); gaps are fine, duplicates are not
 create table app.case_counters (
-  flow_key text primary key,
-  last     int not null
+  pattern text primary key,
+  last    int not null
 );
 
 -- one row per task submission: pending → completed (Operaton took it) → committed (values
@@ -42,6 +43,11 @@ create table app.submissions (
 );
 create index submissions_unfinished on app.submissions (updated_at)
   where status in ('pending', 'completed');
+-- at most one live submission per task: a retry with a new key can't race a stuck one, and the
+-- reconciler knows a completed task with a live submission was completed by that submission
+create unique index submissions_one_per_task on app.submissions (operaton_task_id)
+  where status in ('pending', 'completed', 'committed');
+create index submissions_case on app.submissions (case_id, created_at);  -- a case's history (#91)
 
 -- every value recorded for a case: from its start form (submission_id null) or a submission
 create table app.case_values (
