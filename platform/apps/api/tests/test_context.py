@@ -77,7 +77,8 @@ def api(registry: FakeRegistry) -> TestClient:
 def test_namespace_routers_need_their_token_even_without_a_ctx_param(api: TestClient) -> None:
     assert api.get("/app/probe/open").status_code == 401
     assert api.get("/app/probe/open", headers=bearer(token())).json() == {"ok": True}
-    assert api.get("/owner/probe/open", headers=bearer(token())).status_code == 401
+    assert api.get("/owner/probe/open", headers=bearer(token())).status_code == 403
+    assert api.get("/app/probe/open", headers=bearer(token(kind="owner"))).status_code == 403
     owner = token(kind="owner", client=None, sub="6f0c1b9e-5d2a-4c1e-9a7b-3d8e2f1a0b4c")
     assert api.get("/owner/probe/open", headers=bearer(owner)).json() == {"ok": True}
 
@@ -117,11 +118,11 @@ def test_client_comes_from_the_token_not_the_request(api: TestClient) -> None:
         {"Authorization": "Basic Zm9vOmJhcg=="},
         bearer("not-a-jwt"),
         bearer(token(exp=1)),
-        bearer(token(kind="owner")),
+        bearer(token(kind="robot")),
         bearer(token(client="no-such-client")),
         bearer(token(client=None)),
     ],
-    ids=["none", "basic", "garbage", "expired", "owner-kind", "unknown-client", "no-client"],
+    ids=["none", "basic", "garbage", "expired", "unknown-kind", "unknown-client", "no-client"],
 )
 def test_bad_tokens_are_401_problem(api: TestClient, headers: dict[str, str]) -> None:
     r = api.get("/app/probe/sites/MX-0001", headers=headers)
@@ -147,7 +148,14 @@ def test_owner_context_needs_an_owner_token(api: TestClient) -> None:
     assert api.get("/owner/probe/me", headers=bearer(owner)).json() == {
         "owner": "6f0c1b9e-5d2a-4c1e-9a7b-3d8e2f1a0b4c"
     }
-    assert api.get("/owner/probe/me", headers=bearer(token())).status_code == 401
+    assert api.get("/owner/probe/me", headers=bearer(token())).status_code == 403
+
+
+def test_a_valid_token_on_the_other_surface_is_403_problem(api: TestClient) -> None:
+    owner = token(kind="owner", client=None, sub="6f0c1b9e-5d2a-4c1e-9a7b-3d8e2f1a0b4c")
+    r = api.get("/app/probe/sites/MX-0001", headers=bearer(owner))
+    assert r.status_code == 403 and r.headers["content-type"] == "application/problem+json"
+    assert "www-authenticate" not in r.headers
 
 
 def resolve(resolver: Resolver, slug: str):

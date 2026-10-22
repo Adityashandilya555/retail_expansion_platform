@@ -20,7 +20,18 @@ import {
 } from "@mantine/core";
 import { ZmForm } from "@zm/forms";
 import { sampleApproval, sampleDdChecklist, sampleLicences } from "@zm/forms/samples";
-import { AppFrame, DataTable, Num, PageHeader, PRESETS, StageTracker, StatusPill, ZmProvider } from "@zm/ui";
+import {
+  AppFrame,
+  DataTable,
+  notifyError,
+  Num,
+  PageHeader,
+  PRESETS,
+  SignInForm,
+  StageTracker,
+  StatusPill,
+  ZmProvider,
+} from "@zm/ui";
 import { sampleColumns as columns, sampleNav as nav, sampleSites as sites, sampleStages as stages } from "@zm/ui/samples";
 import { useState, type ReactNode } from "react";
 
@@ -95,6 +106,12 @@ export default function DevUi() {
               onRetry={() => setTableState("rows")}
               emptyText="No sites yet"
             />
+          </Section>
+
+          <Section title="Sign-in form (AuthCard frames it on /, /login and the console's /login)">
+            <Paper maw={400}>
+              <SignInForm onSubmit={() => notifyError("Preview only: nothing was sent.")} />
+            </Paper>
           </Section>
 
           <Section title="Numbers">
