@@ -1,6 +1,67 @@
 {
   "components": {
     "schemas": {
+      "AppUi": {
+        "properties": {
+          "client": {
+            "$ref": "#/components/schemas/UiClient"
+          },
+          "flows": {
+            "items": {
+              "$ref": "#/components/schemas/UiFlow"
+            },
+            "title": "Flows",
+            "type": "array"
+          },
+          "nav": {
+            "items": {
+              "$ref": "#/components/schemas/NavItem"
+            },
+            "title": "Nav",
+            "type": "array"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/Page"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "release": {
+            "$ref": "#/components/schemas/UiRelease"
+          }
+        },
+        "required": [
+          "client",
+          "release",
+          "nav",
+          "pages",
+          "flows"
+        ],
+        "title": "AppUi",
+        "type": "object"
+      },
+      "BlockRef": {
+        "additionalProperties": false,
+        "properties": {
+          "block": {
+            "minLength": 1,
+            "title": "Block",
+            "type": "string"
+          },
+          "props": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Props",
+            "type": "object"
+          }
+        },
+        "required": [
+          "block"
+        ],
+        "title": "BlockRef",
+        "type": "object"
+      },
       "ClientInfo": {
         "properties": {
           "name": {
@@ -136,6 +197,37 @@
         "title": "Membership",
         "type": "object"
       },
+      "NavItem": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "page": {
+            "title": "Page",
+            "type": "string"
+          },
+          "visible_to": {
+            "description": "Department keys, or `\"*\"` for everyone.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Visible To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "page",
+          "label",
+          "visible_to"
+        ],
+        "title": "NavItem",
+        "type": "object"
+      },
       "OwnerLoginIn": {
         "properties": {
           "email": {
@@ -180,6 +272,61 @@
           "name"
         ],
         "title": "OwnerMe",
+        "type": "object"
+      },
+      "Page": {
+        "additionalProperties": false,
+        "properties": {
+          "department": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department"
+          },
+          "flow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required for the `case` layout.",
+            "title": "Flow"
+          },
+          "key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "layout": {
+            "minLength": 1,
+            "title": "Layout",
+            "type": "string"
+          },
+          "regions": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/BlockRef"
+              },
+              "type": "array"
+            },
+            "default": {},
+            "title": "Regions",
+            "type": "object"
+          }
+        },
+        "required": [
+          "key",
+          "layout"
+        ],
+        "title": "Page",
         "type": "object"
       },
       "Problem": {
@@ -301,6 +448,139 @@
         "title": "TokenOut",
         "type": "object"
       },
+      "UiClient": {
+        "properties": {
+          "accent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accent"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "theme": {
+            "title": "Theme",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "theme",
+          "accent"
+        ],
+        "title": "UiClient",
+        "type": "object"
+      },
+      "UiField": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "type"
+        ],
+        "title": "UiField",
+        "type": "object"
+      },
+      "UiFlow": {
+        "properties": {
+          "case_code": {
+            "title": "Case Code",
+            "type": "string"
+          },
+          "case_label": {
+            "title": "Case Label",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/UiStage"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "start_fields": {
+            "items": {
+              "$ref": "#/components/schemas/UiField"
+            },
+            "title": "Start Fields",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "case_label",
+          "case_code",
+          "stages",
+          "start_fields"
+        ],
+        "title": "UiFlow",
+        "type": "object"
+      },
+      "UiRelease": {
+        "properties": {
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "UiRelease",
+        "type": "object"
+      },
+      "UiStage": {
+        "properties": {
+          "department": {
+            "title": "Department",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "department"
+        ],
+        "title": "UiStage",
+        "type": "object"
+      },
       "WorkspaceIn": {
         "properties": {
           "workspace_code": {
@@ -381,6 +661,38 @@
           }
         },
         "summary": "Me",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/ui": {
+      "get": {
+        "description": "The active release's nav, pages and flows, filtered to the user's departments.",
+        "operationId": "app_ui_app_ui_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppUi"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "App Ui",
         "tags": [
           "app"
         ]
