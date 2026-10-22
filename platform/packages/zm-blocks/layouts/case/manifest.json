@@ -1,0 +1,13 @@
+{
+  "name": "case",
+  "version": 1,
+  "description": "One case of a flow (e.g. a site), at /app/cases/:code: a header, then one tab per non-empty region among overview, tasks, activity and documents. The open tab is kept in the URL (?tab=).",
+  "requires": ["flow"],
+  "regions": [
+    { "key": "header", "description": "Above the tabs: the case's code, title, status and stage tracker." },
+    { "key": "overview", "description": "Overview tab: the case's details." },
+    { "key": "tasks", "description": "Tasks tab: the case's open tasks and decision history." },
+    { "key": "activity", "description": "Activity tab: what happened on the case." },
+    { "key": "documents", "description": "Documents tab: the case's files." }
+  ]
+}

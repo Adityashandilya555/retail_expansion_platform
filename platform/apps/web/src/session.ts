@@ -5,6 +5,7 @@ import { createApiClient, type components } from "@zm/api-client";
 
 type TokenOut = components["schemas"]["TokenOut"];
 export type Me = components["schemas"]["Me"];
+export type AppUi = components["schemas"]["AppUi"];
 /** The workspace behind the code, with the client's look for the sign-in page. */
 export type Workspace = components["schemas"]["WorkspaceOut"] & { code: string };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; message: string };
@@ -110,4 +111,17 @@ export async function signOut() {
 export async function loadMe(): Promise<Me | null> {
   const { data } = await api.GET("/app/me");
   return data ?? null;
+}
+
+/** The signed-in user, signing in silently from the refresh cookie after a reload; null = signed out. */
+export async function currentUser(): Promise<Me | null> {
+  return signedIn() || (await refresh()) ? loadMe() : null;
+}
+
+/** The active release's screens for this user (#27); null before the client's first publish. */
+export async function loadUi(): Promise<AppUi | null> {
+  const { data, response } = await api.GET("/app/ui");
+  if (data) return data;
+  if (response.status === 404) return null;
+  throw new Error(`GET /app/ui answered ${response.status}`);
 }

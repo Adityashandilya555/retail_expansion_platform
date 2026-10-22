@@ -1,7 +1,23 @@
 {
   "name": "@zm/blocks",
   "private": true,
-  "description": "blocks with manifest.json, placed by the agent (S1-14)",
+  "description": "Layouts (`standard`, `case`) and blocks, each with manifest.json, and the page renderer (S1-13, #27)",
   "type": "module",
-  "exports": "./src/index.ts"
+  "exports": {
+    ".": "./src/index.ts",
+    "./test": "./src/test/index.tsx"
+  },
+  "dependencies": {
+    "@mantine/core": "~9.7.2",
+    "@zm/api-client": "workspace:*",
+    "@zm/forms": "workspace:*",
+    "react-router": "8.5.0"
+  },
+  "devDependencies": {
+    "@zm/ui": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  }
 }
