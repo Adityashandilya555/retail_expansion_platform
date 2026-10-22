@@ -1,6 +1,67 @@
 {
   "components": {
     "schemas": {
+      "AppUi": {
+        "properties": {
+          "client": {
+            "$ref": "#/components/schemas/UiClient"
+          },
+          "flows": {
+            "items": {
+              "$ref": "#/components/schemas/UiFlow"
+            },
+            "title": "Flows",
+            "type": "array"
+          },
+          "nav": {
+            "items": {
+              "$ref": "#/components/schemas/NavItem"
+            },
+            "title": "Nav",
+            "type": "array"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/Page"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "release": {
+            "$ref": "#/components/schemas/UiRelease"
+          }
+        },
+        "required": [
+          "client",
+          "release",
+          "nav",
+          "pages",
+          "flows"
+        ],
+        "title": "AppUi",
+        "type": "object"
+      },
+      "BlockRef": {
+        "additionalProperties": false,
+        "properties": {
+          "block": {
+            "minLength": 1,
+            "title": "Block",
+            "type": "string"
+          },
+          "props": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Props",
+            "type": "object"
+          }
+        },
+        "required": [
+          "block"
+        ],
+        "title": "BlockRef",
+        "type": "object"
+      },
       "CaseIn": {
         "properties": {
           "flow": {
@@ -63,6 +124,131 @@
         "title": "CaseOut",
         "type": "object"
       },
+      "ClientDetail": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_release": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Release"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "releases": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseOut"
+            },
+            "title": "Releases",
+            "type": "array"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "new",
+              "provisioning",
+              "ready",
+              "failed",
+              "suspended"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepOut"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "template_key": {
+            "title": "Template Key",
+            "type": "string"
+          },
+          "workspace_code": {
+            "title": "Workspace Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "workspace_code",
+          "template_key",
+          "status",
+          "created_at",
+          "last_release",
+          "steps",
+          "releases"
+        ],
+        "title": "ClientDetail",
+        "type": "object"
+      },
+      "ClientIn": {
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
+          "template_key": {
+            "minLength": 1,
+            "title": "Template Key",
+            "type": "string"
+          },
+          "workspace_code": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{2,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Code"
+          }
+        },
+        "required": [
+          "name",
+          "template_key"
+        ],
+        "title": "ClientIn",
+        "type": "object"
+      },
       "ClientInfo": {
         "properties": {
           "name": {
@@ -79,6 +265,70 @@
           "name"
         ],
         "title": "ClientInfo",
+        "type": "object"
+      },
+      "ClientOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_release": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Release"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "new",
+              "provisioning",
+              "ready",
+              "failed",
+              "suspended"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "template_key": {
+            "title": "Template Key",
+            "type": "string"
+          },
+          "workspace_code": {
+            "title": "Workspace Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "workspace_code",
+          "template_key",
+          "status",
+          "created_at",
+          "last_release"
+        ],
+        "title": "ClientOut",
         "type": "object"
       },
       "FieldError": {
@@ -222,6 +472,37 @@
         "title": "Membership",
         "type": "object"
       },
+      "NavItem": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "page": {
+            "title": "Page",
+            "type": "string"
+          },
+          "visible_to": {
+            "description": "Department keys, or `\"*\"` for everyone.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Visible To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "page",
+          "label",
+          "visible_to"
+        ],
+        "title": "NavItem",
+        "type": "object"
+      },
       "OwnerLoginIn": {
         "properties": {
           "email": {
@@ -268,6 +549,61 @@
         "title": "OwnerMe",
         "type": "object"
       },
+      "Page": {
+        "additionalProperties": false,
+        "properties": {
+          "department": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department"
+          },
+          "flow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required for the `case` layout.",
+            "title": "Flow"
+          },
+          "key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "layout": {
+            "minLength": 1,
+            "title": "Layout",
+            "type": "string"
+          },
+          "regions": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/BlockRef"
+              },
+              "type": "array"
+            },
+            "default": {},
+            "title": "Regions",
+            "type": "object"
+          }
+        },
+        "required": [
+          "key",
+          "layout"
+        ],
+        "title": "Page",
+        "type": "object"
+      },
       "Problem": {
         "description": "Problem details (RFC 9457), the body of every error response.",
         "properties": {
@@ -294,7 +630,7 @@
                 "type": "null"
               }
             ],
-            "description": "On 422, one entry per invalid field; otherwise null.",
+            "description": "One entry per invalid field (422, or a 409 on a taken value); otherwise null.",
             "title": "Errors"
           },
           "request_id": {
@@ -360,6 +696,96 @@
           "sha256"
         ],
         "title": "PublishOut",
+        "type": "object"
+      },
+      "ReleaseOut": {
+        "properties": {
+          "deployment_id": {
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "published_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published By"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "deployment_id",
+          "published_at",
+          "published_by"
+        ],
+        "title": "ReleaseOut",
+        "type": "object"
+      },
+      "StepOut": {
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "done",
+              "failed",
+              "needs_human"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "seq",
+          "status",
+          "attempts",
+          "last_error",
+          "updated_at"
+        ],
+        "title": "StepOut",
         "type": "object"
       },
       "SubmitIn": {
@@ -538,6 +964,24 @@
         "title": "TaskItem",
         "type": "object"
       },
+      "TemplateOut": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name"
+        ],
+        "title": "TemplateOut",
+        "type": "object"
+      },
       "TokenOut": {
         "properties": {
           "access_token": {
@@ -561,6 +1005,139 @@
           "expires_in"
         ],
         "title": "TokenOut",
+        "type": "object"
+      },
+      "UiClient": {
+        "properties": {
+          "accent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accent"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "theme": {
+            "title": "Theme",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "theme",
+          "accent"
+        ],
+        "title": "UiClient",
+        "type": "object"
+      },
+      "UiField": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "type"
+        ],
+        "title": "UiField",
+        "type": "object"
+      },
+      "UiFlow": {
+        "properties": {
+          "case_code": {
+            "title": "Case Code",
+            "type": "string"
+          },
+          "case_label": {
+            "title": "Case Label",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/UiStage"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "start_fields": {
+            "items": {
+              "$ref": "#/components/schemas/UiField"
+            },
+            "title": "Start Fields",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "case_label",
+          "case_code",
+          "stages",
+          "start_fields"
+        ],
+        "title": "UiFlow",
+        "type": "object"
+      },
+      "UiRelease": {
+        "properties": {
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "UiRelease",
+        "type": "object"
+      },
+      "UiStage": {
+        "properties": {
+          "department": {
+            "title": "Department",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "department"
+        ],
+        "title": "UiStage",
         "type": "object"
       },
       "WorkspaceIn": {
@@ -886,6 +1463,38 @@
         ]
       }
     },
+    "/app/ui": {
+      "get": {
+        "description": "The active release's nav, pages and flows, filtered to the user's departments.",
+        "operationId": "app_ui_app_ui_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppUi"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "App Ui",
+        "tags": [
+          "app"
+        ]
+      }
+    },
     "/auth/login": {
       "post": {
         "operationId": "login_auth_login_post",
@@ -1152,6 +1761,169 @@
         ]
       }
     },
+    "/owner/clients": {
+      "get": {
+        "operationId": "list_clients_owner_clients_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ClientOut"
+                  },
+                  "title": "Response List Clients Owner Clients Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Clients",
+        "tags": [
+          "owner"
+        ]
+      },
+      "post": {
+        "description": "The client and its provisioning steps, in one transaction; the worker takes it from here.",
+        "operationId": "create_client_owner_clients_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Create Client",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}": {
+      "get": {
+        "description": "The client with its provisioning steps and releases (the console polls this).",
+        "operationId": "get_client_detail_owner_clients__client_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Get Client Detail",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/provisioning/retry": {
+      "post": {
+        "description": "Re-queue the first failed (or `needs_human`) step only; every other step is left alone.\n\nShould the worker carry on past a stuck step, a later stuck one waits for the next retry.",
+        "operationId": "retry_provisioning_owner_clients__client_id__provisioning_retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Retry Provisioning",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
     "/owner/clients/{client_id}/publish": {
       "post": {
         "description": "Publish the client's draft as its next release (a person clicks Publish, never the agent).",
@@ -1222,6 +1994,42 @@
           }
         },
         "summary": "Owner Me",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/templates": {
+      "get": {
+        "description": "Starter templates for a new client (`zm-api templates sync` fills them).",
+        "operationId": "list_templates_owner_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TemplateOut"
+                  },
+                  "title": "Response List Templates Owner Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Templates",
         "tags": [
           "owner"
         ]

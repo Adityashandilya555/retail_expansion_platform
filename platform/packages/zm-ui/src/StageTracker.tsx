@@ -1,14 +1,15 @@
 import { Group, Text, ThemeIcon, Tooltip, VisuallyHidden } from "@mantine/core";
 import { Check, Circle, CircleDot, X, type LucideIcon } from "lucide-react";
+import { TONE_COLORS } from "./theme";
 
 export type StageState = "done" | "open" | "queued" | "closed";
 export type Stage = { key: string; label: string; state: StageState };
 
 const LOOK: Record<StageState, { icon: LucideIcon; color?: string; variant: "filled" | "light" | "outline" }> = {
-  done: { icon: Check, color: "green", variant: "filled" },
+  done: { icon: Check, color: TONE_COLORS.success, variant: "filled" },
   open: { icon: CircleDot, variant: "filled" }, // primary = the user's accent
-  queued: { icon: Circle, color: "gray", variant: "outline" },
-  closed: { icon: X, color: "red", variant: "filled" },
+  queued: { icon: Circle, color: TONE_COLORS.neutral, variant: "outline" },
+  closed: { icon: X, color: TONE_COLORS.error, variant: "filled" },
 };
 
 /**

@@ -356,6 +356,47 @@ def test_owner_publishes_through_the_api(clients: Clients) -> None:
     assert (body["version"], body["created"]) == (1, True)
 
 
+def test_users_get_the_published_ui_for_their_departments(clients: Clients) -> None:
+    """#27: `GET /app/ui` serves the active release; a BD-only user never receives Legal's page."""
+    users = {dept: uuid.uuid4() for dept in ("legal", "bd")}
+    for dept, uid in users.items():
+        vault_sql(
+            "pilot",
+            "insert into app.users (id, email, name, status) values (%s, %s, %s, 'active')",
+            uid,
+            f"{dept}-{uid.hex[:8]}@pilot.test",
+            dept.title(),
+        )
+        vault_sql("pilot", "insert into app.memberships values (%s, %s, 1, 'own')", uid, dept)
+
+    def ui(api: TestClient, dept: str) -> httpx.Response:
+        claims = {"sub": str(users[dept]), "kind": "client", "client": clients.slugs["pilot"]}
+        jwt_ = jwt.encode({**claims, "exp": 4102444800}, JWT_SECRET, algorithm="HS256")
+        return api.get("/app/ui", headers={"Authorization": f"Bearer {jwt_}"})
+
+    try:
+        with TestClient(create_app()) as api:
+            assert ui(api, "legal").status_code == 404  # nothing published yet
+            asyncio.run(_seed(clients, "pilot"))
+
+            async def go() -> None:
+                async with Stack(clients) as stack:
+                    await publish(await stack.ctx("pilot"), stack.platform(), clients.owner)
+
+            asyncio.run(go())
+            legal, bd = ui(api, "legal").json(), ui(api, "bd").json()
+    finally:
+        vault_sql("pilot", "delete from app.users where id = any(%s)", list(users.values()))
+
+    assert legal["release"] == {"version": 1}
+    assert legal["client"] == {"name": "Pilot", "theme": "quartz", "accent": "slate"}
+    assert [n["page"] for n in legal["nav"]] == ["home", "sites", "legal"]
+    page = next(p for p in legal["pages"] if p["key"] == "legal")
+    assert [b["block"] for b in page["regions"]["main"]] == ["task_inbox", "case_table"]
+    assert legal["flows"][0]["case_label"] == "Site"
+    assert "legal" not in [n["page"] for n in bd["nav"]] + [p["key"] for p in bd["pages"]]
+
+
 async def _seed(clients: Clients, name: str) -> None:
     async with Stack(clients) as stack:
         await seed_draft(await stack.ctx(name), "matrix-retail")

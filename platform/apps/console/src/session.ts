@@ -71,3 +71,10 @@ export async function loadMe(): Promise<OwnerMe | null> {
   const { data } = await api.GET("/owner/me");
   return data ?? null;
 }
+
+/** The signed-in owner, signing in silently from the refresh cookie after a reload; null = signed out. */
+export async function currentOwner(): Promise<OwnerMe | null> {
+  if (!signedIn()) return (await refresh()) ? loadMe() : null;
+  // A stale token (its timed refresh lost to a network blip, say) gets one refresh first.
+  return (await loadMe()) ?? ((await refresh()) ? loadMe() : null);
+}

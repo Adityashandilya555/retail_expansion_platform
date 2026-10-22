@@ -1,6 +1,7 @@
 import { Alert, Button, Group, Loader, Table, Text, UnstyledButton } from "@mantine/core";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { TONE_COLORS } from "./theme";
 
 export type Column<T> = {
   key: string;
@@ -102,11 +103,11 @@ export function DataTable<T>({
               )
             : error
               ? fullRow(
-                  <Alert color="red" variant="light" role="alert">
+                  <Alert color={TONE_COLORS.error} variant="light" role="alert">
                     <Group justify="space-between">
                       <Text size="sm">{error}</Text>
                       {onRetry && (
-                        <Button size="xs" variant="light" color="red" onClick={onRetry}>
+                        <Button size="xs" variant="light" color={TONE_COLORS.error} onClick={onRetry}>
                           Retry
                         </Button>
                       )}

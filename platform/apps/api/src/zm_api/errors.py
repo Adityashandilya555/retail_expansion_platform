@@ -45,7 +45,7 @@ class Problem(BaseModel):
     detail: str | None = None
     request_id: str | None = None
     errors: list[FieldError] | None = None
-    """On 422, one entry per invalid field; otherwise null."""
+    """One entry per invalid field (422, or a 409 on a taken value); otherwise null."""
 
 
 RESPONSES: dict[int | str, dict[str, Any]] = {
@@ -56,10 +56,17 @@ RESPONSES: dict[int | str, dict[str, Any]] = {
 class ApiError(Exception):
     status = 500
 
-    def __init__(self, detail: str | None = None, *, headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        detail: str | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+        errors: list[FieldError] | None = None,
+    ) -> None:
         super().__init__(detail)
         self.detail = detail
         self.headers = headers
+        self.errors = errors  # e.g. a 409 on one field of a form
 
 
 class BadRequest(ApiError):
@@ -97,8 +104,7 @@ class FormInvalid(UnprocessableContent):
     """Submitted values that fail their form's schema: one entry per field, as @zm/forms shows."""
 
     def __init__(self, errors: list[FieldError]) -> None:
-        super().__init__("Some values are not valid")
-        self.errors = errors
+        super().__init__("Some values are not valid", errors=errors)
 
 
 class TooManyRequests(ApiError):
@@ -137,7 +143,7 @@ def _pointer(loc: tuple[int | str, ...]) -> str:
 
 async def _api_error(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, ApiError)
-    return problem(exc.status, exc.detail, exc.headers, getattr(exc, "errors", None))
+    return problem(exc.status, exc.detail, exc.headers, exc.errors)
 
 
 async def _http_error(_: Request, exc: Exception) -> JSONResponse:

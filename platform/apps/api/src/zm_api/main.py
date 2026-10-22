@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from zm_api import auth, errors, logs, publish, settings, tasks_routes
+from zm_api import auth, clients, errors, logs, publish, settings, tasks_routes, ui
 from zm_api.context import PlatformRegistry, Resolver
 
 
@@ -27,8 +27,10 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         auth.app_routes,
         auth.owner_auth,
         auth.owner_routes,
+        clients.routes,
         publish.routes,
         tasks_routes.routes,
+        ui.routes,
     ):
         app.include_router(router)
     # Outermost last: CORS → RequestLog → CrashGuard → routes. CORS headers reach every response,

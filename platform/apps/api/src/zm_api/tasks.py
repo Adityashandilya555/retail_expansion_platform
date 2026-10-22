@@ -723,7 +723,12 @@ async def submit(
             try:
                 await ctx.operaton.unclaim(task_id)
             except ApiError:
-                _log.warning("couldn't unclaim task %s", task_id, extra={"client": ctx.client.slug})
+                # the submission's own id, not the task id from the URL (no log injection)
+                _log.warning(
+                    "couldn't unclaim the task of submission %s",
+                    sub.id,
+                    extra={"client": ctx.client.slug},
+                )
         if not refused(e):
             # no clear answer (timeout, engine error): Operaton may have completed it, so the
             # submission stays pending and the reconciler settles it from the task's history
