@@ -79,6 +79,16 @@ class Forbidden(ApiError):
     status = 403
 
 
+class Conflict(ApiError):
+    status = 409
+
+
+class UnprocessableContent(ApiError):
+    """A well-formed request about something that can't be processed, e.g. an invalid draft."""
+
+    status = 422
+
+
 class TooManyRequests(ApiError):
     status = 429
 

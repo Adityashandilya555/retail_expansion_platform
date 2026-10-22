@@ -2,6 +2,8 @@
 `zm-api openapi [--check]`: write (or compare) packages/api-client/openapi.json (#21).
 `zm-api owners create --email … --name …`: the first platform owner; asks for the password (#22).
 `zm-api users seed --client <slug> <file>`: demo users, mirrored to the client's Operaton (#22).
+`zm-api drafts seed --client <slug> --template <key>`: copy a starter template into a client's
+draft, ready to publish (#23; provisioning does this from S2-02b on).
 """
 
 import argparse
@@ -14,8 +16,9 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from zm_api import openapi, templates, users
+from zm_api import openapi, releases, templates, users
 from zm_api.context import PlatformRegistry, Resolver
+from zm_api.errors import NotFound
 
 
 async def _sync() -> list[templates.Template]:
@@ -110,6 +113,30 @@ def _seed(slug: str, name: str) -> int:
     return 0
 
 
+def _seed_draft(slug: str, template_key: str) -> int:
+    async def go() -> bool:
+        resolver = Resolver(PlatformRegistry())
+        try:
+            ctx = await resolver.resolve(slug)
+            if ctx is None:
+                return False
+            await releases.seed_draft(ctx, template_key)
+            return True
+        finally:
+            await resolver.aclose()
+
+    try:
+        found = asyncio.run(go())
+    except NotFound as e:
+        print(f"drafts seed failed: {e.detail}", file=sys.stderr)
+        return 1
+    if not found:
+        print(f"no client {slug}", file=sys.stderr)
+        return 1
+    print(f"{slug}: draft is now template {template_key}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="zm-api", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -131,6 +158,12 @@ def main(argv: list[str] | None = None) -> int:
     seed = people.add_parser("seed", help="load demo users (until invites exist, S2-23)")
     seed.add_argument("--client", required=True, help="client slug")
     seed.add_argument("file", help='JSON {"users": [{email, name, department, level}]}')
+    drafts = sub.add_parser("drafts", help="client drafts").add_subparsers(
+        dest="action", required=True
+    )
+    draft_seed = drafts.add_parser("seed", help="copy a starter template into a client's draft")
+    draft_seed.add_argument("--client", required=True, help="client slug")
+    draft_seed.add_argument("--template", required=True, help="template key, e.g. matrix-retail")
     args = parser.parse_args(argv)
     if args.cmd == "openapi":
         return openapi.export(args.check)
@@ -138,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         return _create_owner(args.email, args.name)
     if args.cmd == "users":
         return _seed(args.client, args.file)
+    if args.cmd == "drafts":
+        return _seed_draft(args.client, args.template)
     return _templates()
 
 

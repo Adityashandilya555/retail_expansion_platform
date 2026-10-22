@@ -247,6 +247,35 @@
         "title": "Problem",
         "type": "object"
       },
+      "PublishOut": {
+        "properties": {
+          "created": {
+            "description": "False when nothing changed since the last publish (no new version).",
+            "title": "Created",
+            "type": "boolean"
+          },
+          "deployment_id": {
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "deployment_id",
+          "created",
+          "sha256"
+        ],
+        "title": "PublishOut",
+        "type": "object"
+      },
       "TokenOut": {
         "properties": {
           "access_token": {
@@ -618,6 +647,50 @@
           }
         },
         "summary": "Owner Refresh",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/publish": {
+      "post": {
+        "description": "Publish the client's draft as its next release (a person clicks Publish, never the agent).",
+        "operationId": "publish_client_owner_clients__client_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Publish Client",
         "tags": [
           "owner"
         ]

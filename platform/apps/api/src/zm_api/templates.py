@@ -43,7 +43,7 @@ class TemplateError(ValueError):
 
 def load_templates() -> list[Template]:
     """Every `<key>/workflow.json` under the templates folder, validated against `WorkflowV1`."""
-    from zm_schema import validate  # CLI-only dependency: the API server never imports it
+    from zm_schema import validate
 
     templates = []
     for path in sorted(TEMPLATES_DIR.glob("*/workflow.json")):

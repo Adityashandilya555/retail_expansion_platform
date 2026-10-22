@@ -144,13 +144,22 @@ class OperatonClient:
 
     # Repository
     async def deploy(
-        self, name: str, files: Mapping[str, bytes], *, source: str = "zm-platform"
+        self,
+        name: str,
+        files: Mapping[str, bytes],
+        *,
+        source: str = "zm-platform",
+        changed_only: bool = False,
     ) -> Json:
-        """`POST /deployment/create`; unchanged resources don't make a new version."""
+        """`POST /deployment/create` with duplicate filtering against the latest deployment of the
+        same name and source. If nothing changed, Operaton returns that existing deployment; if
+        anything changed, `changed_only=False` redeploys every resource, which call activities
+        bound with `calledElementBinding="deployment"` need (DeployCmd.java:207-263)."""
         data = {
             "deployment-name": name,
             "deployment-source": source,
             "enable-duplicate-filtering": "true",
+            "deploy-changed-only": "true" if changed_only else "false",
         }
         # one part per resource, named after it: the engine keys parts by name
         multipart = [(filename, (filename, content)) for filename, content in files.items()]
@@ -159,6 +168,11 @@ class OperatonClient:
     async def process_definition(self, key: str) -> Json:
         """The latest version of a process definition."""
         return await self._call("process_definition", "GET", f"process-definition/key/{_id(key)}")
+
+    async def process_definition_by_id(self, definition_id: str) -> Json:
+        """One process definition, e.g. a task's `processDefinitionId`; has `deploymentId`."""
+        path = f"process-definition/{_id(definition_id)}"
+        return await self._call("process_definition_by_id", "GET", path)
 
     # Runtime
     async def start_by_key(
@@ -207,6 +221,14 @@ class OperatonClient:
             "create_group",
             "POST",
             "group/create",
+            json={"id": group_id, "name": name, "type": type},
+        )
+
+    async def update_group(self, group_id: str, name: str, *, type: str = "zm") -> None:  # noqa: A002
+        await self._call(
+            "update_group",
+            "PUT",
+            f"group/{_id(group_id)}",
             json={"id": group_id, "name": name, "type": type},
         )
 

@@ -9,7 +9,9 @@
   401, after the same password-hashing work.
 """
 
+import asyncio
 import hashlib
+import logging
 import secrets
 import time
 from collections import deque
@@ -249,11 +251,28 @@ def _clear_cookie(response: Response, t: _Tokens) -> None:
     response.delete_cookie(t.cookie, path=t.path, secure=True, httponly=True, samesite="strict")
 
 
-def _look(row: Client) -> tuple[str, str | None]:
-    """The client's theme preset and default accent for the sign-in screen (D19).
-    shortcut: the defaults until #23 stores releases; then read `ui.theme`/`ui.accent` of the
-    client's active release in app.releases."""
-    return "quartz", None
+async def _look(resolver: Resolver, row: Client) -> tuple[str, str | None]:
+    """The client's theme preset and default accent for the sign-in screen (D19), from its active
+    release (#23). Before the first publish, or if the vault doesn't answer within 2 s, the
+    defaults: the sign-in screen must never fail because of its colours."""
+    from zm_api.releases import active_release
+
+    try:
+        async with asyncio.timeout(2):
+            ctx = await resolver.context(row)
+            async with ctx.db.connect() as conn:
+                release = await active_release(conn)
+    except Exception:  # noqa: BLE001 - unreachable vault, bad secrets, timeout: never fail sign-in
+        logging.getLogger("zm_api.auth").warning(
+            "sign-in look: using defaults", extra={"client": row.slug}, exc_info=True
+        )
+        return "quartz", None
+    if release is None:
+        return "quartz", None
+    theme, accent = release.ui.get("theme"), release.ui.get("accent")
+    return (theme if isinstance(theme, str) else "quartz"), (
+        accent if isinstance(accent, str) else None
+    )
 
 
 # --- client users: /auth/* ----------------------------------------------------------------------
@@ -274,7 +293,7 @@ async def workspace(body: WorkspaceIn, request: Request) -> WorkspaceOut:
     row = await request.app.state.resolver.find_code(body.workspace_code)
     if row is None or row.status != "ready":
         raise NotFound("Workspace not found")
-    theme, accent = _look(row)
+    theme, accent = await _look(request.app.state.resolver, row)
     return WorkspaceOut(client_name=row.name, theme=theme, accent=accent)
 
 

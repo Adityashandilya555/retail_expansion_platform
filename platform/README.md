@@ -122,6 +122,20 @@ PLATFORM_DATABASE_URL=… uv run zm-api templates sync   # validate + upsert int
 ```
 `matrix-retail/demo-users.json` lists the demo accounts (emails only; passwords are generated at seed time).
 
+## Publish
+A client's draft `workflow.json` (`app.drafts` in its vault) becomes a release on its own Operaton (#23):
+```bash
+uv run zm-api drafts seed --client <slug> --template matrix-retail   # until provisioning seeds drafts (S2-02b)
+curl -X POST -H "Authorization: Bearer <owner token>" $API_BASE_URL/owner/clients/<client id>/publish
+```
+`zm_api.publish.publish()` does the following:
+1. Compiles the draft.
+2. Creates any missing `<dept>__L<n>` groups.
+3. Deploys every BPMN resource plus `zm-release.json` as `<slug>-release`, with duplicate filtering and `deploy-changed-only=false`. An unchanged draft gives back the same deployment and no new version. Any change, even a form label, redeploys every resource as the next version.
+4. Records `app.releases` vN (forms, ui, routing vars, process keys) and the `platform.releases` index row.
+
+Running cases keep their version: `release_for_task()` resolves a task's forms through its process definition's deployment.
+
 ## Layout
 ```
 apps/api            FastAPI platform API              (Python, uv workspace)

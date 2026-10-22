@@ -13,6 +13,7 @@ dependencies = [
     "pyjwt>=2.10",
     "sqlalchemy[asyncio]>=2.0",
     "uvicorn[standard]>=0.54",
+    "zm-compiler",
     "zm-schema",
 ]
 
@@ -20,6 +21,7 @@ dependencies = [
 zm-api = "zm_api.cli:main"
 
 [tool.uv.sources]
+zm-compiler = { workspace = true }
 zm-schema = { workspace = true }
 
 [build-system]
