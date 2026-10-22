@@ -10,8 +10,10 @@
   },
   "dependencies": {
     "@mantine/core": "~9.7.2",
-    "@zm/forms": "workspace:*",
+    "@tanstack/react-query": "^5.104.2",
     "@zm/api-client": "workspace:*",
+    "@zm/blocks": "workspace:*",
+    "@zm/forms": "workspace:*",
     "@zm/ui": "workspace:*",
     "lucide-react": "^1.57.0",
     "react": "^19.3.1",

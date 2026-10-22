@@ -1,0 +1,10 @@
+{
+  "name": "standard",
+  "version": 1,
+  "description": "A department or overview page: an optional hero across the top, then the main column, with an aside column beside it when the aside has content (12 columns, or 8/4).",
+  "regions": [
+    { "key": "hero", "description": "Across the top of the page, e.g. a KPI strip.", "max": 1 },
+    { "key": "main", "description": "The main column: inboxes, case tables." },
+    { "key": "aside", "description": "A narrow column beside main; main takes the full width when it's empty." }
+  ]
+}

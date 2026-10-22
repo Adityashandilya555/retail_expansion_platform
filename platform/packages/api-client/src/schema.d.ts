@@ -24,6 +24,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/app/ui": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * App Ui
+         * @description The active release's nav, pages and flows, filtered to the user's departments.
+         */
+        get: operations["app_ui_app_ui_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -287,6 +307,29 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AppUi */
+        AppUi: {
+            client: components["schemas"]["UiClient"];
+            /** Flows */
+            flows: components["schemas"]["UiFlow"][];
+            /** Nav */
+            nav: components["schemas"]["NavItem"][];
+            /** Pages */
+            pages: components["schemas"]["Page"][];
+            release: components["schemas"]["UiRelease"];
+        };
+        /** BlockRef */
+        BlockRef: {
+            /** Block */
+            block: string;
+            /**
+             * Props
+             * @default {}
+             */
+            props: {
+                [key: string]: unknown;
+            };
+        };
         /** ClientDetail */
         ClientDetail: {
             /**
@@ -413,6 +456,18 @@ export interface components {
              */
             scope: "own" | "department" | "all";
         };
+        /** NavItem */
+        NavItem: {
+            /** Label */
+            label: string;
+            /** Page */
+            page: string;
+            /**
+             * Visible To
+             * @description Department keys, or `"*"` for everyone.
+             */
+            visible_to: string[];
+        };
         /** OwnerLoginIn */
         OwnerLoginIn: {
             /** Email */
@@ -431,6 +486,27 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+        };
+        /** Page */
+        Page: {
+            /** Department */
+            department?: string | null;
+            /**
+             * Flow
+             * @description Required for the `case` layout.
+             */
+            flow?: string | null;
+            /** Key */
+            key: string;
+            /** Layout */
+            layout: string;
+            /**
+             * Regions
+             * @default {}
+             */
+            regions: {
+                [key: string]: components["schemas"]["BlockRef"][];
+            };
         };
         /**
          * Problem
@@ -525,6 +601,53 @@ export interface components {
              */
             token_type: "bearer";
         };
+        /** UiClient */
+        UiClient: {
+            /** Accent */
+            accent: string | null;
+            /** Name */
+            name: string;
+            /** Theme */
+            theme: string;
+        };
+        /** UiField */
+        UiField: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Type */
+            type: string;
+        };
+        /** UiFlow */
+        UiFlow: {
+            /** Case Code */
+            case_code: string;
+            /** Case Label */
+            case_label: string;
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Stages */
+            stages: components["schemas"]["UiStage"][];
+            /** Start Fields */
+            start_fields: components["schemas"]["UiField"][];
+        };
+        /** UiRelease */
+        UiRelease: {
+            /** Version */
+            version: number;
+        };
+        /** UiStage */
+        UiStage: {
+            /** Department */
+            department: string;
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+        };
         /** WorkspaceIn */
         WorkspaceIn: {
             /** Workspace Code */
@@ -564,6 +687,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    app_ui_app_ui_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppUi"];
                 };
             };
             /** @description Problem details (RFC 9457) */

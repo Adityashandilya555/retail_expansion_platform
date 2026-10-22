@@ -1,2 +1,17 @@
-// Placeholder: blocks with manifest.json, placed by the agent (S1-14).
-export const PACKAGE = "@zm/blocks";
+// @zm/blocks (#27): layouts and blocks, each with a manifest.json, and the renderer that draws a
+// release's page from them.
+export { PageRenderer, defaultCasePage } from "./PageRenderer";
+export {
+  blocks,
+  layouts,
+  type AppUi,
+  type BlockEntry,
+  type BlockManifest,
+  type BlockProps,
+  type BlockRef,
+  type BlockRegistry,
+  type LayoutEntry,
+  type LayoutManifest,
+  type LayoutProps,
+  type UiPage,
+} from "./registry";
