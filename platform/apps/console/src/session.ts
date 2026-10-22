@@ -71,3 +71,8 @@ export async function loadMe(): Promise<OwnerMe | null> {
   const { data } = await api.GET("/owner/me");
   return data ?? null;
 }
+
+/** The signed-in owner, signing in silently from the refresh cookie after a reload; null = signed out. */
+export async function currentOwner(): Promise<OwnerMe | null> {
+  return signedIn() || (await refresh()) ? loadMe() : null;
+}
