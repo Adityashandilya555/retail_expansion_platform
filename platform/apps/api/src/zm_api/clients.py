@@ -147,6 +147,17 @@ def _field(path: str, message: str) -> list[FieldError]:
     return [FieldError(path=path, message=message)]
 
 
+_TAKEN = {
+    "clients_slug_key": ("Slug taken", "/slug", "Another client already uses this slug"),
+    "clients_workspace_code_key": (
+        "Workspace code taken",
+        "/workspace_code",
+        "This workspace code is already taken",
+    ),
+}
+"""Unique constraints on `platform.clients` → the 409 for the field they guard."""
+
+
 # --- routes ----------------------------------------------------------------------------------
 
 routes = owner_router()
@@ -212,14 +223,13 @@ async def create_client(body: ClientIn, owner: OwnerCtx, request: Request) -> Cl
                 )
             ).scalar_one()
         except IntegrityError as exc:
-            if "workspace_code" in str(exc.orig):
-                raise Conflict(
-                    "Workspace code taken",
-                    errors=_field("/workspace_code", "This workspace code is already taken"),
-                ) from None
-            raise Conflict(
-                "Slug taken", errors=_field("/slug", "Another client already uses this slug")
-            ) from None
+            # asyncpg's error (the cause of SQLAlchemy's) names the constraint; anything else,
+            # e.g. `created_by` pointing at a removed owner, isn't the person's input
+            taken = _TAKEN.get(getattr(exc.orig.__cause__, "constraint_name", None))
+            if taken is None:
+                raise
+            title, path, message = taken
+            raise Conflict(title, errors=_field(path, message)) from None
         await conn.execute(
             text(
                 "insert into platform.provisioning_steps (client_id, step, seq)"
@@ -240,7 +250,9 @@ async def get_client_detail(client_id: UUID, request: Request) -> ClientDetail:
 
 @routes.post("/clients/{client_id}/provisioning/retry")
 async def retry_provisioning(client_id: UUID, request: Request) -> ClientDetail:
-    """Re-queue the failed (or `needs_human`) step only; steps already done are left alone."""
+    """Re-queue the first failed (or `needs_human`) step only; every other step is left alone.
+
+    Should the worker carry on past a stuck step, a later stuck one waits for the next retry."""
     async with _platform(request).begin() as conn:
         exists = await conn.execute(
             text("select 1 from platform.clients where id = :id"), {"id": client_id}
@@ -250,8 +262,9 @@ async def retry_provisioning(client_id: UUID, request: Request) -> ClientDetail:
         requeued = await conn.execute(
             text(
                 "update platform.provisioning_steps set status = 'pending', attempts = 0,"
-                " last_error = null, updated_at = now() where client_id = :id"
-                " and status in ('failed', 'needs_human') returning step"
+                " last_error = null, updated_at = now() where client_id = :id and seq = ("
+                " select min(seq) from platform.provisioning_steps where client_id = :id"
+                " and status in ('failed', 'needs_human')) returning step"
             ),
             {"id": client_id},
         )

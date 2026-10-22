@@ -78,3 +78,8 @@ export function SignInForm({
 export function notifyError(message: string) {
   notifications.show({ color: TONE_COLORS.error, title: "Couldn't continue", message });
 }
+
+/** News that isn't a failure, e.g. "nothing to publish", as a Mantine notification. */
+export function notifyInfo(title: string, message: string) {
+  notifications.show({ color: TONE_COLORS.neutral, title, message });
+}

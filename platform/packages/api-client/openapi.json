@@ -1070,7 +1070,7 @@
     },
     "/owner/clients/{client_id}/provisioning/retry": {
       "post": {
-        "description": "Re-queue the failed (or `needs_human`) step only; steps already done are left alone.",
+        "description": "Re-queue the first failed (or `needs_human`) step only; every other step is left alone.\n\nShould the worker carry on past a stuck step, a later stuck one waits for the next retry.",
         "operationId": "retry_provisioning_owner_clients__client_id__provisioning_retry_post",
         "parameters": [
           {

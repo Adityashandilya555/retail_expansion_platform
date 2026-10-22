@@ -2,7 +2,7 @@
 // for everything else; this package holds the theme, the provider and the extras Mantine lacks.
 export { AppFrame, type NavItem } from "./AppFrame";
 export { AppearanceMenu } from "./AppearanceMenu";
-export { AuthCard, SignInForm, notifyError } from "./SignIn";
+export { AuthCard, SignInForm, notifyError, notifyInfo } from "./SignIn";
 export { DataTable, type Column } from "./DataTable";
 export { Notice } from "./Notice";
 export { Num, formatNum } from "./Num";

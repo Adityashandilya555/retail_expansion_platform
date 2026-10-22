@@ -3,7 +3,7 @@
 import { Button, Code, Group, Modal, NativeSelect, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
-import { DataTable, Notice, notifyError, PageHeader, StatusPill, type StatusTone } from "@zm/ui";
+import { DataTable, Notice, notifyError, notifyInfo, PageHeader, StatusPill, type StatusTone } from "@zm/ui";
 import { useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
 import { api } from "./session";
@@ -155,7 +155,7 @@ export function NewClient() {
             required
             value={template}
             onChange={(e) => setTemplate(e.currentTarget.value)}
-            error={errors.template_key}
+            error={templates.isError ? "Couldn't load the templates. Reload the page to try again." : errors.template_key}
             data={[{ value: "", label: "Select a template…" }, ...(templates.data ?? []).map((t) => ({ value: t.key, label: t.name }))]}
           />
           <Group>
@@ -178,7 +178,7 @@ export function ClientPage() {
   const client = useQuery({
     queryKey: ["client", id],
     queryFn: () => must(api.GET("/owner/clients/{client_id}", { params: { path: { client_id: id } } })),
-    refetchInterval: 5000,
+    refetchInterval: (q) => (q.state.data?.status === "ready" ? false : 5000), // publish refetches it
   });
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -222,6 +222,11 @@ export function ClientPage() {
         onBack={() => navigate("/")}
         backLabel="Back to clients"
       />
+      {client.isError && (
+        <Notice tone="error" title="Couldn't refresh this client">
+          <Text size="sm">Last updated {new Date(client.dataUpdatedAt).toLocaleTimeString()}.</Text>
+        </Notice>
+      )}
 
       <Stack gap="sm">
         <Group justify="space-between">
@@ -303,7 +308,7 @@ export function ClientPage() {
                 run(async () => {
                   const done = await must(api.POST("/owner/clients/{client_id}/publish", { params: { path: { client_id: id } } }));
                   setConfirming(false);
-                  if (!done.created) notifyError(`Nothing changed since v${done.version}: no new release.`);
+                  if (!done.created) notifyInfo("No new release", `Nothing changed since v${done.version}.`);
                 }, "Couldn't publish.")
               }
             >

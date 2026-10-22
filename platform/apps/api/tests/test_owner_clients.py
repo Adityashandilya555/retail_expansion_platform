@@ -187,6 +187,17 @@ def test_a_duplicate_workspace_code_or_slug_is_409_on_that_field(api: TestClient
 
 
 @pytest.mark.integration
+def test_an_insert_refused_for_another_reason_is_not_a_taken_slug(api: TestClient) -> None:
+    """An owner removed while their token still works: a server error, not a 409 on `/slug`."""
+    removed = bearer(token("owner", client=None, sub=str(uuid.uuid4())))
+    body = {"name": f"Orphan {RUN}", "template_key": "matrix-retail"}
+    response = api.post("/owner/clients", json=body, headers=removed)
+    assert response.status_code == 500, response.text  # logged with the constraint name
+    count = "select count(*) as n from platform.clients where slug = :s"
+    assert asyncio.run(sql(count, s=f"orphan-{RUN}"))[0]["n"] == 0
+
+
+@pytest.mark.integration
 def test_bad_input_is_422_on_the_field(api: TestClient) -> None:
     unknown = create(api, name=f"Third {RUN}", template_key="nope")
     assert unknown.status_code == 422
@@ -251,6 +262,27 @@ def test_a_needs_human_step_is_retried_too_and_shows_its_click_path(api: TestCli
     assert [s["last_error"] for s in steps if s["status"] == "needs_human"] == [path]
     after = api.post(f"/owner/clients/{client['id']}/provisioning/retry").json()["steps"]
     assert [s["status"] for s in after if s["step"] == "data_api_off"] == ["pending"]
+
+
+@pytest.mark.integration
+def test_with_two_stuck_steps_retry_requeues_the_first_one_only(api: TestClient) -> None:
+    client = create(api, name=f"Two stuck {RUN}").json()
+    asyncio.run(
+        sql(
+            "update platform.provisioning_steps set status = case seq when 3 then 'needs_human'"
+            " when 5 then 'failed' else 'done' end::platform.step_status where client_id = :id",
+            id=client["id"],
+        )
+    )
+    url = f"/owner/clients/{client['id']}/provisioning/retry"
+
+    def stuck() -> dict[str, str]:
+        steps = api.post(url).json()["steps"]
+        return {s["step"]: s["status"] for s in steps if s["step"] in ("data_api_off", "registry")}
+
+    assert stuck() == {"data_api_off": "pending", "registry": "failed"}
+    assert stuck() == {"data_api_off": "pending", "registry": "pending"}
+    assert api.post(url).status_code == 409
 
 
 @pytest.mark.integration

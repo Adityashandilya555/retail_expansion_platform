@@ -5,7 +5,7 @@ import { expectNoAxeViolations } from "@zm/ui/test";
 import { MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 import { ConsoleApp } from "./App";
-import { forget, refresh, signedIn, signOut } from "./session";
+import { currentOwner, forget, refresh, signedIn, signOut } from "./session";
 
 type ClientDetail = components["schemas"]["ClientDetail"];
 type StepOut = components["schemas"]["StepOut"];
@@ -147,6 +147,17 @@ test("a refresh that lands after sign-out doesn't sign the owner back in (Codex,
   expect(signedIn()).toBe(false);
 });
 
+test("a stale token gets one refresh before the owner is sent to sign-in", async () => {
+  let fresh = "o1";
+  api({
+    "POST /owner/auth/refresh": () => json({ ...TOKEN, access_token: fresh }),
+    "GET /owner/me": (r) => (r.headers.get("authorization") === `Bearer ${fresh}` ? json(OWNER) : problem(401)),
+  });
+  expect(await currentOwner()).toEqual(OWNER);
+  fresh = "o2"; // o1 expired, and its timed refresh never landed
+  expect(await currentOwner()).toEqual(OWNER);
+});
+
 // --- clients (#29) ----------------------------------------------------------------------------
 
 test("the clients list shows name, workspace code, status and last release; a row opens the client", async () => {
@@ -204,7 +215,25 @@ test("creating Matrix Retail queues its provisioning, and the page follows it un
   await act(() => vi.advanceTimersByTimeAsync(5000)); // the page polls every 5 s
   expect(await screen.findByRole("button", { name: "Publish draft as v1" })).toBeDefined();
   expect(within(screen.getByRole("table", { name: "Provisioning" })).getAllByText("Done")).toHaveLength(STEPS.length);
-  expect(calls.filter((c) => c === `GET /owner/clients/${ID}`).length).toBeGreaterThanOrEqual(2);
+  const polled = calls.filter((c) => c === `GET /owner/clients/${ID}`).length;
+  expect(polled).toBeGreaterThanOrEqual(2);
+  await act(() => vi.advanceTimersByTimeAsync(15000)); // ready: no more polling
+  expect(calls.filter((c) => c === `GET /owner/clients/${ID}`)).toHaveLength(polled);
+});
+
+test("a failed poll keeps the last status on screen and says so", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let up = true;
+  signedInApi({ [`GET /owner/clients/${ID}`]: () => (up ? json(detail({ steps: steps({ 0: "running" }) })) : problem(502)) });
+  renderAt(`/clients/${ID}`);
+  await within(await screen.findByRole("table", { name: "Provisioning" })).findByText("Running");
+  up = false;
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(await screen.findByText("Couldn't refresh this client")).toBeDefined();
+  expect(within(screen.getByRole("table", { name: "Provisioning" })).getByText("Running")).toBeDefined();
+  up = true;
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  await waitFor(() => expect(screen.queryByText("Couldn't refresh this client")).toBeNull());
 });
 
 test("the form checks its fields before sending, and a taken workspace code shows on that field", async () => {
@@ -240,6 +269,16 @@ test("the form checks its fields before sending, and a taken workspace code show
   expect(code.getAttribute("aria-invalid")).toBe("true");
   expect(slug.getAttribute("aria-invalid")).not.toBe("true");
   expect(calls.filter((c) => c === "POST /owner/clients")).toHaveLength(1);
+});
+
+test("templates that fail to load say so on the field, not 'Choose a template'", async () => {
+  signedInApi({ "GET /owner/templates": () => problem(502) });
+  renderAt("/clients/new");
+  const failed = "Couldn't load the templates. Reload the page to try again.";
+  expect(await screen.findByText(failed)).toBeDefined();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Create client" }));
+  expect(screen.getByText(failed)).toBeDefined();
+  expect(screen.queryByText("Choose a template")).toBeNull();
 });
 
 test("a failed step shows its error, and Retry re-queues only that step", async () => {
@@ -315,4 +354,19 @@ test("when ready, Publish v1 asks first, then v1 appears in the releases list", 
   expect(within(releases).getByText("dep-1")).toBeDefined();
   expect(await screen.findByRole("button", { name: "Publish draft as v2" })).toBeDefined();
   expect(calls.filter((c) => c === `POST /owner/clients/${ID}/publish`)).toHaveLength(1);
+});
+
+test("publishing an unchanged draft says so, not as an error", async () => {
+  const v1 = { version: 1, deployment_id: "dep-1", published_at: AT, published_by: OWNER.id };
+  signedInApi({
+    [`GET /owner/clients/${ID}`]: () => json(detail({ status: "ready", steps: steps(allDone), last_release: 1, releases: [v1] })),
+    [`POST /owner/clients/${ID}/publish`]: () => json({ version: 1, deployment_id: "dep-1", created: false, sha256: "x" }),
+  });
+  renderAt(`/clients/${ID}`);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Publish draft as v2" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Publish v2?" })).getByRole("button", { name: "Publish" }));
+  expect(await screen.findByText("Nothing changed since v1.")).toBeDefined();
+  expect(screen.getByText("No new release")).toBeDefined();
+  expect(screen.queryByText("Couldn't continue")).toBeNull();
 });

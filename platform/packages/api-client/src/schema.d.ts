@@ -215,7 +215,9 @@ export interface paths {
         put?: never;
         /**
          * Retry Provisioning
-         * @description Re-queue the failed (or `needs_human`) step only; steps already done are left alone.
+         * @description Re-queue the first failed (or `needs_human`) step only; every other step is left alone.
+         *
+         *     Should the worker carry on past a stuck step, a later stuck one waits for the next retry.
          */
         post: operations["retry_provisioning_owner_clients__client_id__provisioning_retry_post"];
         delete?: never;
