@@ -14,6 +14,6 @@ COPY infra/supabase/client infra/supabase/client
 RUN uv sync --frozen --no-dev --no-build --no-install-workspace --package zm-worker
 RUN useradd --system --no-create-home zm
 USER zm
-ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app/apps/worker/src"
+ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app/apps/worker/src:/app/apps/api/src:/app/packages/compiler/src:/app/packages/schema/src"
 
 CMD ["python", "-m", "zm_worker"]

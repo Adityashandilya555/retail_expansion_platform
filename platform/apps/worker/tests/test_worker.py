@@ -18,7 +18,8 @@ def test_json_formatter_tags_client_and_request_id() -> None:
     assert line["request_id"] is None
 
 
-def test_tick_logs(caplog) -> None:
+def test_tick_logs(caplog, monkeypatch) -> None:
+    monkeypatch.delenv("PLATFORM_DATABASE_URL", raising=False)
     with caplog.at_level(logging.INFO, logger="zm_worker"):
         worker_main.tick()
     assert caplog.records[-1].getMessage() == "tick"

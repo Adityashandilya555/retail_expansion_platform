@@ -69,6 +69,10 @@ class ApiError(Exception):
         self.errors = errors  # e.g. a 409 on one field of a form
 
 
+class BadRequest(ApiError):
+    status = 400
+
+
 class NotFound(ApiError):
     status = 404
 
@@ -94,6 +98,13 @@ class UnprocessableContent(ApiError):
     """A well-formed request about something that can't be processed, e.g. an invalid draft."""
 
     status = 422
+
+
+class FormInvalid(UnprocessableContent):
+    """Submitted values that fail their form's schema: one entry per field, as @zm/forms shows."""
+
+    def __init__(self, errors: list[FieldError]) -> None:
+        super().__init__("Some values are not valid", errors=errors)
 
 
 class TooManyRequests(ApiError):

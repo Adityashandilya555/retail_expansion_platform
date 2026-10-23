@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from zm_api import auth, clients, errors, logs, publish, settings, ui
+from zm_api import auth, clients, errors, logs, publish, settings, tasks_routes, ui
 from zm_api.context import PlatformRegistry, Resolver
 
 
@@ -29,6 +29,7 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         auth.owner_routes,
         clients.routes,
         publish.routes,
+        tasks_routes.routes,
         ui.routes,
     ):
         app.include_router(router)
@@ -42,7 +43,7 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         allow_origins=settings.cors_allowed_origins(),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id"],
         expose_headers=["X-Request-Id"],
     )
 

@@ -174,7 +174,29 @@ class OperatonClient:
         path = f"process-definition/{_id(definition_id)}"
         return await self._call("process_definition_by_id", "GET", path)
 
+    async def definition_in(self, deployment_id: str, key: str) -> Json:
+        """The definition of `key` deployed by one deployment (a release), whatever is latest."""
+        params = {"deploymentId": deployment_id, "key": key}
+        found = await self._call("definition_in", "GET", "process-definition", params=params)
+        if not found:
+            raise NotFound("No such process in this release")
+        return found[0]
+
     # Runtime
+    async def start(
+        self,
+        definition_id: str,
+        *,
+        business_key: str | None = None,
+        values: Mapping[str, Any] | None = None,
+    ) -> Json:
+        """Start one exact process definition (`POST /process-definition/{id}/start`)."""
+        body: Json = {"variables": variables(values or {})}
+        if business_key is not None:
+            body["businessKey"] = business_key
+        path = f"process-definition/{_id(definition_id)}/start"
+        return await self._call("start", "POST", path, json=body)
+
     async def start_by_key(
         self, key: str, *, business_key: str | None = None, values: Mapping[str, Any] | None = None
     ) -> Json:
@@ -183,6 +205,24 @@ class OperatonClient:
             body["businessKey"] = business_key
         path = f"process-definition/key/{_id(key)}/start"
         return await self._call("start_by_key", "POST", path, json=body)
+
+    async def find_instances(self, query: Mapping[str, Any]) -> list[Json]:
+        """`POST /process-instance` with a ProcessInstanceQueryDto body; each instance has
+        `businessKey`. A body, not a query string: hundreds of ids would pass Tomcat's 8 KB
+        request-line limit."""
+        return await self._call("find_instances", "POST", "process-instance", json=dict(query))
+
+    async def process_instances(self, ids: list[str]) -> list[Json]:
+        """Running process instances by id, in one call (ProcessInstanceQueryDto.java:75). Stage
+        processes get the case's business key from their call activity."""
+        if not ids:
+            return []
+        return await self.find_instances({"processInstanceIds": ids})
+
+    async def delete_process_instance(self, instance_id: str) -> None:
+        path = f"process-instance/{_id(instance_id)}"
+        params = {"skipCustomListeners": "true"}
+        await self._call("delete_process_instance", "DELETE", path, params=params)
 
     async def list_tasks(
         self, query: Mapping[str, Any], *, first: int = 0, max_results: int = 200
@@ -194,8 +234,16 @@ class OperatonClient:
     async def get_task(self, task_id: str) -> Json:
         return await self._call("get_task", "GET", f"task/{_id(task_id)}")
 
+    async def identity_links(self, task_id: str) -> list[Json]:
+        """The task's candidate users and groups: `[{userId, groupId, type: "candidate"}]`."""
+        path = f"task/{_id(task_id)}/identity-links"
+        return await self._call("identity_links", "GET", path, params={"type": "candidate"})
+
     async def claim(self, task_id: str, user_id: str) -> None:
         await self._call("claim", "POST", f"task/{_id(task_id)}/claim", json={"userId": user_id})
+
+    async def unclaim(self, task_id: str) -> None:
+        await self._call("unclaim", "POST", f"task/{_id(task_id)}/unclaim")
 
     async def complete(self, task_id: str, values: Mapping[str, Any]) -> None:
         body = {"variables": variables(values)}

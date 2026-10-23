@@ -5,7 +5,7 @@ Pure and deterministic: no network, no clock, and the same document gives byte-i
 """
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from zm_compiler.bpmn import End, Proc, set_var
 from zm_compiler.forms import build_form
@@ -48,6 +48,15 @@ def form_key(form_id: str) -> str:
     return key
 
 
+def level_groups(
+    levels: Mapping[str, list[int]], department: str, level: int, or_above: bool
+) -> list[str]:
+    """The candidate groups for a level performer: its own level, or every level from it up
+    (`or_above`). The one copy of this rule: the API's start and team checks use it too (#26)."""
+    ns = [n for n in levels.get(department, []) if n >= level] if or_above else [level]
+    return [group_id(department, n) for n in ns]
+
+
 class _Compiler:
     def __init__(self, wf: WorkflowV1, client_slug: str) -> None:
         self.wf = wf
@@ -59,8 +68,7 @@ class _Compiler:
     # ── helpers ──
 
     def groups_for(self, department: str, level: int, or_above: bool) -> list[str]:
-        ns = [n for n in self.levels[department] if n >= level] if or_above else [level]
-        return [group_id(department, n) for n in ns]
+        return level_groups(self.levels, department, level, or_above)
 
     def cond(self, rule: object) -> str:
         """A rule as JUEL (without `${}`): text passes through; initiator level checks use the

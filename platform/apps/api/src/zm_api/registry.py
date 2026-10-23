@@ -47,3 +47,11 @@ async def get_client(
     """workspace_code matches case-insensitively (citext)."""
     row = (await conn.execute(_QUERIES[by], {"value": value})).mappings().one_or_none()
     return Client(**row) if row else None
+
+
+async def ready_clients(conn: AsyncConnection) -> list[Client]:
+    """Every client whose vault is ready, by slug (the worker's reconciler walks them)."""
+    rows = await conn.execute(
+        text("select * from platform.clients where status = 'ready' order by slug")
+    )
+    return [Client(**r) for r in rows.mappings()]
