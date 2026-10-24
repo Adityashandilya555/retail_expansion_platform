@@ -947,12 +947,14 @@ name = "zm-worker"
 version = "0.0.0"
 source = { editable = "apps/worker" }
 dependencies = [
+    { name = "httpx" },
     { name = "psycopg", extra = ["binary"] },
     { name = "zm-api" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.28" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3" },
     { name = "zm-api", editable = "apps/api" },
 ]
