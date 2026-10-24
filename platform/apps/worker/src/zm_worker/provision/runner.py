@@ -41,6 +41,13 @@ class Settings:
     region: str
     instance_size: str
     prefix: str
+    # Railway (S2-02b): the step that needs them fails with a clear error while they're unset
+    railway_token: str | None = None
+    railway_token_type: str = "project"  # project → Project-Access-Token header; else Bearer
+    railway_project: str | None = None
+    railway_environment: str | None = None
+    railway_region: str = "asia-southeast1-eqsg3a"
+    operaton_image: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings | None":
@@ -54,6 +61,12 @@ class Settings:
             region=os.environ.get("SUPABASE_REGION", "ap-southeast-1"),
             instance_size=os.environ.get("SUPABASE_CLIENT_INSTANCE_SIZE", "micro"),
             prefix=os.environ.get("SUPABASE_PROJECT_PREFIX", "zm-"),
+            railway_token=os.environ.get("RAILWAY_API_TOKEN") or None,
+            railway_token_type=os.environ.get("RAILWAY_API_TOKEN_TYPE", "project"),
+            railway_project=os.environ.get("RAILWAY_PROJECT_ID") or None,
+            railway_environment=os.environ.get("RAILWAY_ENVIRONMENT_ID") or None,
+            railway_region=os.environ.get("RAILWAY_REGION", "asia-southeast1-eqsg3a"),
+            operaton_image=os.environ.get("OPERATON_IMAGE") or None,
         )
 
 
@@ -72,6 +85,8 @@ class Context:
     heartbeat: Callable[[], None]
     sleep: Callable[[float], None] = time.sleep
     clock: Callable[[], float] = time.monotonic
+    # (template_key, newest workflow_json of that key) from platform.templates
+    template: Callable[[], tuple[str, dict[str, Any]] | None] = lambda: None
 
     def seal(self, **values: Any) -> None:
         """Merge into clients.secrets and write it at once (before the call that needs it)."""
@@ -147,6 +162,60 @@ def attempt(step: Step, ctx: Context, attempts: int) -> tuple[str, str | None, i
     return "done", None, attempts
 
 
+def open_context(
+    conn: psycopg.Connection,
+    client_id: Any,
+    settings: Settings,
+    mgmt: httpx.Client,
+    http: httpx.Client,
+    step: str | None = None,
+) -> Context:
+    """A Context on one client row; `step` is the row its heartbeat refreshes."""
+    row = _exec(conn, "select slug, secrets from platform.clients where id = %s", (client_id,))
+    assert row is not None  # provisioning_steps.client_id references clients
+    slug, secrets = row
+
+    def persist_columns(columns: dict[str, Any]) -> None:
+        assignments = sql.SQL(", ").join(
+            sql.SQL("{} = %s").format(sql.Identifier(name)) for name in columns
+        )
+        _exec(
+            conn,
+            sql.SQL("update platform.clients set {}, updated_at = now() where id = %s").format(
+                assignments
+            ),
+            (*columns.values(), client_id),
+        )
+
+    return Context(
+        client_id=client_id,
+        slug=slug,
+        settings=settings,
+        secrets=sealed.unseal(secrets) if secrets else {},
+        mgmt=mgmt,
+        http=http,
+        persist_secrets=lambda data: _exec(
+            conn,
+            "update platform.clients set secrets = %s, updated_at = now() where id = %s",
+            (sealed.seal(data), client_id),
+        ),
+        persist_columns=persist_columns,
+        template=lambda: _exec(
+            conn,
+            "select t.key, t.workflow_json from platform.templates t"
+            " join platform.clients c on c.template_key = t.key"
+            " where c.id = %s order by t.version desc limit 1",
+            (client_id,),
+        ),
+        heartbeat=lambda: _exec(  # without a step (deprovision) it matches no row
+            conn,
+            "update platform.provisioning_steps set updated_at = now()"
+            " where client_id = %s and step = %s",
+            (client_id, step),
+        ),
+    )
+
+
 def run_one(
     conn: psycopg.Connection,
     steps: Mapping[str, Step],
@@ -165,42 +234,8 @@ def run_one(
         " where id = %s and status = 'new'",
         (client_id,),
     )
-    row = _exec(conn, "select slug, secrets from platform.clients where id = %s", (client_id,))
-    assert row is not None  # provisioning_steps.client_id references clients
-    slug, secrets = row
-
-    def persist_columns(columns: dict[str, Any]) -> None:
-        assignments = sql.SQL(", ").join(
-            sql.SQL("{} = %s").format(sql.Identifier(name)) for name in columns
-        )
-        _exec(
-            conn,
-            sql.SQL("update platform.clients set {}, updated_at = now() where id = %s").format(
-                assignments
-            ),
-            (*columns.values(), client_id),
-        )
-
-    ctx = Context(
-        client_id=client_id,
-        slug=slug,
-        settings=settings,
-        secrets=sealed.unseal(secrets) if secrets else {},
-        mgmt=mgmt,
-        http=http,
-        persist_secrets=lambda data: _exec(
-            conn,
-            "update platform.clients set secrets = %s, updated_at = now() where id = %s",
-            (sealed.seal(data), client_id),
-        ),
-        persist_columns=persist_columns,
-        heartbeat=lambda: _exec(
-            conn,
-            "update platform.provisioning_steps set updated_at = now()"
-            " where client_id = %s and step = %s",
-            (client_id, step),
-        ),
-    )
+    ctx = open_context(conn, client_id, settings, mgmt, http, step)
+    slug = ctx.slug
     log.info("step %s: attempt %d", step, attempts + 1, extra={"client": slug})
     status, error, attempts = attempt(steps[step], ctx, attempts)
     _exec(
