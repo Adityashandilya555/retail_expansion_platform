@@ -164,14 +164,22 @@ A timeout, an unreachable engine or a non-JSON answer gives 503, and the submiss
 
 One bad row doesn't stop the pass. The worker needs `PLATFORM_DATABASE_URL` and `SECRETS_ENCRYPTION_KEY`, like the API.
 
-**Provisioning (S2-02a):** every tick the worker runs the client steps that the owner console queued in `platform.provisioning_steps` (`zm_worker/provision/`), in `seq` order. It claims each step with `FOR UPDATE SKIP LOCKED`. Steps 1–5 build the client's Supabase project `<SUPABASE_PROJECT_PREFIX><slug>`:
+**Provisioning (S2-02a/b):** every tick the worker runs the client steps that the owner console queued in `platform.provisioning_steps` (`zm_worker/provision/`), in `seq` order. It claims each step with `FOR UPDATE SKIP LOCKED`. Steps 1–5 build the client's Supabase project `<SUPABASE_PROJECT_PREFIX><slug>`:
 1. `supabase_project`: find or create the project, wait for `ACTIVE_HEALTHY`;
 2. `vault_migrations`: apply `infra/supabase/client` through the session pooler;
 3. `data_api_off`: expose no schema, then probe with the anon key;
 4. `bucket`: create the private bucket `files`;
 5. `registry`: write `supabase_ref` and `bucket`.
 
-Each step is idempotent, and every generated secret is sealed into `clients.secrets` before it is used. A failing step is retried with backoff (0 s, 10 s, 30 s, 70 s, 150 s), and after 5 failures it is `failed` with `last_error`. A step left `running` by a killed worker is picked up again after a 2-minute lease. `needs_human` keeps the click path in `last_error`, and the step re-checks every minute. Provisioning stays off until `SUPABASE_ACCESS_TOKEN` and `SUPABASE_ORG_ID` (the org slug) are set too.
+Steps 6–8 start its Operaton on Railway:
+
+6. `operaton_service`: find or create `operaton-<slug>` from `OPERATON_IMAGE`, with no public domain. It sets `DB_*` (session pooler, TLS), `ZM_ADMIN_USER_*` and `PORT`, and redeploys only when the image or a variable changed.
+7. `operaton_health`: wait for `/health` on `operaton-<slug>.railway.internal:8080`, then check that the service account's task query gets 200 and an unauthenticated one 401. It writes `operaton_url`. On a 10-minute timeout, `last_error` holds the newest deployment log lines.
+8. `seed_draft`: copy the client's template from `platform.templates` into `app.drafts`, unless a draft exists; the client is then `ready`.
+
+Each step is idempotent, and every generated secret is sealed into `clients.secrets` before it is used. A failing step is retried with backoff (0 s, 10 s, 30 s, 70 s, 150 s), and after 5 failures it is `failed` with `last_error`. A step left `running` by a killed worker is picked up again after a 2-minute lease. `needs_human` keeps the click path in `last_error`, and the step re-checks every minute. Provisioning stays off until `SUPABASE_ACCESS_TOKEN` and `SUPABASE_ORG_ID` (the org slug) are set too. Steps 6–8 also need `RAILWAY_API_TOKEN` and `OPERATON_IMAGE`; Railway provides the project and environment ids.
+
+For test clients only, `zm-worker deprovision <slug> --yes` deletes `operaton-<slug>` and the Supabase project, and marks the client `suspended`. Nothing calls it automatically.
 
 ## Layout
 ```
@@ -210,6 +218,8 @@ Setup, run from `platform/`:
    - Check that the `preserve()` variables plan cleanly before their values exist.
 4. `npx @railway/cli config apply`. It confirms before changing anything.
 5. `npx @railway/cli domain --service api`. Generated domains aren't part of IaC.
-6. HUMAN: Project → Settings → Tokens → create token `zm-worker`, then set it as `RAILWAY_API_TOKEN` on `worker` in the dashboard. S2-02b checks whether `serviceCreate` needs an account token instead.
+6. HUMAN: Project → Settings → Tokens → create token `zm-worker`, then set it as `RAILWAY_API_TOKEN` on `worker` in the dashboard. The worker sends a project token as `Project-Access-Token`, and it only works in its own environment. If `serviceCreate` refuses it, use a workspace token instead and set `RAILWAY_API_TOKEN_TYPE=bearer`.
 
 Later changes: edit `.railway/railway.ts` in a PR, then run `config plan` and `config apply` after merge. Run `config plan --detailed-exit-code` to check for drift.
+
+The file is the named partial `platform` (#25): it owns only `api` and `worker`, so `config apply` leaves the worker's `operaton-<slug>` services alone. A whole-project file deletes every service it doesn't declare. `railway config partials list` shows who owns what.

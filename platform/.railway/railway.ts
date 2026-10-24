@@ -7,6 +7,10 @@
 // not here. Generated *.up.railway.app domains are not managed by IaC: `railway domain --service api`.
 import { defineRailway, github, preserve, project, service } from "railway/iac";
 
+// A named partial owns only what this file declares. As a whole-project file, `config apply` would
+// delete every service missing from it, i.e. the worker's operaton-<slug> services (S2-02b, #25).
+export const partial = "platform";
+
 const REPO = "Adityashandilya555/retail_expansion_platform";
 const REGION = "asia-southeast1-eqsg3a"; // D2
 
@@ -49,10 +53,20 @@ export default defineRailway(() => {
       WORKER_TICK_SECONDS: "30",
       RAILWAY_REGION: REGION,
       // Project token `zm-worker` (HUMAN step); RAILWAY_PROJECT_ID and RAILWAY_ENVIRONMENT_ID are
-      // provided by Railway at runtime.
+      // provided by Railway at runtime. A project token goes in the Project-Access-Token header;
+      // set RAILWAY_API_TOKEN_TYPE=bearer for an account or workspace token instead.
       RAILWAY_API_TOKEN: preserve(),
+      RAILWAY_API_TOKEN_TYPE: "project",
+      OPERATON_IMAGE: "ghcr.io/adityashandilya555/zm-operaton:2.1.5-zm.1",
       // Supabase Management API token for provisioning client projects (S2-02a); set in the dashboard.
       SUPABASE_ACCESS_TOKEN: preserve(),
+      // Provisioning (S2-02a/b, #24/#25). The prefix differs per environment (zm-test- in test, D16).
+      SUPABASE_ORG_ID: preserve(),
+      SUPABASE_PROJECT_PREFIX: preserve(),
+      SUPABASE_REGION: "ap-southeast-1",
+      SUPABASE_CLIENT_INSTANCE_SIZE: "micro",
+      PLATFORM_DATABASE_URL: preserve(),
+      SECRETS_ENCRYPTION_KEY: preserve(),
     },
   });
 
