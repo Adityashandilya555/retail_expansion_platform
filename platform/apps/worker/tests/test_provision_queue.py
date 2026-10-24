@@ -5,6 +5,7 @@ Steps here are fakes with test-only names, so a running compose worker never cla
 
 import argparse
 import os
+import threading
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -40,17 +41,23 @@ def platform_db(monkeypatch) -> None:
     command.upgrade(cfg, "head")
 
 
+PREFIX = "pytest-"  # only rows of clients with this slug prefix are ever touched or removed
+
+
 @pytest.fixture
 def conn() -> Iterator[psycopg.Connection]:
     with psycopg.connect(URL, autocommit=True, row_factory=dict_row) as c:
+        cleanup = "delete from platform.clients where slug like %s"  # steps cascade
+        c.execute(cleanup, (PREFIX + "%",))
         yield c
+        c.execute(cleanup, (PREFIX + "%",))
 
 
 def new_client(conn: psycopg.Connection, *steps: str) -> uuid.UUID:
-    slug = f"t-{uuid.uuid4().hex[:8]}"
+    slug = f"{PREFIX}{uuid.uuid4().hex[:8]}"
     client_id = conn.execute(
-        "insert into platform.clients (slug, name, workspace_code, template_key)"
-        " values (%s, 'Test', %s, 'qsr') returning id",
+        "insert into platform.clients (slug, name, workspace_code, template_key, status)"
+        " values (%s, 'Test', %s, 'qsr', 'provisioning') returning id",  # as POST /owner/clients
         (slug, slug.upper()),
     ).fetchone()["id"]
     for seq, step in enumerate(steps, start=1):
@@ -87,9 +94,9 @@ def rewind(conn: psycopg.Connection, client_id: uuid.UUID, hours: int = 1) -> No
     )
 
 
-def run(conn: psycopg.Connection, steps: dict) -> int:
+def run(conn: psycopg.Connection, steps: dict, client: uuid.UUID | None = None) -> int:
     with httpx.Client(base_url=supabase.API) as mgmt, httpx.Client() as http:
-        return runner.run_pending(conn, steps, SETTINGS, mgmt, http)
+        return runner.run_pending(conn, steps, SETTINGS, mgmt, http, None, client)
 
 
 def test_runs_steps_in_seq_order_and_persists_what_they_seal(conn) -> None:
@@ -157,16 +164,75 @@ def test_heartbeat_keeps_the_lease(conn) -> None:
     seen: list[object] = []
 
     def slow(ctx: Context) -> None:
-        conn.execute(
-            "update platform.provisioning_steps set updated_at = now() - interval '1 hour'"
-            " where client_id = %s",
-            (client_id,),
-        )
+        before = conn.execute(
+            "select updated_at from platform.provisioning_steps where step = %s", (one,)
+        ).fetchone()["updated_at"]
         ctx.heartbeat()
+        after = conn.execute(
+            "select updated_at from platform.provisioning_steps where step = %s", (one,)
+        ).fetchone()["updated_at"]
+        seen.append(after > before)
         seen.append(runner.claim(conn, [one]))  # a second worker must not take it
+        ctx.heartbeat()  # the refreshed token still matches
 
     run(conn, {one: slow})
-    assert seen == [None]
+    assert seen == [True, None]
+    assert state(conn, client_id)["one"]["status"] == "done"
+
+
+def test_a_worker_whose_lease_ran_out_cannot_overwrite_the_new_owner(conn) -> None:
+    client_id = new_client(conn, "one")
+    (one,) = names(client_id, "one")
+    heartbeat: list[str] = []
+
+    def stalled(ctx: Context) -> None:
+        conn.execute(  # stalled past the lease, and worker B took the step over
+            "update platform.provisioning_steps set updated_at = now() - interval '1 hour'"
+            " where step = %s",
+            (one,),
+        )
+        assert runner.claim(conn, [one]) is not None
+        try:
+            ctx.heartbeat()
+        except runner.LeaseLost:
+            heartbeat.append("lost")
+
+    run(conn, {one: stalled})
+    assert heartbeat == ["lost"]
+    row = state(conn, client_id)["one"]
+    assert (row["status"], row["attempts"]) == ("running", 0)  # B's claim stands
+
+
+def test_secrets_that_dont_open_are_the_steps_error(conn) -> None:
+    """E.g. SECRETS_ENCRYPTION_KEY changed: recorded on the step, and the pass goes on."""
+    broken = new_client(conn, "one")
+    fine = new_client(conn, "one")
+    conn.execute(
+        "update platform.clients set secrets = %s where id = %s",
+        (Fernet(Fernet.generate_key()).encrypt(b"{}"), broken),
+    )
+    (b,), (f,) = names(broken, "one"), names(fine, "one")
+    ran: list[str] = []
+    assert run(conn, {b: lambda ctx: ran.append("b"), f: lambda ctx: ran.append("f")}) == 2
+    assert ran == ["f"]
+    row = state(conn, broken)["one"]
+    assert (row["status"], row["attempts"], row["last_error"]) == ("pending", 1, "InvalidToken")
+
+
+def test_stopping_hands_the_step_back_without_an_attempt(conn) -> None:
+    client_id = new_client(conn, "one", "two")
+    one, two = names(client_id, "one", "two")
+    stop = threading.Event()
+
+    def waits(ctx: Context) -> None:
+        stop.set()  # SIGTERM arrives while the step waits
+        ctx.sleep(600)
+
+    with httpx.Client() as mgmt, httpx.Client() as http:
+        ran = runner.run_pending(conn, {one: waits, two: waits}, SETTINGS, mgmt, http, stop)
+    assert ran == 1
+    row = state(conn, client_id)["one"]
+    assert (row["status"], row["attempts"], row["last_error"]) == ("pending", 0, None)
 
 
 def test_a_step_failing_5_times_is_failed_with_last_error(conn) -> None:
@@ -232,12 +298,10 @@ def test_two_workers_never_claim_the_same_step(conn) -> None:
 def test_full_supabase_chain_survives_a_kill_after_the_project_post(conn, monkeypatch) -> None:
     """The real steps through the queue, Management API mocked: killed right after the POST,
     the restarted worker finds the project instead of creating a second one."""
-    # real step names: rows left by an earlier run of this test would be claimed first
-    conn.execute("delete from platform.provisioning_steps where step = any(%s)", (list(STEPS),))
-    slug = f"t-{uuid.uuid4().hex[:8]}"
+    slug = f"{PREFIX}{uuid.uuid4().hex[:8]}"
     client_id = conn.execute(
-        "insert into platform.clients (slug, name, workspace_code, template_key)"
-        " values (%s, 'Test', %s, 'qsr') returning id",
+        "insert into platform.clients (slug, name, workspace_code, template_key, status)"
+        " values (%s, 'Test', %s, 'qsr', 'provisioning') returning id",  # as POST /owner/clients
         (slug, slug.upper()),
     ).fetchone()["id"]
     for seq, step in enumerate([*STEPS, "operaton_service"], start=1):
@@ -281,11 +345,11 @@ def test_full_supabase_chain_survives_a_kill_after_the_project_post(conn, monkey
     monkeypatch.setattr(vault_migrate, "apply", lambda dsn, pw: migrated.append(dsn) or [])
 
     with pytest.raises(KeyboardInterrupt):
-        run(conn, STEPS)
+        run(conn, STEPS, client_id)
     assert state(conn, client_id)["supabase"]["status"] == "running"  # step "supabase_project"
 
     rewind(conn, client_id)  # the lease ran out
-    assert run(conn, STEPS) == 5
+    assert run(conn, STEPS, client_id) == 5
 
     assert len(org) == 1  # one POST in all: the one the kill cut off
     steps_now = {s: r["status"] for s, r in state(conn, client_id).items()}
