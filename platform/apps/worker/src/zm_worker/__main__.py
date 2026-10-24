@@ -12,15 +12,34 @@ log = logging.getLogger("zm_worker")
 
 RECONCILE_EVERY = 60.0  # seconds between reconciler passes (#26)
 RECONCILE_ENV = ("PLATFORM_DATABASE_URL", "SECRETS_ENCRYPTION_KEY")
+# unset (e.g. local compose): no provisioning
+PROVISION_ENV = ("SUPABASE_ACCESS_TOKEN", "SUPABASE_ORG_ID")
 _last_reconcile: float | None = None
 _warned = False
 
 
+def provision_pass() -> None:
+    """Run the runnable provisioning steps (S2-02a, #24) once the Management API is configured."""
+    if not all(os.environ.get(v) for v in (*RECONCILE_ENV, *PROVISION_ENV)):
+        return
+    try:
+        # imports zm_api, like the reconciler: inside the try so a broken image logs
+        from zm_worker import provision
+        from zm_worker.provision.runner import Settings
+
+        settings = Settings.from_env()
+        if settings is not None:
+            provision.run(os.environ["PLATFORM_DATABASE_URL"], settings)
+    except Exception:  # the registry is down: try again next tick, keep the loop alive
+        log.exception("provisioning pass failed")
+
+
 def tick() -> None:
-    """One pass of the worker loop: the submission reconciler (#26) at most every minute, once
-    PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY are set. Provisioning arrives with S2-02a/b."""
+    """One pass of the worker loop: provisioning every tick, and the submission reconciler (#26)
+    at most every minute, once PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY are set."""
     global _last_reconcile, _warned
     log.info("tick")
+    provision_pass()
     now = time.monotonic()
     missing = [v for v in RECONCILE_ENV if not os.environ.get(v)]
     if missing:

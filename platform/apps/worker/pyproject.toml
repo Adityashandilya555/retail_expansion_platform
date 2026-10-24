@@ -3,7 +3,7 @@ name = "zm-worker"
 version = "0.0.0"
 description = "Z-Matrix worker: provisioning, reconciler, notifications"
 requires-python = ">=3.12,<3.13"
-dependencies = ["psycopg[binary]>=3.3", "zm-api"]
+dependencies = ["httpx>=0.28", "psycopg[binary]>=3.3", "zm-api"]
 
 [tool.uv.sources]
 zm-api = { workspace = true }
