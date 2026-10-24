@@ -164,6 +164,15 @@ A timeout, an unreachable engine or a non-JSON answer gives 503, and the submiss
 
 One bad row doesn't stop the pass. The worker needs `PLATFORM_DATABASE_URL` and `SECRETS_ENCRYPTION_KEY`, like the API.
 
+**Provisioning (S2-02a):** every tick the worker runs the client steps that the owner console queued in `platform.provisioning_steps` (`zm_worker/provision/`), in `seq` order. It claims each step with `FOR UPDATE SKIP LOCKED`. Steps 1–5 build the client's Supabase project `<SUPABASE_PROJECT_PREFIX><slug>`:
+1. `supabase_project`: find or create the project, wait for `ACTIVE_HEALTHY`;
+2. `vault_migrations`: apply `infra/supabase/client` through the session pooler;
+3. `data_api_off`: expose no schema, then probe with the anon key;
+4. `bucket`: create the private bucket `files`;
+5. `registry`: write `supabase_ref` and `bucket`.
+
+Each step is idempotent, and every generated secret is sealed into `clients.secrets` before it is used. A failing step is retried with backoff (0 s, 10 s, 30 s, 70 s, 150 s), and after 5 failures it is `failed` with `last_error`. A step left `running` by a killed worker is picked up again after a 2-minute lease. `needs_human` keeps the click path in `last_error`, and the step re-checks every minute. Provisioning stays off until `SUPABASE_ACCESS_TOKEN` and `SUPABASE_ORG_ID` (the org slug) are set too.
+
 ## Layout
 ```
 apps/api            FastAPI platform API              (Python, uv workspace)
