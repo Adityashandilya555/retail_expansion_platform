@@ -13,8 +13,16 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from zm_api.context import SERVICE_ACCOUNT
-from zm_worker.provision.runner import Context, NeedsHuman, Settings, Step
-from zm_worker.provision.supabase import POLL_SECONDS, STARTUP_TIMEOUT, _password
+from zm_worker.dsn import libpq
+from zm_worker.provision.runner import (
+    POLL_SECONDS,
+    STARTUP_TIMEOUT,
+    Context,
+    NeedsHuman,
+    Settings,
+    Step,
+    password,
+)
 
 GRAPHQL = "https://backboard.railway.com/graphql/v2"
 PORT = 8080  # Operaton Run's port; Railway's health check probes $PORT (infra/operaton/default.yml)
@@ -40,13 +48,12 @@ LOGS = "query($d: String!) { deploymentLogs(deploymentId: $d, limit: 30) { messa
 DELETE = "mutation($id: String!, $e: String) { serviceDelete(id: $id, environmentId: $e) }"
 
 
-def _railway(settings: Settings) -> tuple[str, str, str, dict[str, str]]:
-    """(project, environment, image, auth headers), or an error naming what is unset."""
+def _railway(settings: Settings) -> tuple[str, str, dict[str, str]]:
+    """(project, environment, auth headers), or an error naming what is unset."""
     values = {
         "RAILWAY_API_TOKEN": settings.railway_token,
         "RAILWAY_PROJECT_ID": settings.railway_project,
         "RAILWAY_ENVIRONMENT_ID": settings.railway_environment,
-        "OPERATON_IMAGE": settings.operaton_image,
     }
     missing = [var for var, value in values.items() if not value]
     if missing:
@@ -57,12 +64,7 @@ def _railway(settings: Settings) -> tuple[str, str, str, dict[str, str]]:
         if settings.railway_token_type == "project"
         else {"Authorization": f"Bearer {token}"}
     )
-    return (
-        str(settings.railway_project),
-        str(settings.railway_environment),
-        str(settings.operaton_image),
-        auth,
-    )
+    return str(settings.railway_project), str(settings.railway_environment), auth
 
 
 def gql(http: httpx.Client, auth: dict[str, str], query: str, **variables: Any) -> dict[str, Any]:
@@ -79,7 +81,9 @@ def _service_name(ctx: Context) -> str:
 
 
 def _base_url(ctx: Context) -> str:
-    return f"http://{_service_name(ctx)}.railway.internal:{PORT}"
+    # Railway's private network has no TLS and never leaves the project; the service has no
+    # public domain (operaton_service refuses one), so plain HTTP is the only way in.
+    return f"http://{_service_name(ctx)}.railway.internal:{PORT}"  # NOSONAR python:S5332
 
 
 def _find(http: httpx.Client, auth: dict[str, str], project: str, name: str) -> str | None:
@@ -88,11 +92,19 @@ def _find(http: httpx.Client, auth: dict[str, str], project: str, name: str) -> 
 
 
 def operaton_service(ctx: Context) -> None:
-    """Find or create `operaton-<slug>`, set its env, and deploy only when something changed."""
-    project, env, image, auth = _railway(ctx.settings)
+    """Find or create `operaton-<slug>`, set its env, and deploy when something changed.
+
+    `deploy_pending` is sealed before any change and cleared only after the deploy went through,
+    so a run cut off between the two (variables set with skipDeploys, deploy call failed) still
+    deploys on the re-run, which otherwise would see nothing left to change."""
+    project, env, auth = _railway(ctx.settings)
+    image = ctx.settings.operaton_image
+    if not image:
+        raise RuntimeError("set OPERATON_IMAGE on the worker")
     name = _service_name(ctx)
     service = _find(ctx.http, auth, project, name)
     if service is None:
+        ctx.seal(deploy_pending=True)  # Railway's first deployment has none of our variables
         created = gql(
             ctx.http,
             auth,
@@ -107,8 +119,8 @@ def operaton_service(ctx: Context) -> None:
         service = created["serviceCreate"]["id"]
     ctx.register(railway_service_id=service)
 
-    password = ctx.secrets.get("service_account_password") or _password()
-    ctx.seal(service_account_password=password)
+    admin_password = ctx.secrets.get("service_account_password") or password()
+    ctx.seal(service_account_password=admin_password)
     instance = gql(ctx.http, auth, INSTANCE, s=service, e=env)["serviceInstance"]
     domains = instance["domains"]
     public = [d["domain"] for d in domains["serviceDomains"] + domains["customDomains"]]
@@ -117,6 +129,29 @@ def operaton_service(ctx: Context) -> None:
             f"{name} has public domains {', '.join(public)}. "
             f"Railway → zm-platform → {name} → Settings → Networking → delete each domain"
         )
+
+    s = ctx.secrets
+    wanted = {
+        "DB_DRIVER": "org.postgresql.Driver",
+        # TLS: Railway reaches the Supabase pooler over the public internet
+        "DB_URL": f"jdbc:postgresql://{s['pooler_host']}:5432/postgres"
+        "?currentSchema=operaton&sslmode=require",
+        "DB_USERNAME": f"zm_engine.{s['supabase_ref']}",
+        "DB_PASSWORD": s["zm_engine_password"],
+        "ZM_ADMIN_USER_ID": SERVICE_ACCOUNT,
+        "ZM_ADMIN_USER_PASSWORD": admin_password,
+        "PORT": str(PORT),
+    }
+    current = gql(ctx.http, auth, VARIABLES, p=project, e=env, s=service)["variables"]
+    changed = {k: v for k, v in wanted.items() if current.get(k) != v}
+    latest = instance["latestDeployment"]
+    if (
+        changed
+        or (instance["source"] or {}).get("image") != image
+        or latest is None
+        or latest["status"] in DEAD
+    ):
+        ctx.seal(deploy_pending=True)
 
     gql(
         ctx.http,
@@ -131,20 +166,6 @@ def operaton_service(ctx: Context) -> None:
             "healthcheckPath": "/health",
         },
     )
-    s = ctx.secrets
-    wanted = {
-        "DB_DRIVER": "org.postgresql.Driver",
-        # TLS: Railway reaches the Supabase pooler over the public internet
-        "DB_URL": f"jdbc:postgresql://{s['pooler_host']}:5432/postgres"
-        "?currentSchema=operaton&sslmode=require",
-        "DB_USERNAME": f"zm_engine.{s['supabase_ref']}",
-        "DB_PASSWORD": s["zm_engine_password"],
-        "ZM_ADMIN_USER_ID": SERVICE_ACCOUNT,
-        "ZM_ADMIN_USER_PASSWORD": password,
-        "PORT": str(PORT),
-    }
-    current = gql(ctx.http, auth, VARIABLES, p=project, e=env, s=service)["variables"]
-    changed = {k: v for k, v in wanted.items() if current.get(k) != v}
     if changed:
         gql(
             ctx.http,
@@ -158,19 +179,15 @@ def operaton_service(ctx: Context) -> None:
                 "skipDeploys": True,  # one deploy below, not one per change
             },
         )
-    latest = instance["latestDeployment"]
-    if (
-        changed
-        or (instance["source"] or {}).get("image") != image
-        or (latest is None or latest["status"] in DEAD)
-    ):
+    if ctx.secrets.get("deploy_pending"):
         gql(ctx.http, auth, DEPLOY, s=service, e=env)
+        ctx.seal(deploy_pending=False)
 
 
 def _log_tail(ctx: Context) -> str:
     """The newest deployment log lines that fit in LOG_CHARS, oldest first; '' if unavailable."""
     try:
-        project, env, _, auth = _railway(ctx.settings)
+        project, env, auth = _railway(ctx.settings)
         service = _find(ctx.http, auth, project, _service_name(ctx))
         if service is None:
             return ""
@@ -186,9 +203,11 @@ def _log_tail(ctx: Context) -> str:
         return ""
     kept: list[str] = []
     for line in reversed(lines):
-        if sum(len(k) + 1 for k in kept) + len(line) > LOG_CHARS:
+        if kept and sum(len(k) + 1 for k in kept) + len(line) > LOG_CHARS:
             break
-        kept.append(line[:LOG_CHARS])
+        kept.append(line[:LOG_CHARS])  # the newest line always, cut to fit (a stack trace)
+        if len(line) >= LOG_CHARS:
+            break
     return "\n".join(reversed(kept))
 
 
@@ -229,7 +248,7 @@ def operaton_health(ctx: Context) -> None:
 
 def seed(dsn: str, workflow: dict[str, Any], template_key: str) -> None:
     """The first draft, unless the client already has one (a re-run keeps edits)."""
-    with psycopg.connect(dsn.replace("+asyncpg", "", 1), autocommit=True) as conn:
+    with psycopg.connect(libpq(dsn), autocommit=True) as conn:
         conn.execute(
             "insert into app.drafts (id, workflow, template_key) values (1, %s, %s)"
             " on conflict (id) do nothing",
@@ -248,10 +267,11 @@ def seed_draft(ctx: Context) -> None:
 
 
 def deprovision(ctx: Context) -> list[str]:
-    """Delete the client's Railway service and Supabase project (test clients; never automatic)."""
+    """Delete the client's Railway service and Supabase project (test clients; never automatic).
+    The client is suspended first, so the worker stops claiming its steps."""
+    ctx.register(status="suspended")
     deleted: list[str] = []
-    _, env, _, auth = _railway(ctx.settings)
-    project = str(ctx.settings.railway_project)
+    project, env, auth = _railway(ctx.settings)
     service = _find(ctx.http, auth, project, _service_name(ctx))
     if service is not None:
         gql(ctx.http, auth, DELETE, id=service, e=env)
@@ -262,7 +282,6 @@ def deprovision(ctx: Context) -> list[str]:
         if response.status_code != 404:
             response.raise_for_status()
             deleted.append(f"Supabase project {ref}")
-    ctx.register(status="suspended")
     return deleted
 
 

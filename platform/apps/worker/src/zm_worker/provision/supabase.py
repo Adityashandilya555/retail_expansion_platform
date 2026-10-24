@@ -5,29 +5,27 @@ Every step is idempotent: it looks for its earlier work first, and seals a gener
 before the call that uses it, so a kill between the two can't lose it.
 """
 
-import secrets as random
-import string
-
 import httpx
 
 from zm_worker import vault_migrate
-from zm_worker.provision.runner import Context, NeedsHuman, Step
+from zm_worker.provision.runner import (
+    POLL_SECONDS,
+    STARTUP_TIMEOUT,
+    Context,
+    NeedsHuman,
+    Step,
+    password,
+)
 
 API = "https://api.supabase.com"
 BUCKET = "files"
 HEALTHY = "ACTIVE_HEALTHY"
 BROKEN = {"INACTIVE", "INIT_FAILED", "RESTORE_FAILED", "PAUSE_FAILED"}
 GONE = {"REMOVED", "GOING_DOWN"}
-STARTUP_TIMEOUT = 600.0
-POLL_SECONDS = 10.0
 # What the Dashboard's Data API "off" switch writes: PostgREST keeps running but exposes no schema
 # (https://supabase.com/docs/guides/troubleshooting/schema-pg_pgrst_no_exposed_schemas-does-not-exist).
 NO_EXPOSED_SCHEMAS = "pg_pgrst_no_exposed_schemas"
-ALPHABET = string.ascii_letters + string.digits  # URL-safe, so it goes into DSNs unescaped
-
-
-def _password() -> str:
-    return "".join(random.choice(ALPHABET) for _ in range(32))
+PROBE_TRIES = 3  # PostgREST reloads its config a little after the PATCH: probe again before asking
 
 
 def _name(ctx: Context) -> str:
@@ -38,9 +36,9 @@ def _project_url(ref: str) -> str:
     return f"https://{ref}.supabase.co"
 
 
-def _dsn(user: str, ref: str, password: str, host: str) -> str:
+def _dsn(user: str, ref: str, secret: str, host: str) -> str:
     # session pooler on 5432 (prepared statements, multi-statement migrations); user <role>.<ref>
-    return f"postgresql://{user}.{ref}:{password}@{host}:5432/postgres"
+    return f"postgresql://{user}.{ref}:{secret}@{host}:5432/postgres"
 
 
 def supabase_project(ctx: Context) -> None:
@@ -52,16 +50,20 @@ def supabase_project(ctx: Context) -> None:
     if len(live) > 1:
         raise RuntimeError(f"{len(live)} projects named {name}: delete the extra ones by hand")
 
-    password = ctx.secrets.get("db_password") or _password()
     if live:
         ref = live[0]["ref"]
-        if "db_password" not in ctx.secrets:  # made outside this worker, or its password was lost
-            ctx.seal(db_password=password)
-            ctx.mgmt.patch(
-                f"/v1/projects/{ref}/database/password", json={"password": password}
-            ).raise_for_status()
+        # adopt only a project this client asked for (killed before saving the ref): never a
+        # same-named one from elsewhere, e.g. production's while this worker runs for test
+        if ref != ctx.secrets.get("supabase_ref") and ctx.secrets.get("project_name") != name:
+            raise NeedsHuman(
+                f"A project named {name} ({ref}) exists that this client didn't create. "
+                f"Dashboard → {name}: delete it if it is a leftover, or use another slug"
+            )
     else:
-        ctx.seal(db_password=password)
+        db_password = ctx.secrets.get("db_password") or password()
+        # sealed before the POST: a kill after it must not lose the password, and marks the
+        # project as this client's for the re-run
+        ctx.seal(db_password=db_password, project_name=name)
         created = ctx.mgmt.post(
             "/v1/projects",
             json={
@@ -69,7 +71,7 @@ def supabase_project(ctx: Context) -> None:
                 "organization_slug": ctx.settings.org,
                 "region": ctx.settings.region,
                 "desired_instance_size": ctx.settings.instance_size,
-                "db_pass": password,
+                "db_pass": db_password,
             },
         )
         created.raise_for_status()
@@ -99,7 +101,7 @@ def vault_migrations(ctx: Context) -> None:
     # the host differs per project (aws-0-…, aws-1-…), so it is read, not built
     host = next(c["db_host"] for c in pooler.json() if c["database_type"] == "PRIMARY")
     passwords = {
-        role: ctx.secrets.get(f"{role}_password") or _password() for role in vault_migrate.ROLES
+        role: ctx.secrets.get(f"{role}_password") or password() for role in vault_migrate.ROLES
     }
     ctx.seal(
         pooler_host=host,
@@ -140,10 +142,18 @@ def data_api_off(ctx: Context) -> None:
         (f"{base}schema_migrations", {"Accept-Profile": "app"}),
         (f"{base}act_ge_property", {"Accept-Profile": "operaton"}),
     )
-    for url, headers in probes:
-        probe = ctx.http.get(url, headers={"apikey": anon, **headers})
-        if probe.is_success:
-            raise NeedsHuman(f"The Data API still answers {url} ({probe.status_code}). {click}")
+    for tried in range(1, PROBE_TRIES + 1):
+        answered = [
+            (url, probe.status_code)
+            for url, headers in probes
+            if (probe := ctx.http.get(url, headers={"apikey": anon, **headers})).is_success
+        ]
+        if not answered:
+            return
+        if tried < PROBE_TRIES:
+            ctx.sleep(POLL_SECONDS)
+    url, status = answered[0]
+    raise NeedsHuman(f"The Data API still answers {url} ({status}). {click}")
 
 
 def _exists(response: httpx.Response) -> bool:

@@ -5,6 +5,8 @@ from pathlib import Path
 import psycopg
 from psycopg import sql
 
+from zm_worker.dsn import libpq
+
 log = logging.getLogger("zm_worker.vault_migrate")
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "infra/supabase/client/migrations"
@@ -25,8 +27,7 @@ def apply(dsn: str, secrets: dict[str, str], migrations_dir: Path = MIGRATIONS_D
         raise FileNotFoundError(f"no migrations in {migrations_dir}")
 
     applied: list[str] = []
-    # settings DSNs are SQLAlchemy URLs (postgresql+asyncpg://…); libpq wants plain postgresql://
-    with psycopg.connect(dsn.replace("+asyncpg", "", 1), autocommit=True) as conn:
+    with psycopg.connect(libpq(dsn), autocommit=True) as conn:
         conn.execute("create schema if not exists app")
         conn.execute(
             "create table if not exists app.schema_migrations ("

@@ -5,6 +5,7 @@ The queue (SKIP LOCKED, backoff, resume after a kill) needs Postgres: test_provi
 
 import json
 import string
+import threading
 from typing import Any
 
 import httpx
@@ -13,7 +14,7 @@ import respx
 from cryptography.fernet import Fernet
 
 import zm_worker.__main__ as worker_main
-from zm_worker import provision, vault_migrate
+from zm_worker import dsn, provision, vault_migrate
 from zm_worker.provision import runner, supabase
 from zm_worker.provision.runner import Context, NeedsHuman, Settings
 
@@ -80,8 +81,10 @@ def test_creates_the_project_when_missing_and_waits_until_healthy() -> None:
 
     def create(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        # sealed before the POST, so a kill right after it can't lose the password
+        # sealed before the POST, so a kill right after it can't lose the password, and the
+        # name marks the project as this client's
         assert rec.secrets["db_password"] == body["db_pass"]
+        assert rec.secrets["project_name"] == "zm-pilot"
         return httpx.Response(201, json={"ref": REF, "name": "zm-pilot", "status": "COMING_UP"})
 
     post = respx.post(f"{API}/v1/projects").mock(side_effect=create)
@@ -111,7 +114,7 @@ def test_creates_the_project_when_missing_and_waits_until_healthy() -> None:
 @respx.mock
 def test_resume_finds_the_existing_project_and_creates_none() -> None:
     """Killed after the POST, before the ref was saved: the re-run must not create a second one."""
-    rec = Recorder({"db_password": "p" * 32})
+    rec = Recorder({"db_password": "p" * 32, "project_name": "zm-pilot"})
     respx.get(f"{API}/v1/organizations/zm-org/projects").mock(
         return_value=projects(
             {"ref": "gone", "name": "zm-pilot", "status": "REMOVED"},
@@ -119,7 +122,6 @@ def test_resume_finds_the_existing_project_and_creates_none() -> None:
         )
     )
     post = respx.post(f"{API}/v1/projects")
-    reset = respx.patch(f"{API}/v1/projects/{REF}/database/password")
     respx.get(f"{API}/v1/projects/{REF}").mock(
         return_value=httpx.Response(200, json={"ref": REF, "status": "ACTIVE_HEALTHY"})
     )
@@ -127,26 +129,20 @@ def test_resume_finds_the_existing_project_and_creates_none() -> None:
     supabase.supabase_project(context(rec))
 
     assert not post.called
-    assert not reset.called
-    assert rec.secrets == {"db_password": "p" * 32, "supabase_ref": REF}
+    assert rec.secrets == {"db_password": "p" * 32, "project_name": "zm-pilot", "supabase_ref": REF}
 
 
+@pytest.mark.parametrize("secrets", [{}, {"db_password": "p" * 32}])
 @respx.mock
-def test_existing_project_without_a_sealed_password_gets_a_new_one() -> None:
-    rec = Recorder()
+def test_a_same_named_project_this_client_did_not_create_needs_a_human(secrets: dict) -> None:
+    """E.g. a test worker and production's `zm-<slug>`: never adopted, never touched."""
     respx.get(f"{API}/v1/organizations/zm-org/projects").mock(
         return_value=projects({"ref": REF, "name": "zm-pilot", "status": "ACTIVE_HEALTHY"})
     )
-    reset = respx.patch(f"{API}/v1/projects/{REF}/database/password").mock(
-        return_value=httpx.Response(200, json={"message": "ok"})
-    )
-    respx.get(f"{API}/v1/projects/{REF}").mock(
-        return_value=httpx.Response(200, json={"ref": REF, "status": "ACTIVE_HEALTHY"})
-    )
-
-    supabase.supabase_project(context(rec))
-
-    assert json.loads(reset.calls.last.request.content) == {"password": rec.secrets["db_password"]}
+    with pytest.raises(NeedsHuman, match=f"zm-pilot \\({REF}\\) exists that"):
+        supabase.supabase_project(context(Recorder(secrets)))
+    # only the lookup: no password reset, no POST
+    assert [c.request.method for c in respx.calls] == ["GET"]
 
 
 @respx.mock
@@ -171,7 +167,7 @@ def test_project_that_never_gets_healthy_times_out_after_10_minutes() -> None:
         return_value=httpx.Response(200, json={"ref": REF, "status": "COMING_UP"})
     )
     with pytest.raises(TimeoutError, match="COMING_UP"):
-        supabase.supabase_project(context(Recorder({"db_password": "x"}), now))
+        supabase.supabase_project(context(Recorder({"supabase_ref": REF}), now))
     assert 600 <= now[0] < 700
 
 
@@ -184,7 +180,7 @@ def test_project_that_fails_to_start_raises_at_once() -> None:
         return_value=httpx.Response(200, json={"ref": REF, "status": "INIT_FAILED"})
     )
     with pytest.raises(RuntimeError, match="INIT_FAILED"):
-        supabase.supabase_project(context(Recorder({"db_password": "x"})))
+        supabase.supabase_project(context(Recorder({"supabase_ref": REF})))
 
 
 # --- step 2: vault_migrations -----------------------------------------------------------------
@@ -277,10 +273,25 @@ def test_data_api_off_when_the_anon_probe_fails() -> None:
 @respx.mock
 def test_data_api_still_answering_needs_a_human() -> None:
     mock_keys_and_patch()
-    respx.get(url__startswith=f"{PROJECT}/rest/v1/").mock(return_value=httpx.Response(200, json={}))
+    probes = respx.get(url__startswith=f"{PROJECT}/rest/v1/").mock(
+        return_value=httpx.Response(200, json={})
+    )
     with pytest.raises(NeedsHuman) as err:
         supabase.data_api_off(context(Recorder({"supabase_ref": REF})))
     assert "Dashboard → zm-pilot → Integrations → Data API → off" in str(err.value)
+    assert probes.call_count == 3 * supabase.PROBE_TRIES  # asked only after every try
+
+
+@respx.mock
+def test_data_api_probe_waits_for_postgrest_to_reload() -> None:
+    mock_keys_and_patch()
+    answers = iter([200, 200, 200] + [404] * 3)  # still the old config for the first round
+    respx.get(url__startswith=f"{PROJECT}/rest/v1/").mock(
+        side_effect=lambda request: httpx.Response(next(answers), json={})
+    )
+    now = [0.0]
+    supabase.data_api_off(context(Recorder({"supabase_ref": REF}), now))
+    assert now[0] == supabase.POLL_SECONDS
 
 
 @respx.mock
@@ -365,6 +376,10 @@ def boom(_: Context) -> None:
     raise RuntimeError("Management API said no")
 
 
+def stopped(_: Context) -> None:
+    raise runner.Stopped
+
+
 def human(_: Context) -> None:
     raise NeedsHuman("Dashboard → somewhere → off")
 
@@ -383,6 +398,19 @@ def test_outcomes() -> None:
         "Management API said no",
         runner.MAX_ATTEMPTS,
     )
+    # shutting down hands the step back without using an attempt
+    assert runner.attempt(stopped, ctx, attempts=2) == ("pending", None, 2)
+
+
+def test_secrets_never_reach_last_error_or_the_log(caplog) -> None:
+    def echoed(ctx: Context) -> None:  # e.g. an API repeating a rejected input value
+        raise RuntimeError(f"invalid value {ctx.secrets['zm_engine_password']!r} for DB_PASSWORD")
+
+    ctx = context(Recorder({"zm_engine_password": "s3cret-engine-pw", "supabase_ref": REF}))
+    _, error, _ = runner.attempt(echoed, ctx, attempts=0)
+    assert error == "invalid value '***' for DB_PASSWORD"
+    assert "s3cret-engine-pw" not in caplog.text
+    assert runner.redact(f"project {REF}", ctx.secrets) == f"project {REF}"  # not a secret
 
 
 def test_http_errors_keep_the_response_body_but_no_token() -> None:
@@ -399,16 +427,21 @@ def test_http_errors_keep_the_response_body_but_no_token() -> None:
 
 # --- wiring ----------------------------------------------------------------------------------
 
+CONFIGURED = {
+    "PLATFORM_DATABASE_URL": "postgresql://unused/postgres",
+    "SECRETS_ENCRYPTION_KEY": "set by the key fixture",
+    "SUPABASE_ACCESS_TOKEN": "t",
+    "SUPABASE_ORG_ID": "o",
+    "SUPABASE_PROJECT_PREFIX": "zm-test-",
+}
 
-def configure(monkeypatch: pytest.MonkeyPatch, **env: str) -> list[tuple[str, Settings]]:
-    calls: list[tuple[str, Settings]] = []
-    monkeypatch.setattr(provision, "run", lambda dsn, settings: calls.append((dsn, settings)))
-    base = {
-        "PLATFORM_DATABASE_URL": "postgresql://unused/postgres",
-        "SUPABASE_ACCESS_TOKEN": "t",
-        "SUPABASE_ORG_ID": "o",
-    }
-    for var, value in {**base, **env}.items():
+
+def configure(monkeypatch: pytest.MonkeyPatch, **env: str) -> list[tuple]:
+    calls: list[tuple] = []
+    monkeypatch.setattr(provision, "loop", lambda *args: calls.append(args))
+    for var, value in {**CONFIGURED, **env}.items():
+        if var == "SECRETS_ENCRYPTION_KEY" and value:
+            continue
         if value:
             monkeypatch.setenv(var, value)
         else:
@@ -416,28 +449,74 @@ def configure(monkeypatch: pytest.MonkeyPatch, **env: str) -> list[tuple[str, Se
     return calls
 
 
-def test_tick_provisions_when_configured(monkeypatch) -> None:
+def test_provisioning_runs_in_its_own_thread(monkeypatch) -> None:
     calls = configure(monkeypatch)
-    worker_main.provision_pass()
-    assert [dsn for dsn, _ in calls] == ["postgresql://unused/postgres"]
+    stop = threading.Event()
+    thread = worker_main.start_provisioner(stop, 5.0)
+    assert thread is not None
+    thread.join(timeout=5)
+    ((dsn, settings, passed_stop, interval),) = calls
+    assert (dsn, settings.prefix, passed_stop, interval) == (
+        CONFIGURED["PLATFORM_DATABASE_URL"],
+        "zm-test-",
+        stop,
+        5.0,
+    )
 
 
-@pytest.mark.parametrize("missing", ["PLATFORM_DATABASE_URL", "SUPABASE_ACCESS_TOKEN"])
-def test_tick_skips_provisioning_until_configured(monkeypatch, missing: str) -> None:
+@pytest.mark.parametrize(
+    "missing", ["PLATFORM_DATABASE_URL", "SUPABASE_ACCESS_TOKEN", "SUPABASE_PROJECT_PREFIX"]
+)
+def test_provisioning_off_until_configured(monkeypatch, missing: str) -> None:
     calls = configure(monkeypatch, **{missing: ""})
-    worker_main.provision_pass()
+    assert worker_main.start_provisioner(threading.Event(), 5.0) is None
     assert calls == []
 
 
-def test_a_failing_provisioning_pass_is_logged(monkeypatch, caplog) -> None:
-    configure(monkeypatch)
+def test_a_failing_pass_is_logged_and_the_loop_goes_on(monkeypatch, caplog) -> None:
+    stop = threading.Event()
+    passes: list[int] = []
 
-    def boom(dsn: str, settings: Settings) -> None:
+    def boom(*args: object) -> int:
+        passes.append(1)
+        if len(passes) == 2:
+            stop.set()
         raise OSError("registry down")
 
-    monkeypatch.setattr(provision, "run", boom)
-    worker_main.provision_pass()
-    assert caplog.records[-1].getMessage() == "provisioning pass failed"
+    monkeypatch.setattr(provision, "run_pending", boom)
+    monkeypatch.setattr(provision.psycopg, "connect", lambda *a, **k: FakeConn())
+    provision.loop("postgresql://unused/postgres", SETTINGS, stop, 0)
+    assert len(passes) == 2
+    assert [r.getMessage() for r in caplog.records].count("provisioning pass failed") == 2
+
+
+class FakeConn:
+    closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_one_connection_across_passes(monkeypatch) -> None:
+    stop = threading.Event()
+    conns: list[FakeConn] = []
+    seen: list[FakeConn] = []
+
+    def connect(*args: object, **kwargs: object) -> FakeConn:
+        conns.append(FakeConn())
+        return conns[-1]
+
+    def run_pending(conn: FakeConn, *args: object) -> int:
+        seen.append(conn)
+        if len(seen) == 3:
+            stop.set()
+        return 0
+
+    monkeypatch.setattr(provision.psycopg, "connect", connect)
+    monkeypatch.setattr(provision, "run_pending", run_pending)
+    provision.loop("postgresql+asyncpg://u:p@h/db", SETTINGS, stop, 0)
+    assert len(conns) == 1 and seen == conns * 3
+    assert conns[0].closed
 
 
 def test_settings_from_env(monkeypatch) -> None:
@@ -445,10 +524,16 @@ def test_settings_from_env(monkeypatch) -> None:
         "SUPABASE_ACCESS_TOKEN": "t",
         "SUPABASE_ORG_ID": "o",
         "SUPABASE_REGION": "ap-southeast-1",
+        "SUPABASE_PROJECT_PREFIX": "zm-test-",
     }.items():
         monkeypatch.setenv(var, value)
     monkeypatch.delenv("SUPABASE_CLIENT_INSTANCE_SIZE", raising=False)
-    monkeypatch.delenv("SUPABASE_PROJECT_PREFIX", raising=False)
-    assert Settings.from_env() == Settings("t", "o", "ap-southeast-1", "micro", "zm-")
-    monkeypatch.delenv("SUPABASE_ACCESS_TOKEN")
+    assert Settings.from_env() == Settings("t", "o", "ap-southeast-1", "micro", "zm-test-")
+    # no production default: without a prefix the worker provisions nothing
+    monkeypatch.delenv("SUPABASE_PROJECT_PREFIX")
     assert Settings.from_env() is None
+
+
+def test_libpq_dsn() -> None:
+    assert dsn.libpq("postgresql+asyncpg://u:p@h:5432/db") == "postgresql://u:p@h:5432/db"
+    assert dsn.libpq("postgresql+psycopg://u:p@h/db") == "postgresql://u:p@h/db"

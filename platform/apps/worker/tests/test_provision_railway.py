@@ -13,7 +13,7 @@ from cryptography.fernet import Fernet
 import zm_worker.__main__ as worker_main
 from zm_api import clients as api_clients
 from zm_worker import provision
-from zm_worker.provision import STEPS, railway
+from zm_worker.provision import STEPS, railway, runner
 from zm_worker.provision.runner import Context, NeedsHuman, Settings
 
 IMAGE = "ghcr.io/adityashandilya555/zm-operaton:2.1.5-zm.1"
@@ -54,6 +54,7 @@ class FakeRailway:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.headers: list[httpx.Headers] = []
         self.logs = [f"line {i}" for i in range(40)]
+        self.deploy_errors = 0  # how many deploy calls fail before one goes through
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -102,6 +103,9 @@ class FakeRailway:
         elif op == "variableCollectionUpsert":
             self.variables.update(v["input"]["variables"])
             data = {"variableCollectionUpsert": True}
+        elif op == "serviceInstanceDeployV2" and self.deploy_errors:
+            self.deploy_errors -= 1
+            return httpx.Response(502, text="Bad Gateway")
         elif op == "serviceInstanceDeployV2":
             self.deployment = {
                 "id": f"dep-{len(self.ops('serviceInstanceDeployV2'))}",
@@ -290,9 +294,53 @@ def test_graphql_errors_raise() -> None:
 
 
 def test_missing_railway_settings_are_named() -> None:
-    settings = replace(SETTINGS, railway_token=None, operaton_image=None)
-    with pytest.raises(RuntimeError, match="RAILWAY_API_TOKEN, OPERATON_IMAGE"):
+    settings = replace(SETTINGS, railway_token=None, railway_project=None)
+    with pytest.raises(RuntimeError, match="set RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID on"):
         railway.operaton_service(context(Recorder(), settings))
+
+
+@respx.mock
+def test_operaton_service_needs_the_image(fake: FakeRailway) -> None:
+    mock(fake)
+    with pytest.raises(RuntimeError, match="set OPERATON_IMAGE"):
+        railway.operaton_service(context(Recorder(), replace(SETTINGS, operaton_image=None)))
+    assert fake.calls == []
+
+
+@respx.mock
+def test_a_deploy_cut_off_after_the_upsert_still_happens_on_the_rerun(fake: FakeRailway) -> None:
+    """Variables went in with skipDeploys, then the deploy call failed: nothing is left to change
+    on the re-run, but it must still deploy, or Operaton runs without its DB settings."""
+    mock(fake)
+    fake.deploy_errors = 1
+    rec = Recorder()
+    with pytest.raises(httpx.HTTPStatusError):
+        railway.operaton_service(context(rec))
+    assert rec.secrets["deploy_pending"] is True
+    fake.calls.clear()
+
+    railway.operaton_service(context(rec))
+
+    assert fake.ops("variableCollectionUpsert") == []  # already set
+    assert len(fake.ops("serviceInstanceDeployV2")) == 1
+    assert rec.secrets["deploy_pending"] is False
+
+
+@respx.mock
+def test_railway_errors_never_carry_secrets_into_last_error(fake: FakeRailway) -> None:
+    def echo(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if "variableCollectionUpsert(" in body["query"]:
+            value = body["variables"]["input"]["variables"]["DB_PASSWORD"]
+            message = f'Variable "$input" got invalid value "{value}"'
+            return httpx.Response(200, json={"errors": [{"message": message}]})
+        return fake(request)
+
+    respx.post(railway.GRAPHQL).mock(side_effect=echo)
+    ctx = context(Recorder({**SECRETS, "zm_engine_password": "engine-secret-pw"}))
+    status, error, _ = runner.attempt(railway.operaton_service, ctx, attempts=0)
+    assert status == "pending"
+    assert error == 'Railway: Variable "$input" got invalid value "***"'
 
 
 # --- step 7: operaton_health ------------------------------------------------------------------
@@ -365,6 +413,19 @@ def test_never_healthy_times_out_with_the_newest_log_lines(fake: FakeRailway) ->
     assert 600 <= now[0] < 700
 
 
+@respx.mock
+def test_a_long_last_log_line_is_kept_cut_to_fit(fake: FakeRailway) -> None:
+    mock(fake)
+    fake.services["operaton-pilot"] = "svc-1"
+    fake.deployment = {"id": "dep-9", "status": "CRASHED"}
+    fake.logs = ["short", "org.springframework.beans.factory.BeanCreationException: " + "x" * 2000]
+    respx.get(f"{BASE}/health").mock(side_effect=httpx.ConnectError("refused"))
+    with pytest.raises(TimeoutError) as err:
+        railway.operaton_health(context(Recorder()))
+    assert "BeanCreationException" in str(err.value)
+    assert len(str(err.value)) < 1000
+
+
 # --- step 8: seed_draft -----------------------------------------------------------------------
 
 
@@ -409,6 +470,15 @@ def test_deprovision_deletes_the_service_and_the_project(fake: FakeRailway) -> N
 
 
 @respx.mock
+def test_deprovision_needs_no_image(fake: FakeRailway) -> None:
+    mock(fake)
+    respx.delete(url__startswith="https://api.supabase.com/v1/projects/").mock(
+        return_value=httpx.Response(404)
+    )
+    assert railway.deprovision(context(Recorder(), replace(SETTINGS, operaton_image=None))) == []
+
+
+@respx.mock
 def test_deprovision_twice_deletes_nothing_more(fake: FakeRailway) -> None:
     mock(fake)
     respx.delete(url__startswith="https://api.supabase.com/v1/projects/").mock(
@@ -424,6 +494,7 @@ def test_deprovision_cli_needs_yes(monkeypatch, capsys) -> None:
         "PLATFORM_DATABASE_URL": "postgresql://unused/postgres",
         "SUPABASE_ACCESS_TOKEN": "t",
         "SUPABASE_ORG_ID": "o",
+        "SUPABASE_PROJECT_PREFIX": "zm-test-",
     }.items():
         monkeypatch.setenv(var, value)
 
@@ -447,6 +518,7 @@ def test_railway_settings_from_env(monkeypatch) -> None:
     for var, value in {
         "SUPABASE_ACCESS_TOKEN": "t",
         "SUPABASE_ORG_ID": "o",
+        "SUPABASE_PROJECT_PREFIX": "zm-test-",
         "RAILWAY_API_TOKEN": "rw",
         "RAILWAY_API_TOKEN_TYPE": "bearer",
         "RAILWAY_PROJECT_ID": "p",

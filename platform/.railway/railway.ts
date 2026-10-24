@@ -56,7 +56,7 @@ export default defineRailway(() => {
       // provided by Railway at runtime. A project token goes in the Project-Access-Token header;
       // set RAILWAY_API_TOKEN_TYPE=bearer for an account or workspace token instead.
       RAILWAY_API_TOKEN: preserve(),
-      RAILWAY_API_TOKEN_TYPE: "project",
+      RAILWAY_API_TOKEN_TYPE: preserve(), // the worker defaults to project when unset
       OPERATON_IMAGE: "ghcr.io/adityashandilya555/zm-operaton:2.1.5-zm.1",
       // Supabase Management API token for provisioning client projects (S2-02a); set in the dashboard.
       SUPABASE_ACCESS_TOKEN: preserve(),

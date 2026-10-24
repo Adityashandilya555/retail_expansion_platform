@@ -12,34 +12,42 @@ log = logging.getLogger("zm_worker")
 
 RECONCILE_EVERY = 60.0  # seconds between reconciler passes (#26)
 RECONCILE_ENV = ("PLATFORM_DATABASE_URL", "SECRETS_ENCRYPTION_KEY")
-# unset (e.g. local compose): no provisioning
-PROVISION_ENV = ("SUPABASE_ACCESS_TOKEN", "SUPABASE_ORG_ID")
+# all set (and PLATFORM_DATABASE_URL, SECRETS_ENCRYPTION_KEY), or no provisioning, e.g. in compose
+PROVISION_ENV = ("SUPABASE_ACCESS_TOKEN", "SUPABASE_ORG_ID", "SUPABASE_PROJECT_PREFIX")
 _last_reconcile: float | None = None
 _warned = False
 
 
-def provision_pass() -> None:
-    """Run the runnable provisioning steps (S2-02a, #24) once the Management API is configured."""
+def start_provisioner(stop: threading.Event, interval: float) -> threading.Thread | None:
+    """Provisioning (S2-02a, #24) in its own thread: a step can wait 10 minutes for a new project,
+    which must hold up neither the reconciler nor shutdown. None while it isn't configured."""
     if not all(os.environ.get(v) for v in (*RECONCILE_ENV, *PROVISION_ENV)):
-        return
+        return None
     try:
         # imports zm_api, like the reconciler: inside the try so a broken image logs
         from zm_worker import provision
         from zm_worker.provision.runner import Settings
 
         settings = Settings.from_env()
-        if settings is not None:
-            provision.run(os.environ["PLATFORM_DATABASE_URL"], settings)
-    except Exception:  # the registry is down: try again next tick, keep the loop alive
-        log.exception("provisioning pass failed")
+        assert settings is not None  # PROVISION_ENV is set
+    except Exception:
+        log.exception("provisioning off: it failed to start")
+        return None
+    thread = threading.Thread(
+        target=provision.loop,
+        args=(os.environ["PLATFORM_DATABASE_URL"], settings, stop, interval),
+        name="provisioner",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def tick() -> None:
-    """One pass of the worker loop: provisioning every tick, and the submission reconciler (#26)
-    at most every minute, once PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY are set."""
+    """One pass of the worker loop: the submission reconciler (#26) at most every minute, once
+    PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY are set. Provisioning has its own thread."""
     global _last_reconcile, _warned
     log.info("tick")
-    provision_pass()
     now = time.monotonic()
     missing = [v for v in RECONCILE_ENV if not os.environ.get(v)]
     if missing:
@@ -62,9 +70,12 @@ def tick() -> None:
 
 def run(stop: threading.Event, interval: float) -> None:
     log.info("worker started")
+    provisioner = start_provisioner(stop, interval)
     while not stop.is_set():
         tick()
         stop.wait(interval)
+    if provisioner is not None:  # its step hands itself back at the next wait or HTTP call
+        provisioner.join(timeout=30)
     log.info("worker stopped")
 
 
