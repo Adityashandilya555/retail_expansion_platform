@@ -29,9 +29,10 @@ def start_provisioner(stop: threading.Event, interval: float) -> threading.Threa
         from zm_worker.provision.runner import Settings
 
         settings = Settings.from_env()
-        assert settings is not None  # PROVISION_ENV is set
     except Exception:
         log.exception("provisioning off: it failed to start")
+        return None
+    if settings is None:  # can't happen once PROVISION_ENV is set; keeps the type narrow
         return None
     thread = threading.Thread(
         target=provision.loop,
