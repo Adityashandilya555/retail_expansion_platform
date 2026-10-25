@@ -18,10 +18,11 @@ from alembic import command
 from alembic.config import Config
 from cryptography.fernet import Fernet
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from zm_api import secrets as sealed
-from zm_worker import vault_migrate
-from zm_worker.provision import STEPS, runner, supabase
+from zm_worker import provision, vault_migrate
+from zm_worker.provision import railway, runner, supabase
 from zm_worker.provision.runner import Context, NeedsHuman, Settings
 
 pytestmark = pytest.mark.integration
@@ -304,7 +305,7 @@ def test_full_supabase_chain_survives_a_kill_after_the_project_post(conn, monkey
         " values (%s, 'Test', %s, 'qsr', 'provisioning') returning id",  # as POST /owner/clients
         (slug, slug.upper()),
     ).fetchone()["id"]
-    for seq, step in enumerate([*STEPS, "operaton_service"], start=1):
+    for seq, step in enumerate([*supabase.STEPS, "operaton_service"], start=1):
         conn.execute(
             "insert into platform.provisioning_steps (client_id, step, seq) values (%s, %s, %s)",
             (client_id, step, seq),
@@ -345,11 +346,11 @@ def test_full_supabase_chain_survives_a_kill_after_the_project_post(conn, monkey
     monkeypatch.setattr(vault_migrate, "apply", lambda dsn, pw: migrated.append(dsn) or [])
 
     with pytest.raises(KeyboardInterrupt):
-        run(conn, STEPS, client_id)
+        run(conn, supabase.STEPS, client_id)
     assert state(conn, client_id)["supabase"]["status"] == "running"  # step "supabase_project"
 
     rewind(conn, client_id)  # the lease ran out
-    assert run(conn, STEPS, client_id) == 5
+    assert run(conn, supabase.STEPS, client_id) == 5
 
     assert len(org) == 1  # one POST in all: the one the kill cut off
     steps_now = {s: r["status"] for s, r in state(conn, client_id).items()}
@@ -371,3 +372,54 @@ def test_full_supabase_chain_survives_a_kill_after_the_project_post(conn, monkey
     assert migrated == [
         f"postgresql://postgres.{ref}:{secrets['db_password']}@pooler:5432/postgres"
     ]
+
+
+def test_seed_writes_the_first_draft_and_keeps_an_edited_one() -> None:
+    """railway.seed on the migrated pg-iso vault, as the zm_api role the API uses. pg-iso is the
+    qsr-local isolation client's vault, so its draft is put back afterwards."""
+    iso = os.environ.get("PG_ISO_PORT", 5434)
+    password = os.environ.get("ZM_API_DB_PASSWORD", "zm-api-local")
+    admin = f"postgresql://postgres:postgres@localhost:{iso}/postgres"
+    dsn = f"postgresql+asyncpg://zm_api:{password}@localhost:{iso}/postgres"
+    with psycopg.connect(admin, autocommit=True) as c:
+        before = c.execute("select workflow, template_key, updated_by from app.drafts").fetchall()
+        try:
+            c.execute("delete from app.drafts")
+            railway.seed(dsn, {"v": 1}, "qsr")
+            railway.seed(dsn, {"v": 2}, "matrix-retail")  # a re-run must not overwrite edits
+            rows = c.execute("select workflow, template_key from app.drafts").fetchall()
+            assert rows == [({"v": 1}, "qsr")]
+        finally:
+            c.execute("delete from app.drafts")
+            for workflow, key, by in before:
+                c.execute(
+                    "insert into app.drafts (id, workflow, template_key, updated_by)"
+                    " values (1, %s, %s, %s)",
+                    (Jsonb(workflow), key, by),
+                )
+
+
+def test_a_deprovisioned_client_is_never_rebuilt(conn, monkeypatch) -> None:
+    """Its unfinished steps leave the queue, and a suspended client's steps are never claimed,
+    not even after a console Retry re-queues one."""
+    client_id = new_client(conn, "one", "two")
+    one, two = names(client_id, "one", "two")
+    run(conn, {one: lambda ctx: None}, client_id)  # one done, two pending
+    slug = client(conn, client_id)["slug"]
+
+    def deleted(ctx: Context) -> list[str]:
+        ctx.register(status="suspended")
+        return ["Railway service"]
+
+    monkeypatch.setattr(railway, "deprovision", deleted)
+    assert provision.deprovision(URL, SETTINGS, slug) == ["Railway service"]
+
+    steps_now = state(conn, client_id)
+    assert (steps_now["one"]["status"], steps_now["two"]["status"]) == ("done", "failed")
+    assert steps_now["two"]["last_error"] == "deprovisioned"
+    conn.execute(  # what the console's Retry does
+        "update platform.provisioning_steps set status = 'pending', attempts = 0 where step = %s",
+        (two,),
+    )
+    assert run(conn, {two: lambda ctx: None}, client_id) == 0
+    assert client(conn, client_id)["status"] == "suspended"

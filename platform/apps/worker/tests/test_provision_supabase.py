@@ -15,7 +15,7 @@ from cryptography.fernet import Fernet
 
 import zm_worker.__main__ as worker_main
 from zm_worker import dsn, provision, vault_migrate
-from zm_worker.provision import STEPS, runner, supabase
+from zm_worker.provision import runner, supabase
 from zm_worker.provision.runner import Context, NeedsHuman, Settings
 
 API = "https://api.supabase.com"
@@ -356,7 +356,7 @@ def test_registry_writes_ref_and_bucket() -> None:
 
 
 def test_steps_in_order() -> None:
-    assert list(STEPS) == [
+    assert list(supabase.STEPS) == [
         "supabase_project",
         "vault_migrations",
         "data_api_off",

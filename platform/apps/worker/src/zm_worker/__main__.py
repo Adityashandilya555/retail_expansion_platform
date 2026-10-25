@@ -93,11 +93,35 @@ def migrate(argv: list[str]) -> None:
     log.info("vault migrated: %s", ", ".join(applied) or "already up to date")
 
 
+def deprovision(argv: list[str]) -> None:
+    """`zm-worker deprovision <slug> --yes`: delete a test client's Railway service and Supabase
+    project (S2-02b). Never called automatically; the registry row stays, as `suspended`."""
+    parser = argparse.ArgumentParser(prog="zm-worker deprovision")
+    parser.add_argument("slug")
+    parser.add_argument("--yes", action="store_true", help="really delete")
+    args = parser.parse_args(argv)
+    from zm_worker import provision
+    from zm_worker.provision.runner import Settings
+
+    settings, dsn = Settings.from_env(), os.environ.get("PLATFORM_DATABASE_URL")
+    if settings is None or not dsn:
+        parser.error("set PLATFORM_DATABASE_URL, SUPABASE_ACCESS_TOKEN and SUPABASE_ORG_ID")
+    if not args.yes:
+        parser.error(
+            f"this deletes operaton-{args.slug} on Railway and its Supabase project; add --yes"
+        )
+    deleted = provision.deprovision(dsn, settings, args.slug)
+    log.info("deprovisioned %s: %s", args.slug, ", ".join(deleted) or "nothing left to delete")
+
+
 def main(argv: list[str] | None = None) -> None:
     args = sys.argv[1:] if argv is None else argv
     logs.configure(os.environ.get("LOG_LEVEL", "info"))
     if args[:1] == ["vault-migrate"]:
         migrate(args[1:])
+        return
+    if args[:1] == ["deprovision"]:
+        deprovision(args[1:])
         return
     if args[:1] == ["reconcile"]:  # one pass by hand: `zm-worker reconcile`
         from zm_worker import reconcile
@@ -106,7 +130,8 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args:
         sys.exit(
-            f"unknown command {args[0]!r}; usage: zm-worker [vault-migrate --dsn URL | reconcile]"
+            f"unknown command {args[0]!r}; usage: zm-worker"
+            " [vault-migrate --dsn URL | reconcile | deprovision SLUG --yes]"
         )
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):

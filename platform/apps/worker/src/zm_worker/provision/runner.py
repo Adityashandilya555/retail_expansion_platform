@@ -64,6 +64,13 @@ class Settings:
     region: str
     instance_size: str
     prefix: str
+    # Railway (S2-02b): the step that needs them fails with a clear error while they're unset
+    railway_token: str | None = None
+    railway_token_type: str = "project"  # project → Project-Access-Token header; else Bearer
+    railway_project: str | None = None
+    railway_environment: str | None = None
+    railway_region: str = "asia-southeast1-eqsg3a"
+    operaton_image: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings | None":
@@ -80,6 +87,12 @@ class Settings:
             region=os.environ.get("SUPABASE_REGION", "ap-southeast-1"),
             instance_size=os.environ.get("SUPABASE_CLIENT_INSTANCE_SIZE", "micro"),
             prefix=prefix,
+            railway_token=os.environ.get("RAILWAY_API_TOKEN") or None,
+            railway_token_type=os.environ.get("RAILWAY_API_TOKEN_TYPE", "project"),
+            railway_project=os.environ.get("RAILWAY_PROJECT_ID") or None,
+            railway_environment=os.environ.get("RAILWAY_ENVIRONMENT_ID") or None,
+            railway_region=os.environ.get("RAILWAY_REGION", "asia-southeast1-eqsg3a"),
+            operaton_image=os.environ.get("OPERATON_IMAGE") or None,
         )
 
 
@@ -98,6 +111,8 @@ class Context:
     heartbeat: Callable[[], None]
     sleep: Callable[[float], None] = time.sleep  # raises Stopped when the worker stops
     clock: Callable[[], float] = time.monotonic
+    # (template_key, newest workflow_json of that key) from platform.templates
+    template: Callable[[], tuple[str, dict[str, Any]] | None] = lambda: None
 
     def seal(self, **values: Any) -> None:
         """Merge into clients.secrets and write it at once (before the call that needs it)."""
@@ -126,6 +141,9 @@ CLAIM = """
           and not exists (
                 select 1 from platform.provisioning_steps e
                 where e.client_id = s.client_id and e.seq < s.seq and e.status <> 'done')
+          and not exists (  -- deprovisioned: nothing may rebuild it
+                select 1 from platform.clients c
+                where c.id = s.client_id and c.status = 'suspended')
         order by s.updated_at
         limit 1
         for update of s skip locked
@@ -262,6 +280,13 @@ def open_context(
             (sealed.seal(data), client_id),
         ),
         persist_columns=persist_columns,
+        template=lambda: _exec(
+            conn,
+            "select t.key, t.workflow_json from platform.templates t"
+            " join platform.clients c on c.template_key = t.key"
+            " where c.id = %s order by t.version desc limit 1",
+            (client_id,),
+        ),
         heartbeat=heartbeat,
         sleep=sleep,
     )
