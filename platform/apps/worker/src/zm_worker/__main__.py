@@ -12,13 +12,41 @@ log = logging.getLogger("zm_worker")
 
 RECONCILE_EVERY = 60.0  # seconds between reconciler passes (#26)
 RECONCILE_ENV = ("PLATFORM_DATABASE_URL", "SECRETS_ENCRYPTION_KEY")
+# all set (and PLATFORM_DATABASE_URL, SECRETS_ENCRYPTION_KEY), or no provisioning, e.g. in compose
+PROVISION_ENV = ("SUPABASE_ACCESS_TOKEN", "SUPABASE_ORG_ID", "SUPABASE_PROJECT_PREFIX")
 _last_reconcile: float | None = None
 _warned = False
 
 
+def start_provisioner(stop: threading.Event, interval: float) -> threading.Thread | None:
+    """Provisioning (S2-02a, #24) in its own thread: a step can wait 10 minutes for a new project,
+    which must hold up neither the reconciler nor shutdown. None while it isn't configured."""
+    if not all(os.environ.get(v) for v in (*RECONCILE_ENV, *PROVISION_ENV)):
+        return None
+    try:
+        # imports zm_api, like the reconciler: inside the try so a broken image logs
+        from zm_worker import provision
+        from zm_worker.provision.runner import Settings
+
+        settings = Settings.from_env()
+    except Exception:
+        log.exception("provisioning off: it failed to start")
+        return None
+    if settings is None:  # can't happen once PROVISION_ENV is set; keeps the type narrow
+        return None
+    thread = threading.Thread(
+        target=provision.loop,
+        args=(os.environ["PLATFORM_DATABASE_URL"], settings, stop, interval),
+        name="provisioner",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 def tick() -> None:
     """One pass of the worker loop: the submission reconciler (#26) at most every minute, once
-    PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY are set. Provisioning arrives with S2-02a/b."""
+    PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY are set. Provisioning has its own thread."""
     global _last_reconcile, _warned
     log.info("tick")
     now = time.monotonic()
@@ -43,9 +71,12 @@ def tick() -> None:
 
 def run(stop: threading.Event, interval: float) -> None:
     log.info("worker started")
+    provisioner = start_provisioner(stop, interval)
     while not stop.is_set():
         tick()
         stop.wait(interval)
+    if provisioner is not None:  # its step hands itself back at the next wait or HTTP call
+        provisioner.join(timeout=30)
     log.info("worker stopped")
 
 
