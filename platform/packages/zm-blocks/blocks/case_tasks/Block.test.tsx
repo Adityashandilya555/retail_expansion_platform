@@ -56,7 +56,7 @@ test("?tab=tasks&task=<id> opens the DD checklist inline; submitting removes it 
     ["Fill DD checklist", "Legal Executive", "—", ""],
   ]);
   expect(screen.getByRole("table", { name: "Decision history" })).toBe(history); // same table: no reload
-  expect(location()).toBe(`${PATH}?tab=tasks`);
+  await waitFor(() => expect(location()).toBe(`${PATH}?tab=tasks`)); // the router may apply it a moment later
   expect(await screen.findByText("Fill DD checklist is done.")).toBeDefined(); // the toast
   expect(sent).toEqual({ values: { dd_title_doc: true } });
   const post = calls.find((c) => c.method === "POST");
@@ -98,6 +98,19 @@ test("tasks the user can only read aren't listed; no history says so", async () 
   expect(await screen.findByText("Nothing for you to do on this site")).toBeDefined();
   expect(screen.queryByText("Finalise DD verdict")).toBeNull();
   expect(screen.getByText("No decisions yet")).toBeDefined();
+});
+
+test("a teammate's task opened from the team inbox (?task=) shows read-only", async () => {
+  const lead = { id: "t-v", name: "Finalise DD verdict", stage: "legal", assignee: "u-l2b", can_act: false };
+  const readOnly = { ...sampleTask, editable: false, task: { ...sampleTask.task, id: "t-v", name: "Finalise DD verdict" } };
+  drawPage(tasksPage, {
+    path: `${PATH}?tab=tasks&task=t-v`,
+    routes: { "GET /app/cases/MX-0001": () => sampleCase({ tasks: [lead] }), "GET /app/tasks/t-v": () => readOnly },
+  });
+  expect(await screen.findByRole("button", { name: /Finalise DD verdict.*View only/ })).toBeDefined();
+  expect(await screen.findByRole("group", { name: "Fill DD checklist" })).toBeDefined(); // its form, read-only
+  expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
+  expect(screen.queryByText("Nothing for you to do on this site")).toBeNull();
 });
 
 test.each(["light", "dark"] as const)("axe passes in %s with a form open", async (scheme) => {

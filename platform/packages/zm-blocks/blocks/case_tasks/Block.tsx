@@ -73,14 +73,15 @@ export function CaseTasks({ ui, page }: BlockProps) {
   return (
     <WithCase ui={ui} page={page}>
       {(c, label) => {
-        const mine = c.tasks.filter((t) => t.can_act);
+        // a lead opening a teammate's task from the team inbox (`?task=`) reads it
+        const shown = c.tasks.filter((t) => t.can_act || t.id === open);
         return (
           <Stack gap="xl">
             <Stack gap="sm">
               <Title order={2} size="h4">
                 Your tasks
               </Title>
-              {mine.length === 0 ? (
+              {shown.length === 0 ? (
                 <Text size="sm" c="dimmed">
                   Nothing for you to do on this {label.toLowerCase()}
                 </Text>
@@ -99,12 +100,13 @@ export function CaseTasks({ ui, page }: BlockProps) {
                     )
                   }
                 >
-                  {mine.map((t) => (
+                  {shown.map((t) => (
                     <Accordion.Item key={t.id} value={t.id}>
                       <Accordion.Control>
                         <Group gap="sm">
                           <Text>{t.name}</Text>
                           {t.stage && <StatusPill tone="open">{stageName(t.stage)}</StatusPill>}
+                          {!t.can_act && <StatusPill tone="queued">View only</StatusPill>}
                         </Group>
                       </Accordion.Control>
                       <Accordion.Panel>{open === t.id && <TaskForm id={t.id} caseLabel={label} />}</Accordion.Panel>
