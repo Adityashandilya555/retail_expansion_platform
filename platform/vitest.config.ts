@@ -18,7 +18,8 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text-summary", "lcov"],
-      include: projects.map((p) => `${p}/src/**/*.{ts,tsx}`),
+      // zm-blocks keeps its blocks and layouts beside src/
+      include: projects.map((p) => `${p}/{src,blocks,layouts}/**/*.{ts,tsx}`),
       // Vite mount boilerplate, dev-only previews (/dev/ui) and test helpers; also excluded in sonar-project.properties.
       exclude: ["**/src/main.tsx", "**/src/dev/**", "**/src/test/**"],
     },
