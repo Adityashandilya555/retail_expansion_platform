@@ -11,13 +11,37 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Cases
+         * @description Every case of the client (newest first, up to 500) with its stage states.
+         */
+        get: operations["list_cases_app_cases_get"];
         put?: never;
         /**
          * Start Case
          * @description Start a case of one of the workflow's flows, with its start form's values.
          */
         post: operations["start_case_app_cases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/cases/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Case
+         * @description One case: its stages with times, values by section, open tasks and decisions.
+         */
+        get: operations["get_case_app_cases__code__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -412,6 +436,55 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** CaseDetail */
+        CaseDetail: {
+            /** Code */
+            code: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Fields
+             * @description Start-form values, without fields hidden from the user's level.
+             */
+            fields: {
+                [key: string]: unknown;
+            };
+            /** Flow */
+            flow: string;
+            /**
+             * History
+             * @description Committed submissions, oldest first.
+             */
+            history: components["schemas"]["DecisionOut"][];
+            /** My Tasks */
+            my_tasks: number;
+            /** Open Tasks */
+            open_tasks: number;
+            /** Release Version */
+            release_version: number;
+            /**
+             * Sections
+             * @description The start form as the user sees it, filled with the case's values.
+             */
+            sections: components["schemas"]["SectionOut"][];
+            /** Stages */
+            stages: components["schemas"]["StageOut"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "completed" | "closed";
+            /** Tasks */
+            tasks: components["schemas"]["OpenTaskOut"][];
+            /**
+             * Title
+             * @description The case's first text start field (e.g. the site's name), else its code.
+             */
+            title: string;
+        };
         /** CaseIn */
         CaseIn: {
             /**
@@ -451,6 +524,43 @@ export interface components {
             process_instance_id: string;
             /** Release Version */
             release_version: number;
+        };
+        /** CaseRow */
+        CaseRow: {
+            /** Code */
+            code: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Fields
+             * @description Start-form values, without fields hidden from the user's level.
+             */
+            fields: {
+                [key: string]: unknown;
+            };
+            /** Flow */
+            flow: string;
+            /** My Tasks */
+            my_tasks: number;
+            /** Open Tasks */
+            open_tasks: number;
+            /** Release Version */
+            release_version: number;
+            /** Stages */
+            stages: components["schemas"]["StageOut"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "completed" | "closed";
+            /**
+             * Title
+             * @description The case's first text start field (e.g. the site's name), else its code.
+             */
+            title: string;
         };
         /** ClientDetail */
         ClientDetail: {
@@ -530,6 +640,29 @@ export interface components {
             /** Workspace Code */
             workspace_code: string;
         };
+        /** DecisionOut */
+        DecisionOut: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * By
+             * Format: uuid
+             */
+            by: string;
+            /** By Name */
+            by_name: string | null;
+            /** Comment */
+            comment: string | null;
+            /** Outcome */
+            outcome: string | null;
+            /** Task */
+            task: string;
+            /** Task Name */
+            task_name: string;
+        };
         /** FieldError */
         FieldError: {
             /** Message */
@@ -539,6 +672,17 @@ export interface components {
              * @description JSON Pointer to the field, e.g. `/ca_amount`.
              */
             path: string;
+        };
+        /** FieldOut */
+        FieldOut: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Type */
+            type: string | null;
+            /** Value */
+            value: unknown;
         };
         /** FormOut */
         FormOut: {
@@ -603,6 +747,22 @@ export interface components {
              * @description Department keys, or `"*"` for everyone.
              */
             visible_to: string[];
+        };
+        /** OpenTaskOut */
+        OpenTaskOut: {
+            /** Assignee */
+            assignee: string | null;
+            /**
+             * Can Act
+             * @description The user may submit it (else they see it as their department's lead).
+             */
+            can_act: boolean;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Stage */
+            stage: string | null;
         };
         /** OwnerLoginIn */
         OwnerLoginIn: {
@@ -695,6 +855,34 @@ export interface components {
             published_by: string | null;
             /** Version */
             version: number;
+        };
+        /** SectionOut */
+        SectionOut: {
+            /** Fields */
+            fields: components["schemas"]["FieldOut"][];
+            /** Key */
+            key: string;
+            /** Title */
+            title: string;
+        };
+        /** StageOut */
+        StageOut: {
+            /** Department */
+            department: string;
+            /** Ended At */
+            ended_at: string | null;
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Started At */
+            started_at: string | null;
+            /**
+             * State
+             * @description `closed`: the case was closed in this stage, or the close cancelled it while it ran.
+             * @enum {string}
+             */
+            state: "queued" | "open" | "done" | "closed";
         };
         /** StepOut */
         StepOut: {
@@ -888,6 +1076,38 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_cases_app_cases_get: {
+        parameters: {
+            query?: {
+                flow?: string | null;
+                status?: ("open" | "completed" | "closed") | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseRow"][];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     start_case_app_cases_post: {
         parameters: {
             query?: never;
@@ -908,6 +1128,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_case_app_cases__code__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseDetail"];
                 };
             };
             /** @description Problem details (RFC 9457) */

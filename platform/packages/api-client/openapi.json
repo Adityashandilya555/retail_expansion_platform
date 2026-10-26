@@ -62,6 +62,102 @@
         "title": "BlockRef",
         "type": "object"
       },
+      "CaseDetail": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": true,
+            "description": "Start-form values, without fields hidden from the user's level.",
+            "title": "Fields",
+            "type": "object"
+          },
+          "flow": {
+            "title": "Flow",
+            "type": "string"
+          },
+          "history": {
+            "description": "Committed submissions, oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/DecisionOut"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "my_tasks": {
+            "title": "My Tasks",
+            "type": "integer"
+          },
+          "open_tasks": {
+            "title": "Open Tasks",
+            "type": "integer"
+          },
+          "release_version": {
+            "title": "Release Version",
+            "type": "integer"
+          },
+          "sections": {
+            "description": "The start form as the user sees it, filled with the case's values.",
+            "items": {
+              "$ref": "#/components/schemas/SectionOut"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageOut"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "completed",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/OpenTaskOut"
+            },
+            "title": "Tasks",
+            "type": "array"
+          },
+          "title": {
+            "description": "The case's first text start field (e.g. the site's name), else its code.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "flow",
+          "title",
+          "status",
+          "stages",
+          "fields",
+          "open_tasks",
+          "my_tasks",
+          "created_at",
+          "release_version",
+          "sections",
+          "tasks",
+          "history"
+        ],
+        "title": "CaseDetail",
+        "type": "object"
+      },
       "CaseIn": {
         "properties": {
           "flow": {
@@ -122,6 +218,76 @@
           "created_at"
         ],
         "title": "CaseOut",
+        "type": "object"
+      },
+      "CaseRow": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": true,
+            "description": "Start-form values, without fields hidden from the user's level.",
+            "title": "Fields",
+            "type": "object"
+          },
+          "flow": {
+            "title": "Flow",
+            "type": "string"
+          },
+          "my_tasks": {
+            "title": "My Tasks",
+            "type": "integer"
+          },
+          "open_tasks": {
+            "title": "Open Tasks",
+            "type": "integer"
+          },
+          "release_version": {
+            "title": "Release Version",
+            "type": "integer"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageOut"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "completed",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "description": "The case's first text start field (e.g. the site's name), else its code.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "flow",
+          "title",
+          "status",
+          "stages",
+          "fields",
+          "open_tasks",
+          "my_tasks",
+          "created_at",
+          "release_version"
+        ],
+        "title": "CaseRow",
         "type": "object"
       },
       "ClientDetail": {
@@ -331,6 +497,72 @@
         "title": "ClientOut",
         "type": "object"
       },
+      "DecisionOut": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "by": {
+            "format": "uuid",
+            "title": "By",
+            "type": "string"
+          },
+          "by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By Name"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "task": {
+            "title": "Task",
+            "type": "string"
+          },
+          "task_name": {
+            "title": "Task Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "task_name",
+          "by",
+          "by_name",
+          "outcome",
+          "comment",
+          "at"
+        ],
+        "title": "DecisionOut",
+        "type": "object"
+      },
       "FieldError": {
         "properties": {
           "message": {
@@ -348,6 +580,40 @@
           "message"
         ],
         "title": "FieldError",
+        "type": "object"
+      },
+      "FieldOut": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "type",
+          "value"
+        ],
+        "title": "FieldOut",
         "type": "object"
       },
       "FormOut": {
@@ -501,6 +767,54 @@
           "visible_to"
         ],
         "title": "NavItem",
+        "type": "object"
+      },
+      "OpenTaskOut": {
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "can_act": {
+            "description": "The user may submit it (else they see it as their department's lead).",
+            "title": "Can Act",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "stage",
+          "assignee",
+          "can_act"
+        ],
+        "title": "OpenTaskOut",
         "type": "object"
       },
       "OwnerLoginIn": {
@@ -733,6 +1047,91 @@
           "published_by"
         ],
         "title": "ReleaseOut",
+        "type": "object"
+      },
+      "SectionOut": {
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/FieldOut"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "fields"
+        ],
+        "title": "SectionOut",
+        "type": "object"
+      },
+      "StageOut": {
+        "properties": {
+          "department": {
+            "title": "Department",
+            "type": "string"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "description": "`closed`: the case was closed in this stage, or the close cancelled it while it ran.",
+            "enum": [
+              "queued",
+              "open",
+              "done",
+              "closed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "department",
+          "state",
+          "started_at",
+          "ended_at"
+        ],
+        "title": "StageOut",
         "type": "object"
       },
       "StepOut": {
@@ -1194,6 +1593,79 @@
   "openapi": "3.1.0",
   "paths": {
     "/app/cases": {
+      "get": {
+        "description": "Every case of the client (newest first, up to 500) with its stage states.",
+        "operationId": "list_cases_app_cases_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "flow",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Flow"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "open",
+                    "completed",
+                    "closed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CaseRow"
+                  },
+                  "title": "Response List Cases App Cases Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Cases",
+        "tags": [
+          "app"
+        ]
+      },
       "post": {
         "description": "Start a case of one of the workflow's flows, with its start form's values.",
         "operationId": "start_case_app_cases_post",
@@ -1230,6 +1702,49 @@
           }
         },
         "summary": "Start Case",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/cases/{code}": {
+      "get": {
+        "description": "One case: its stages with times, values by section, open tasks and decisions.",
+        "operationId": "get_case_app_cases__code__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Get Case",
         "tags": [
           "app"
         ]
