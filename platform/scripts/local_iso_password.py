@@ -9,13 +9,26 @@ Operaton's 3 s login delay, so a stack that is already rotated answers at once.
 import os
 import sys
 import time
+from pathlib import Path
 
 import httpx
 
-BASE = f"http://localhost:{os.environ.get('OPERATON_ISO_PORT', '8081')}/engine-rest"
-USER = os.environ.get("ZM_ADMIN_USER_ID", "zm-service")
-OLD = os.environ.get("ZM_ADMIN_USER_PASSWORD", "zm-local-only")
-NEW = os.environ.get("ZM_ISO_ADMIN_USER_PASSWORD", "zm-iso-local-only")
+DOTENV = Path(__file__).resolve().parents[1] / ".env"
+
+
+def dotenv(path: Path = DOTENV) -> dict[str, str]:
+    """platform/.env, which docker compose also reads: a password set there is the engine's."""
+    if not path.exists():
+        return {}
+    pairs = (line.split("#", 1)[0].strip().partition("=") for line in path.read_text().splitlines())
+    return {k.strip(): v.strip() for k, sep, v in pairs if sep and k.strip()}
+
+
+ENV = {**dotenv(), **os.environ}
+BASE = f"http://localhost:{ENV.get('OPERATON_ISO_PORT', '8081')}/engine-rest"
+USER = ENV.get("ZM_ADMIN_USER_ID", "zm-service")
+OLD = ENV.get("ZM_ADMIN_USER_PASSWORD", "zm-local-only")
+NEW = ENV.get("ZM_ISO_ADMIN_USER_PASSWORD", "zm-iso-local-only")
 
 
 def main() -> int:

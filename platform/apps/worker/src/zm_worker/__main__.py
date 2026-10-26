@@ -95,9 +95,9 @@ def migrate(argv: list[str]) -> None:
 
 def provision_local(argv: list[str]) -> None:
     """`zm-worker provision-local <slug> --dsn … --operaton-url …`: register a client on local
-    resources (#31). Role passwords from ZM_API_DB_PASSWORD / ZM_ENGINE_DB_PASSWORD (as
-    vault-migrate), the service account's from ZM_ADMIN_USER_PASSWORD; needs
-    PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY."""
+    resources (#31). Passwords come from ZM_API_DB_PASSWORD, ZM_ENGINE_DB_PASSWORD and
+    ZM_ADMIN_USER_PASSWORD, or the ZM_ISO_* ones for the isolation client (LOCAL_ISO_CLIENT_SLUG,
+    default qsr-local); needs PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY."""
     from zm_worker.provision import local
 
     parser = argparse.ArgumentParser(prog="zm-worker provision-local")
@@ -111,9 +111,16 @@ def provision_local(argv: list[str]) -> None:
     template = args.template or local.DEFAULT_TEMPLATES.get(args.slug)
     if template is None:
         parser.error("--template is needed for this slug")
-    env = {role: f"{role.upper()}_DB_PASSWORD" for role in vault_migrate.ROLES}
-    needed = [*env.values(), "ZM_ADMIN_USER_PASSWORD", "PLATFORM_DATABASE_URL"]
-    needed.append("SECRETS_ENCRYPTION_KEY")
+    # the isolation client has credentials of its own (ZM_ISO_*): never set pilot's on its vault
+    prefix = (
+        "ZM_ISO_" if args.slug == os.environ.get("LOCAL_ISO_CLIENT_SLUG", "qsr-local") else "ZM_"
+    )
+    env = {
+        role: f"{prefix}{role.removeprefix('zm_').upper()}_DB_PASSWORD"
+        for role in vault_migrate.ROLES
+    }
+    service_var = f"{prefix}ADMIN_USER_PASSWORD"
+    needed = [*env.values(), service_var, "PLATFORM_DATABASE_URL", "SECRETS_ENCRYPTION_KEY"]
     missing = [var for var in needed if not os.environ.get(var)]
     if missing:
         parser.error(f"set {', '.join(missing)}")
@@ -125,7 +132,7 @@ def provision_local(argv: list[str]) -> None:
         name=args.name or args.slug.replace("-", " ").title(),
         workspace_code=args.workspace_code or args.slug.upper(),
         passwords={role: os.environ[var] for role, var in env.items()},
-        service_password=os.environ["ZM_ADMIN_USER_PASSWORD"],
+        service_password=os.environ[service_var],
     )
     applied = local.provision(os.environ["PLATFORM_DATABASE_URL"], client)
     log.info(

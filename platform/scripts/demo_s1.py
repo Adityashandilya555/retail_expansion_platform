@@ -201,12 +201,32 @@ def drive(http: httpx.Client, code: str, users: list[Mapping[str, Any]]) -> list
         raise DemoError(f"cases aren't where the demo needs them: {stages}")
     if "legal" in stages[third] or not stages[third]:
         raise DemoError(f"{third} should have finished Legal: {stages[third]}")
-    cases = http.get("/app/cases", headers={"Authorization": f"Bearer {s.tokens['bd2']}"})
-    if cases.status_code == 200:  # the cases API (#91), once it exists
-        listed = {c.get("code") for c in cases.json()}
-        if not {first, second, third} <= listed:
-            raise DemoError(f"GET /app/cases doesn't list {first}, {second}, {third}")
+    check_cases_api(http, s, [first, second, third])
     return [first, second, third]
+
+
+def check_cases_api(http: httpx.Client, s: Session, codes: list[str]) -> bool:
+    """`GET /app/cases` (#91) lists the three cases; until that route exists, say so loudly
+    rather than pass silently. Returns whether the list was checked."""
+    if "get" not in _paths(http).get("/app/cases", {}):  # POST (start a case) is #26's
+        print("WARNING: GET /app/cases isn't there yet (#91): the case list wasn't checked; the")
+        print("         stages above come from each case's open tasks")
+        return False
+    cases = http.get("/app/cases", headers={"Authorization": f"Bearer {s.tokens['bd2']}"})
+    if cases.status_code != 200:
+        raise DemoError(f"GET /app/cases → {cases.status_code} {cases.text}")
+    listed = {c.get("code") for c in cases.json()}
+    if not set(codes) <= listed:
+        raise DemoError(f"GET /app/cases doesn't list {', '.join(codes)}")
+    return True
+
+
+def _paths(http: httpx.Client) -> dict[str, dict[str, Any]]:
+    """The API's OpenAPI paths (path → methods); empty if it can't be read."""
+    try:
+        return http.get("/openapi.json").json().get("paths", {})
+    except (httpx.HTTPError, ValueError):
+        return {}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -214,7 +234,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api", required=True, help="the platform API's base URL")
     parser.add_argument("--client", required=True, help="the client's workspace code")
     parser.add_argument("--users", default=".demo-users.json", help="demo users with passwords")
-    parser.add_argument("--app-url", default=os.environ.get("ZM_WEB_URL", ""), help="client app")
+    parser.add_argument(
+        "--app-url", default=os.environ.get("ZM_WEB_URL", ""), help="client app (ZM_WEB_URL)"
+    )
     args = parser.parse_args(argv)
     users = json.loads(Path(args.users).read_text())["users"]
     with httpx.Client(base_url=args.api, timeout=60) as http:

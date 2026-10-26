@@ -22,7 +22,8 @@ ZM_ENGINE_DB_PASSWORD="$ZM_ISO_ENGINE_DB_PASSWORD" ZM_API_DB_PASSWORD="$ZM_ISO_A
   uv run --no-build zm-worker vault-migrate --dsn "postgresql://postgres:postgres@localhost:${PG_ISO_PORT:-5434}/postgres"
 docker compose up -d --build --wait
 # an engine created before #31 still has the shared service password: rotate it (idempotent)
-uv run --no-build python scripts/local_iso_password.py
+uv run --no-build python scripts/local_iso_password.py \
+  || echo "warning: operaton-iso keeps its old service password; pytest -m isolation will say so" >&2
 
 cat <<'URLS'
 

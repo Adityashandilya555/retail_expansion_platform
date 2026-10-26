@@ -9,10 +9,12 @@ draft.
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 import psycopg
 from sqlalchemy.engine import make_url
 
 from zm_api import secrets as sealed
+from zm_api.context import SERVICE_ACCOUNT
 from zm_worker import vault_migrate
 from zm_worker.dsn import libpq
 from zm_worker.provision.railway import seed
@@ -52,10 +54,32 @@ def _template(conn: psycopg.Connection, key: str) -> dict[str, Any]:
     return row[0]
 
 
-def provision(platform_dsn: str, client: LocalClient) -> list[str]:
+def check_engine(client: LocalClient, http: httpx.Client | None = None) -> None:
+    """The `operaton_health` step's sign-in probe: the service account can query tasks and an
+    anonymous query is refused, so a wrong password or URL is never registered as ready.
+    (`/engine-rest/engine` skips auth, so it's a real query.)"""
+    own = http or httpx.Client(timeout=15)
+    try:
+        tasks = f"{client.operaton_url.rstrip('/')}/task"
+        auth = (SERVICE_ACCOUNT, client.service_password)
+        signed_in = own.get(tasks, params={"maxResults": 1}, auth=auth)
+        if signed_in.status_code != 200:
+            raise RuntimeError(f"{SERVICE_ACCOUNT} can't query tasks: {signed_in.status_code}")
+        anonymous = own.get(tasks, params={"maxResults": 1})
+        if anonymous.status_code != 401:
+            raise RuntimeError(f"an anonymous task query answered {anonymous.status_code}, not 401")
+    finally:
+        if http is None:
+            own.close()
+
+
+def provision(
+    platform_dsn: str, client: LocalClient, http: httpx.Client | None = None
+) -> list[str]:
     """Migrate, register as ready, seed the draft. Returns the migrations applied this run."""
     with psycopg.connect(libpq(platform_dsn), autocommit=True) as conn:
         workflow = _template(conn, client.template)  # before anything changes
+    check_engine(client, http)
     applied = vault_migrate.apply(client.dsn, client.passwords)
     zm_api_dsn = api_dsn(client.dsn, client.passwords["zm_api"])
     box = sealed.seal(

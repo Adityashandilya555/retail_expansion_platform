@@ -3,6 +3,7 @@ and the order of its steps. The isolation suite runs it for real (`pytest -m iso
 
 from typing import Any
 
+import httpx
 import pytest
 from cryptography.fernet import Fernet
 
@@ -22,6 +23,9 @@ def full_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "ZM_API_DB_PASSWORD": "api",
         "ZM_ENGINE_DB_PASSWORD": "engine",
         "ZM_ADMIN_USER_PASSWORD": "service",
+        "ZM_ISO_API_DB_PASSWORD": "iso-api",
+        "ZM_ISO_ENGINE_DB_PASSWORD": "iso-engine",
+        "ZM_ISO_ADMIN_USER_PASSWORD": "iso-service",
         "PLATFORM_DATABASE_URL": "postgresql://platform/postgres",
         "SECRETS_ENCRYPTION_KEY": Fernet.generate_key().decode(),
     }.items():
@@ -45,11 +49,16 @@ def test_an_unknown_slug_needs_a_template(full_env: None, capsys) -> None:
     assert "--template" in capsys.readouterr().err
 
 
-def test_the_cli_builds_the_client_from_args_and_env(
-    full_env: None, monkeypatch: pytest.MonkeyPatch
+@pytest.fixture
+def seen(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, local.LocalClient]]:
+    calls: list[tuple[str, local.LocalClient]] = []
+    monkeypatch.setattr(local, "provision", lambda dsn, client: calls.append((dsn, client)) or [])
+    return calls
+
+
+def test_the_isolation_client_gets_its_own_credentials(
+    full_env: None, seen: list[tuple[str, local.LocalClient]]
 ) -> None:
-    seen: list[tuple[str, local.LocalClient]] = []
-    monkeypatch.setattr(local, "provision", lambda dsn, client: seen.append((dsn, client)) or [])
     worker.main(
         ["provision-local", "qsr-local", "--dsn", "postgresql://v", "--operaton-url", "http://e"]
     )
@@ -60,6 +69,19 @@ def test_the_cli_builds_the_client_from_args_and_env(
         "Qsr Local",
         "QSR-LOCAL",
     )
+    # never pilot's: applying those would reset qsr's vault roles and seal the wrong password
+    assert client.passwords == {"zm_engine": "iso-engine", "zm_api": "iso-api"}
+    assert client.service_password == "iso-service"
+
+
+def test_the_pilot_client_gets_the_default_credentials(
+    full_env: None, seen: list[tuple[str, local.LocalClient]]
+) -> None:
+    worker.main(
+        ["provision-local", "pilot-local", "--dsn", "postgresql://v", "--operaton-url", "http://e"]
+    )
+    client = seen[0][1]
+    assert client.template == "matrix-retail"
     assert client.passwords == {"zm_engine": "engine", "zm_api": "api"}
     assert client.service_password == "service"
 
@@ -101,7 +123,7 @@ def test_provision_migrates_registers_then_seeds(
         passwords={"zm_api": "api", "zm_engine": "engine"},
         service_password="service",
     )
-    assert local.provision("postgresql://platform/postgres", client) == ["0004"]
+    assert local.provision("postgresql://platform/postgres", client, engine(200, 401)) == ["0004"]
     kinds = [c[0] if c[0] != "sql" else c[1] for c in calls]
     assert kinds == ["select", "migrate", "insert", "seed"]  # template read before any change
     insert = calls[2][2]
@@ -130,3 +152,35 @@ def test_provision_stops_before_changing_anything_without_the_template(
     with pytest.raises(LookupError, match="templates sync"):
         local.provision("postgresql://platform/postgres", client)
     assert "migrate" not in calls
+
+
+def engine(signed_in: int, anonymous: int) -> httpx.Client:
+    """An engine answering the sign-in probe: the service account, then anonymous."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/engine-rest/task")
+        return httpx.Response(signed_in if "authorization" in request.headers else anonymous)
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+CLIENT = local.LocalClient(
+    "qsr-local", "postgresql://v", "http://localhost:8081/engine-rest", "qsr", "Q", "Q", {}, "pw"
+)
+
+
+def test_the_engine_probe_needs_the_account_and_refuses_anonymous() -> None:
+    local.check_engine(CLIENT, engine(200, 401))
+    with pytest.raises(RuntimeError, match="can't query tasks: 401"):
+        local.check_engine(CLIENT, engine(401, 401))  # a wrong service password
+    with pytest.raises(RuntimeError, match="anonymous task query answered 200"):
+        local.check_engine(CLIENT, engine(200, 200))  # auth switched off
+
+
+def test_a_failing_probe_registers_nothing(full_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[Any] = []
+    monkeypatch.setattr(local.psycopg, "connect", lambda *a, **k: FakeConn(calls, ({"v": 1},)))
+    monkeypatch.setattr(local.vault_migrate, "apply", lambda *a: calls.append("migrate"))
+    with pytest.raises(RuntimeError):
+        local.provision("postgresql://platform/postgres", CLIENT, engine(401, 401))
+    assert "migrate" not in calls and not any(c[1] == "insert" for c in calls if c != "migrate")

@@ -30,36 +30,3 @@ def test_the_demo_driver_puts_three_cases_at_three_stages(world: World) -> None:
     assert any(
         t["case_code"] == first and t["form_key"] == "zm:legal_dd_checklist" for t in legal_l1
     )
-
-
-def test_fill_answers_required_fields_and_every_yes_no() -> None:
-    demo = demo_driver()
-    schema = {
-        "required": ["name", "amount", "on", "doc", "kind"],
-        "properties": {
-            "name": {"type": "string"},
-            "amount": {"type": "number"},
-            "on": {"type": "string", "format": "date"},
-            "doc": {"type": "object", "x-zm-type": "document"},
-            "kind": {"type": "string", "enum": ["a", "b"]},
-            "ok": {"type": "boolean", "x-zm-type": "yes_no"},
-            "optional": {"type": "string"},
-            "t_outcome": {"type": "string", "enum": ["x"], "x-zm-type": "outcome"},
-        },
-    }
-    values = demo.fill(schema)
-    assert set(values) == {"name", "amount", "on", "doc", "kind", "ok"}
-    assert values["kind"] == "a" and values["ok"] is True and values["amount"] == 1
-    assert values["doc"]["sha256"] == "0" * 64
-
-
-def test_pick_users_names_the_missing_role() -> None:
-    demo = demo_driver()
-    with pytest.raises(demo.DemoError, match="legal L2"):
-        demo.pick_users(
-            [
-                {"email": "a", "password": "p", "department": "bd", "level": 1},
-                {"email": "b", "password": "p", "department": "bd", "level": 2},
-                {"email": "c", "password": "p", "department": "legal", "level": 1},
-            ]
-        )

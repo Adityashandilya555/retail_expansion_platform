@@ -29,6 +29,7 @@ from alembic import command
 from alembic.config import Config
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import zm_worker.__main__ as worker
@@ -42,6 +43,17 @@ from zm_api.users import seed_users
 
 def _port(var: str, default: int) -> int:
     return int(os.environ.get(var, default))
+
+
+def _vault_port(url_var: str, default: int) -> int:
+    """The vault's port from LOCAL_CLIENT_DATABASE_URL / LOCAL_ISO_DATABASE_URL (S1-01)."""
+    url = os.environ.get(url_var)
+    return make_url(url).port or default if url else default
+
+
+def _engine(url_var: str, port_var: str, default: int) -> str:
+    """OPERATON_URL / OPERATON_ISO_URL, else localhost on the compose port."""
+    return os.environ.get(url_var) or f"http://localhost:{_port(port_var, default)}/engine-rest"
 
 
 PLATFORM_URL = (
@@ -87,8 +99,8 @@ class Side:
 PILOT = Side(
     name="pilot",
     slug=os.environ.get("LOCAL_CLIENT_SLUG", "pilot-local"),
-    vault_port=54322,
-    engine=f"http://localhost:{_port('OPERATON_PILOT_PORT', 8080)}/engine-rest",
+    vault_port=_vault_port("LOCAL_CLIENT_DATABASE_URL", 54322),
+    engine=_engine("OPERATON_URL", "OPERATON_PILOT_PORT", 8080),
     api_password=os.environ.get("ZM_API_DB_PASSWORD", "zm-api-local"),
     engine_password=os.environ.get("ZM_ENGINE_DB_PASSWORD", "zm-engine-local"),
     service_password=os.environ.get("ZM_ADMIN_USER_PASSWORD", "zm-local-only"),
@@ -98,8 +110,8 @@ PILOT = Side(
 QSR = Side(
     name="qsr",
     slug=os.environ.get("LOCAL_ISO_CLIENT_SLUG", "qsr-local"),
-    vault_port=_port("PG_ISO_PORT", 5434),
-    engine=f"http://localhost:{_port('OPERATON_ISO_PORT', 8081)}/engine-rest",
+    vault_port=_vault_port("LOCAL_ISO_DATABASE_URL", _port("PG_ISO_PORT", 5434)),
+    engine=_engine("OPERATON_ISO_URL", "OPERATON_ISO_PORT", 8081),
     api_password=os.environ.get("ZM_ISO_API_DB_PASSWORD", "zm-api-iso-local"),
     engine_password=os.environ.get("ZM_ISO_ENGINE_DB_PASSWORD", "zm-engine-iso-local"),
     service_password=os.environ.get("ZM_ISO_ADMIN_USER_PASSWORD", "zm-iso-local-only"),
@@ -152,10 +164,12 @@ def clear(side: Side) -> None:
 
 def provision_local(side: Side) -> None:
     """`zm-worker provision-local`, with that client's own passwords."""
+    prefix = "ZM_ISO_" if side is QSR else "ZM_"
     with pytest.MonkeyPatch.context() as mp:
-        mp.setenv("ZM_API_DB_PASSWORD", side.api_password)
-        mp.setenv("ZM_ENGINE_DB_PASSWORD", side.engine_password)
-        mp.setenv("ZM_ADMIN_USER_PASSWORD", side.service_password)
+        mp.setenv("LOCAL_ISO_CLIENT_SLUG", QSR.slug)
+        mp.setenv(f"{prefix}API_DB_PASSWORD", side.api_password)
+        mp.setenv(f"{prefix}ENGINE_DB_PASSWORD", side.engine_password)
+        mp.setenv(f"{prefix}ADMIN_USER_PASSWORD", side.service_password)
         worker.main(
             [
                 "provision-local",
@@ -189,6 +203,10 @@ class Client:
 
     def auth(self, role: str = "bd1") -> dict[str, str]:
         return {"Authorization": f"Bearer {token(self.side, self.users[role])}"}
+
+    def foreign_auth(self, other: "Client", role: str = "bd1") -> dict[str, str]:
+        """A token for this client that names the other client's user."""
+        return {"Authorization": f"Bearer {token(self.side, other.users[role])}"}
 
 
 @dataclass

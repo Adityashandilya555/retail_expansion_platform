@@ -141,3 +141,18 @@ def test_main_exits_1_and_says_what_failed(
     assert compat.main([]) == 1
     err = capsys.readouterr().err
     assert "FAIL template matrix-retail · page site: layout 'case' has no manifest" in err
+
+
+def test_a_layout_dropped_from_the_registry_doesnt_count(tmp_path: Path) -> None:
+    root = tmp_path / "zm-blocks"
+    for name in ("standard", "case"):
+        (root / "layouts" / name).mkdir(parents=True)
+        src = compat.BLOCKS_DIR / "layouts" / name / "manifest.json"
+        (root / "layouts" / name / "manifest.json").write_text(src.read_text())
+    (root / "src").mkdir()
+    real = (compat.BLOCKS_DIR / "src/registry.ts").read_text()
+    (root / "src/registry.ts").write_text(real.replace("  case: {", "  // case: {"))
+    loaded = compat.Packages.load(root)
+    assert set(loaded.layouts) == {"standard"}
+    assert compat.registered(real, "layouts") == {"standard", "case"}
+    assert compat.registered(real, "blocks") == set()

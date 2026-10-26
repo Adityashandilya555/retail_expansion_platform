@@ -3,8 +3,8 @@
 For every starter template (`packages/templates/*/workflow.json`) and every synthetic release
 (`platform/tests/compat/*.json`): migrate, validate and compile it, then check each page against
 the UI packages as they are now:
-- its layout has a manifest (`packages/zm-blocks/layouts/<name>/manifest.json`), and the page
-  sets what the layout `requires`;
+- its layout has a manifest (`packages/zm-blocks/layouts/<name>/manifest.json`) that the shell's
+  registry (`packages/zm-blocks/src/registry.ts`) loads, and the page sets what it `requires`;
 - each region is one of the layout's, holds no more than its `max`, and only `allowed_blocks`;
 - each block has a manifest (`packages/zm-blocks/blocks/<name>/manifest.json`) that allows the
   region and whose `props` schema the page's props pass, or is announced in
@@ -16,6 +16,7 @@ Real client configs never enter this public repo; live releases are checked at d
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -31,6 +32,16 @@ PLATFORM = Path(__file__).resolve().parents[4]
 BLOCKS_DIR = PLATFORM / "packages/zm-blocks"
 TEMPLATES_DIR = PLATFORM / "packages/templates"
 FIXTURES_DIR = PLATFORM / "tests/compat"
+# `export const layouts: … = { name: { manifest: …`: the names the shell can draw
+_REGISTERED = re.compile(r"^\s*(\w+):\s*\{\s*manifest:", re.M)
+
+
+def registered(source: str, export: str) -> set[str]:
+    """Names in `export const <export> … = { … }` of packages/zm-blocks/src/registry.ts."""
+    found = re.search(
+        rf"export const {export}\b[^=]*=\s*(?:\{{\}};|\{{(.*?)^\}};)", source, re.S | re.M
+    )
+    return set(_REGISTERED.findall(found.group(1) or "")) if found else set()
 
 
 @dataclass
@@ -54,7 +65,14 @@ class Packages:
 
         planned_file = root / "planned.json"
         planned = json.loads(planned_file.read_text()) if planned_file.exists() else {}
-        return cls(manifests("layouts"), manifests("blocks"), planned)
+        layouts, blocks = manifests("layouts"), manifests("blocks")
+        # a manifest the shell's registry doesn't load can't be drawn: it doesn't count
+        registry = root / "src/registry.ts"
+        if registry.exists():
+            source = registry.read_text()
+            layouts = {k: v for k, v in layouts.items() if k in registered(source, "layouts")}
+            blocks = {k: v for k, v in blocks.items() if k in registered(source, "blocks")}
+        return cls(layouts, blocks, planned)
 
 
 @dataclass(frozen=True)

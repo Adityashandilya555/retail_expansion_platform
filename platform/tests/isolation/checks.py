@@ -42,7 +42,7 @@ def own_ui_only(
     leaks = []
     mine = http.get("/app/ui", headers=auth)
     pages = {p["key"] for p in mine.json().get("pages", [])} if mine.status_code == 200 else set()
-    if mine.status_code != 200 or not pages <= own_pages:
+    if mine.status_code != 200 or not pages or not pages <= own_pages:
         leaks.append(f"/app/ui answered {mine.status_code} with pages {sorted(pages)}")
     if pages & (other_pages - own_pages):
         leaks.append(f"/app/ui shows the other client's pages {sorted(pages & other_pages)}")
@@ -59,8 +59,14 @@ def owner_surface(http: TestClient, auth: dict[str, str]) -> Leaks:
 
 
 def run_all(http: TestClient, a: Any, b: Any) -> Leaks:
-    """Check 1 both ways between two `Client`s of conftest (used by the negative control)."""
+    """Check 1 both ways between two `Client`s of conftest, with two kinds of caller:
+    - the client's own user;
+    - a token for this client carrying the other client's user id (someone who learned a
+      uuid). The platform still answers 404, because the client comes from the token's
+      `client` claim; a resolver that let anything else pick the client would hand this
+      caller the other client's task (200), which the negative control shows."""
     leaks: Leaks = []
     for me, other in ((a, b), (b, a)):
         leaks += cross_client_ids(http, me.auth(), other.task_id)
+        leaks += cross_client_ids(http, me.foreign_auth(other), other.task_id)
     return leaks

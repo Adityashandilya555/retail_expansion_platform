@@ -36,12 +36,22 @@ It exits 0 and prints three codes, for example `MX-0001 (at Legal), MX-0002 (fir
 
 Talking point: each client has its own Operaton and its own database. `pytest -m isolation` proves one client can't reach another's.
 
-## Reset (after, or before a second run)
-- **Cases.** The person running the demo runs this in the pilot vault's SQL editor (Supabase dashboard → SQL). It deletes the demo cases and their values; the release and users stay.
-  ```sql
-  delete from app.cases;           -- cascades to app.submissions and app.case_values
-  delete from app.case_counters;   -- the next case is MX-0001 again
-  ```
-- **Process instances.** Cancel the open ones in the pilot's engine:
-  `DELETE /engine-rest/process-instance/<id>` for each `GET /engine-rest/process-instance?processDefinitionKeyLike=zm_%`, as the service account.
-- **Draft edits.** To start the draft over from the template: `zm-api drafts seed --client <slug> --template matrix-retail`.
+## Run it again
+No reset is needed. The driver always starts three new cases, and the case counter keeps counting, so a second run gives MX-0004 to MX-0006 next to the first three. Every new code is new to the engine, so tasks never mix between runs.
+
+**Don't reset `app.case_counters`.** The engine's earlier instances keep their business keys (MX-0001, …). A restarted counter would hand those codes out again, and the old instances' tasks would show up under the new cases.
+
+## Clean up (after the demo, demo-only client)
+> **Warning:** this deletes every case of the client. Use it only on a client that exists just for the demo, never on one with real work.
+
+1. **Hide the demo cases.** The person running the demo does this in the pilot vault's SQL editor (Supabase dashboard → SQL):
+   ```sql
+   delete from app.cases;   -- cascades to app.submissions and app.case_values; the counter stays
+   ```
+   Tasks of instances without a case row are left out of every list.
+2. **Optionally, end the engine's instances.** The client's engine has no public domain (the worker never gives it one). So this runs from inside the Railway project, for example `railway ssh` into the `api` service, against `http://operaton-<slug>.railway.internal:8080/engine-rest`:
+   1. `GET /process-instance?processDefinitionKeyLike=zm_%`
+   2. `DELETE /process-instance/<id>` for each one.
+
+   It runs as `zm-service`. Its password is the client's sealed secret `service_account_password`; read it in that shell with `zm_api.secrets.unseal`, and don't print or paste it anywhere.
+3. **Draft edits.** To start the draft over from the template: `zm-api drafts seed --client <slug> --template matrix-retail`.
