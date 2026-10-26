@@ -22,6 +22,7 @@ for (const file of files) {
   const text = bytes.toString("utf8");
   const name = relative(dist, file);
   if (text.includes("Every @zm/ui extra") || /DevUi/.test(text)) problems.push(`${name}: contains the /dev/ui preview`);
+  if (text.includes("/dev/layouts") || /DevLayouts/.test(text)) problems.push(`${name}: contains the /dev/layouts preview`);
   if (text.includes("fonts.googleapis.com")) problems.push(`${name}: references fonts.googleapis.com`);
   if (file.endsWith(".js")) jsGzip += gzipSync(bytes).length;
 }
@@ -31,4 +32,4 @@ if (problems.length) {
   for (const p of problems) console.error(`check-build: ${p}`);
   process.exit(1);
 }
-console.log(`check-build: ok (no /dev/ui, no Google Fonts, initial JS ${(jsGzip / 1024).toFixed(1)} kB gzip)`);
+console.log(`check-build: ok (no /dev/ui or /dev/layouts, no Google Fonts, initial JS ${(jsGzip / 1024).toFixed(1)} kB gzip)`);

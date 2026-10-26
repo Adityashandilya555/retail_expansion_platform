@@ -39,7 +39,7 @@ uv run zm-compat --fixtures        # every template and synthetic release still 
 
 pnpm install
 pnpm typecheck && pnpm lint && pnpm test
-pnpm --filter @zm/web dev       # component preview at http://localhost:5173/dev/ui
+pnpm --filter @zm/web dev       # previews: components at http://localhost:5173/dev/ui, blocks at /dev/layouts
 ```
 
 ## Platform API (`apps/api`)

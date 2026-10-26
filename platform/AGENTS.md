@@ -81,7 +81,7 @@ platform/packages/compiler/   workflow.json → BPMN/DMN + form/UI specs → rel
 platform/packages/schema/     workflow.json JSON Schema v1 + Pydantic; TS types generated
 platform/packages/zm-ui/      Mantine theme + client presets, ZmProvider, appearance menu, AppFrame and extras (installed once; previews at /dev/ui)
 platform/packages/zm-forms/   form renderer on Mantine inputs + Ajv 2020
-platform/packages/zm-blocks/  layouts (`standard`, `case`) and blocks, each with manifest.json (name, description, allowed props, no styling) — what the agent can place
+platform/packages/zm-blocks/  layouts (`standard`, `case`) and blocks, each with manifest.json (name, description, allowed props, no styling) — what the agent can place (previews at /dev/layouts)
 platform/packages/templates/  starter workflow.json per template (data folder, not a code package): matrix-retail, qsr; `zm-api templates sync` → platform.templates
 platform/infra/operaton/      Dockerfile (official image or fork build), railway.json, health check
 platform/infra/supabase/      supabase CLI: platform/ migrations (control plane) and client/ migrations (app + operaton roles) applied by the worker
