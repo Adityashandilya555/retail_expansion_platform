@@ -1278,6 +1278,14 @@
             "title": "Show",
             "type": "object"
           },
+          "show_labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The label of each field `show` may hold, from the release.",
+            "title": "Show Labels",
+            "type": "object"
+          },
           "task": {
             "$ref": "#/components/schemas/TaskItem"
           }
@@ -1287,7 +1295,8 @@
           "case",
           "editable",
           "form",
-          "show"
+          "show",
+          "show_labels"
         ],
         "title": "TaskDetail",
         "type": "object"

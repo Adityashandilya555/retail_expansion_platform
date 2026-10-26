@@ -198,6 +198,12 @@ def hidden_fields(workflow: Mapping[str, Any], levels: Mapping[str, int]) -> set
     return placed - shown
 
 
+def field_labels(workflow: Mapping[str, Any], fields: Iterable[str]) -> dict[str, str]:
+    """Each field's label in the release (a task's `show` panel, #92); its key when it has none."""
+    known = workflow.get("fields", {})
+    return {f: known.get(f, {}).get("label") or f for f in fields}
+
+
 def _validate(
     form: Mapping[str, Any], values: Mapping[str, Any], assignees: Iterable[str] = ()
 ) -> None:
