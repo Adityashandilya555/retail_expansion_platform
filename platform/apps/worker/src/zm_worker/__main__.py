@@ -93,6 +93,50 @@ def migrate(argv: list[str]) -> None:
     log.info("vault migrated: %s", ", ".join(applied) or "already up to date")
 
 
+def provision_local(argv: list[str]) -> None:
+    """`zm-worker provision-local <slug> --dsn … --operaton-url …`: register a client on local
+    resources (#31). Role passwords from ZM_API_DB_PASSWORD / ZM_ENGINE_DB_PASSWORD (as
+    vault-migrate), the service account's from ZM_ADMIN_USER_PASSWORD; needs
+    PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY."""
+    from zm_worker.provision import local
+
+    parser = argparse.ArgumentParser(prog="zm-worker provision-local")
+    parser.add_argument("slug")
+    parser.add_argument("--dsn", required=True, help="the client's vault as its superuser")
+    parser.add_argument("--operaton-url", required=True, help="the client's /engine-rest URL")
+    parser.add_argument("--template", help="template key (default by slug, e.g. qsr-local → qsr)")
+    parser.add_argument("--name", help="display name (default from the slug)")
+    parser.add_argument("--workspace-code", help="sign-in code (default: the slug, upper case)")
+    args = parser.parse_args(argv)
+    template = args.template or local.DEFAULT_TEMPLATES.get(args.slug)
+    if template is None:
+        parser.error("--template is needed for this slug")
+    env = {role: f"{role.upper()}_DB_PASSWORD" for role in vault_migrate.ROLES}
+    needed = [*env.values(), "ZM_ADMIN_USER_PASSWORD", "PLATFORM_DATABASE_URL"]
+    needed.append("SECRETS_ENCRYPTION_KEY")
+    missing = [var for var in needed if not os.environ.get(var)]
+    if missing:
+        parser.error(f"set {', '.join(missing)}")
+    client = local.LocalClient(
+        slug=args.slug,
+        dsn=args.dsn,
+        operaton_url=args.operaton_url,
+        template=template,
+        name=args.name or args.slug.replace("-", " ").title(),
+        workspace_code=args.workspace_code or args.slug.upper(),
+        passwords={role: os.environ[var] for role, var in env.items()},
+        service_password=os.environ["ZM_ADMIN_USER_PASSWORD"],
+    )
+    applied = local.provision(os.environ["PLATFORM_DATABASE_URL"], client)
+    log.info(
+        "provisioned %s locally (template %s, code %s); migrations: %s",
+        client.slug,
+        client.template,
+        client.workspace_code,
+        ", ".join(applied) or "already up to date",
+    )
+
+
 def deprovision(argv: list[str]) -> None:
     """`zm-worker deprovision <slug> --yes`: delete a test client's Railway service and Supabase
     project (S2-02b). Never called automatically; the registry row stays, as `suspended`."""
@@ -120,6 +164,9 @@ def main(argv: list[str] | None = None) -> None:
     if args[:1] == ["vault-migrate"]:
         migrate(args[1:])
         return
+    if args[:1] == ["provision-local"]:
+        provision_local(args[1:])
+        return
     if args[:1] == ["deprovision"]:
         deprovision(args[1:])
         return
@@ -131,7 +178,8 @@ def main(argv: list[str] | None = None) -> None:
     if args:
         sys.exit(
             f"unknown command {args[0]!r}; usage: zm-worker"
-            " [vault-migrate --dsn URL | reconcile | deprovision SLUG --yes]"
+            " [vault-migrate --dsn URL | provision-local SLUG --dsn URL --operaton-url URL"
+            " | reconcile | deprovision SLUG --yes]"
         )
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):

@@ -10,12 +10,19 @@ if command -v supabase >/dev/null; then supabase=(supabase); else supabase=(npx 
 
 export ZM_ENGINE_DB_PASSWORD="${ZM_ENGINE_DB_PASSWORD:-zm-engine-local}"
 export ZM_API_DB_PASSWORD="${ZM_API_DB_PASSWORD:-zm-api-local}"
+# qsr-local (pg-iso, operaton-iso) has its own credentials (#31)
+ZM_ISO_ENGINE_DB_PASSWORD="${ZM_ISO_ENGINE_DB_PASSWORD:-zm-engine-iso-local}"
+ZM_ISO_API_DB_PASSWORD="${ZM_ISO_API_DB_PASSWORD:-zm-api-iso-local}"
+export ZM_ISO_ENGINE_DB_PASSWORD ZM_ISO_API_DB_PASSWORD
 
 "${supabase[@]}" --workdir infra start
 docker compose up -d --wait pg-iso
 uv run --no-build zm-worker vault-migrate --dsn postgresql://postgres:postgres@localhost:54322/postgres
-uv run --no-build zm-worker vault-migrate --dsn "postgresql://postgres:postgres@localhost:${PG_ISO_PORT:-5434}/postgres"
+ZM_ENGINE_DB_PASSWORD="$ZM_ISO_ENGINE_DB_PASSWORD" ZM_API_DB_PASSWORD="$ZM_ISO_API_DB_PASSWORD" \
+  uv run --no-build zm-worker vault-migrate --dsn "postgresql://postgres:postgres@localhost:${PG_ISO_PORT:-5434}/postgres"
 docker compose up -d --build --wait
+# an engine created before #31 still has the shared service password: rotate it (idempotent)
+uv run --no-build python scripts/local_iso_password.py
 
 cat <<'URLS'
 
