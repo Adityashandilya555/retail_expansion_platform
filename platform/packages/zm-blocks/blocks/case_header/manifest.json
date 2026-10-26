@@ -1,0 +1,14 @@
+{
+  "name": "case_header",
+  "version": 1,
+  "description": "The top of a case page: the code, the title (the start field `title_field`, else the case's own title), its status, the start fields in `fields`, and the full stage tracker with a text label for every stage.",
+  "regions": ["header"],
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "title_field": { "type": "string" },
+      "fields": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}
