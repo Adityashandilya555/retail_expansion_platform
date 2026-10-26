@@ -262,6 +262,34 @@ class OperatonClient:
     async def history_task(self, task_id: str) -> list[Json]:
         return await self._call("history_task", "GET", "history/task", params={"taskId": task_id})
 
+    async def history_variables(
+        self, instance_ids: list[str], names: list[str], *, max_results: int = 20000
+    ) -> list[Json]:
+        """`POST /history/variable-instance` for many process instances and variable names in one
+        call (HistoricVariableInstanceQueryDto.java:67,71); a body, not a query string."""
+        if not instance_ids or not names:
+            return []
+        body = {"processInstanceIdIn": instance_ids, "variableNameIn": names}
+        params = {"maxResults": max_results, "deserializeValues": "false"}
+        return await self._call(
+            "history_variables", "POST", "history/variable-instance", params=params, json=body
+        )
+
+    async def history_activities(
+        self, instance_id: str, activity_type: str = "callActivity"
+    ) -> list[Json]:
+        """`GET /history/activity-instance` of one process instance: start/end times and
+        `canceled` per activity (HistoricActivityInstanceQueryDto.java:70,76)."""
+        params = {
+            "processInstanceId": instance_id,
+            "activityType": activity_type,
+            "sortBy": "startTime",
+            "sortOrder": "asc",
+        }
+        return await self._call(
+            "history_activities", "GET", "history/activity-instance", params=params
+        )
+
     # Identity (reads first: creating a user or group twice is a 400, a membership twice a 500)
     async def user_profile(self, user_id: str) -> Json:
         return await self._call("user_profile", "GET", f"user/{_id(user_id)}/profile")

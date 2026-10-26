@@ -183,13 +183,21 @@ Each step is idempotent, and every generated secret is sealed into `clients.secr
 
 For test clients only, `zm-worker deprovision <slug> --yes` deletes `operaton-<slug>` and the Supabase project, marks the client `suspended`, and takes its unfinished steps out of the queue; the worker never claims a suspended client's steps. Nothing calls it automatically.
 
+### Cases read API (#91)
+| Endpoint | What it returns |
+|---|---|
+| `GET /app/cases?flow=&status=open\|completed\|closed` | Every case (newest first, up to 500): `{code, flow, title, status, stages[{key, name, department, state, started_at, ended_at}], fields, open_tasks, my_tasks, created_at, release_version}`; stage times are set for closed cases (the detail always has them). |
+| `GET /app/cases/{code}` | The same, plus stage times, the start form's `sections` as the user sees them, the open `tasks` they can see (`can_act`), and the `history` of committed decisions. Another client's code is 404. |
+
+**Stage states** come from Operaton's history of the main process: `case_status` and one `m_<stage>` per stage, set by the compiler. The list makes one variable request for all cases. A closed case also reads its call activities' history, so a stage the close cancelled shows `closed`, not `done`. Field values follow level masking; everyone in the client sees every case (scope rules: #56).
+
 ## Isolation and compatibility (#31)
 **Two local clients**, each with its own vault, engine and credentials (`ZM_ISO_*` for qsr-local):
 - `pilot-local`: Matrix Retail, on the Supabase CLI vault and operaton-pilot;
 - `qsr-local`: QSR, on pg-iso and operaton-iso.
 
 `zm-worker provision-local <slug> --dsn <vault superuser DSN> --operaton-url <engine>/engine-rest` registers a client on local resources. It runs the provisioning steps minus the cloud calls: migrations, the registry row, seed-draft. `pytest -m isolation` (`tests/isolation/`, CI job `zm-isolation`) does this for both clients, publishes v1, and checks:
-1. the other client's task ids, cases (once #91 lands) and UI are out of reach;
+1. the other client's task ids, cases and UI are out of reach;
 2. a forged token is refused;
 3. each engine holds only its own client's processes;
 4. database credentials don't work across vaults;
