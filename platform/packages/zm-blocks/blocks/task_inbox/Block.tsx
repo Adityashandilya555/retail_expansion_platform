@@ -21,9 +21,14 @@ export function TaskInbox({ props, ui }: BlockProps) {
   const tasks = useQuery({
     queryKey: ["app", "tasks", scope, flow ?? null],
     queryFn: async () => {
-      const { data } = await api.GET("/app/tasks", { params: { query: { scope, flow } } });
-      if (!data) throw new Error("GET /app/tasks failed");
-      return data;
+      const ask = (s: "mine" | "team") => api.GET("/app/tasks", { params: { query: { scope: s, flow } } });
+      let shown = scope;
+      let { data, response } = await ask(scope);
+      // team tasks are for level 2 and above (#26), but GET /app/ui sends department pages to
+      // every level: below L2 the page shows the user's own work instead of an error
+      if (scope === "team" && response.status === 403) ({ data, response } = await ask((shown = "mine")));
+      if (!data) throw new Error(`GET /app/tasks answered ${response.status}`);
+      return { scope: shown, rows: data };
     },
   });
 
@@ -39,8 +44,8 @@ export function TaskInbox({ props, ui }: BlockProps) {
   };
   const grouped = group_by === "case";
   const shown = (columns ?? (grouped ? ["task", "stage", "created"] : ["case", "task", "stage", "created"])).map((k) => all[k]);
-  const title = scope === "team" ? "Team queue" : "My work";
-  const rows = tasks.data ?? [];
+  const title = (tasks.data?.scope ?? scope) === "team" ? "Team queue" : "My work";
+  const rows = tasks.data?.rows ?? [];
 
   const table = (caption: ReactNode, items: TaskItem[], key?: string) => (
     <DataTable

@@ -28,7 +28,7 @@ const task = (over: Partial<TaskItem> = {}): TaskItem => ({
 });
 
 /** Stubs `GET /app/tasks`; returns the query strings it was called with. */
-function tasksApi(answer: () => Response | Promise<Response>): string[] {
+function tasksApi(answer: (query: URLSearchParams) => Response | Promise<Response>): string[] {
   const queries: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -36,7 +36,7 @@ function tasksApi(answer: () => Response | Promise<Response>): string[] {
       const url = new URL(request.url);
       if (`${request.method} ${url.pathname}` !== "GET /app/tasks") return problem(404);
       queries.push(url.searchParams.toString());
-      return answer();
+      return answer(url.searchParams);
     }),
   );
   return queries;
@@ -96,6 +96,15 @@ test("Legal L2's team queue shows the new approval task under its site", async (
   expect(cells(site).map((row) => row[0])).toEqual(["Legal approval"]);
   expect(cells(screen.getByRole("table", { name: /MX-0001/ })).map((row) => row[0])).toEqual(["DD checklist"]);
   expect(queries).toEqual(["scope=team"]);
+});
+
+test("below level 2 a team-scoped inbox shows the user's own work, not an error (team tasks are L2+)", async () => {
+  const queries = tasksApi((q) => (q.get("scope") === "team" ? problem(403) : json([task()])));
+  draw({ scope: "team" });
+  expect(await screen.findByRole("heading", { name: "My work" })).toBeDefined();
+  expect(cells(await screen.findByRole("table", { name: /MX-0001/ })).map((row) => row[0])).toEqual(["DD checklist"]);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(queries).toEqual(["scope=team", "scope=mine"]);
 });
 
 test('props {"scope": "everyone"} fail the manifest: the placeholder shows and the API is never called', () => {
