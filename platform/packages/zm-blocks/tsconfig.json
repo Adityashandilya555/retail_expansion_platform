@@ -4,5 +4,5 @@
     "outDir": "dist/types",
     "types": ["vite/client"]
   },
-  "include": ["src", "layouts", "layouts/**/*.json", "vitest.config.ts"]
+  "include": ["src", "layouts", "layouts/**/*.json", "blocks", "blocks/**/*.json", "vitest.config.ts"]
 }

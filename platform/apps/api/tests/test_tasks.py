@@ -32,11 +32,10 @@ from zm_worker.reconcile import reconcile_all
 
 from .conftest import JWT_SECRET, bearer, token
 from .test_publish import (
-    ENGINES,
     INI,
     PLATFORM_URL,
-    SERVICE_PASSWORD,
     VAULTS,
+    engine_client,
     platform_sql,
     register,
     vault_sql,
@@ -122,7 +121,7 @@ def clear_vaults() -> None:
 
 
 def op(engine: str) -> httpx.Client:
-    return httpx.Client(base_url=ENGINES[engine], auth=("zm-service", SERVICE_PASSWORD))
+    return engine_client(engine)
 
 
 @dataclass

@@ -40,10 +40,12 @@ PLATFORM_URL = (
 )
 ZM_API_PASSWORD = os.environ.get("ZM_API_DB_PASSWORD", "zm-api-local")
 PILOT_DSN = f"postgresql://zm_api:{ZM_API_PASSWORD}@localhost:54322/postgres"
-ISO_DSN = f"postgresql://zm_api:{ZM_API_PASSWORD}@localhost:{port('PG_ISO_PORT', 5434)}/postgres"
+ISO_API_PASSWORD = os.environ.get("ZM_ISO_API_DB_PASSWORD", "zm-api-iso-local")
+ISO_DSN = f"postgresql://zm_api:{ISO_API_PASSWORD}@localhost:{port('PG_ISO_PORT', 5434)}/postgres"
 PILOT_OPERATON = f"http://localhost:{port('OPERATON_PILOT_PORT', 8080)}/engine-rest"
 ISO_OPERATON = f"http://localhost:{port('OPERATON_ISO_PORT', 8081)}/engine-rest"
 SERVICE = ("zm-service", os.environ.get("ZM_ADMIN_USER_PASSWORD", "zm-local-only"))
+ISO_SERVICE_PASSWORD = os.environ.get("ZM_ISO_ADMIN_USER_PASSWORD", "zm-iso-local-only")
 INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 RUN = uuid.uuid4().hex[:8]
 
@@ -64,8 +66,10 @@ def env() -> dict[str, str]:
     os.environ.update(saved)
 
 
-async def add_client(slug: str, name: str, code: str, dsn: str, operaton: str) -> None:
-    sealed = secrets.seal({"zm_api_dsn": dsn, "service_account_password": SERVICE[1]})
+async def add_client(
+    slug: str, name: str, code: str, dsn: str, operaton: str, service_password: str = SERVICE[1]
+) -> None:
+    sealed = secrets.seal({"zm_api_dsn": dsn, "service_account_password": service_password})
     engine = create_async_engine(PLATFORM_URL)
     try:
         async with engine.begin() as conn:
@@ -113,7 +117,9 @@ def world(env: dict[str, str], tmp_path_factory: pytest.TempPathFactory) -> dict
 
     async def go() -> dict:
         await add_client(f"pilot-{RUN}", f"Pilot {RUN}", env["pilot"], PILOT_DSN, PILOT_OPERATON)
-        await add_client(f"qsr-{RUN}", f"QSR {RUN}", env["qsr"], ISO_DSN, ISO_OPERATON)
+        await add_client(
+            f"qsr-{RUN}", f"QSR {RUN}", env["qsr"], ISO_DSN, ISO_OPERATON, ISO_SERVICE_PASSWORD
+        )
         resolver = Resolver(PlatformRegistry())
         try:
             ctx = await resolver.resolve(f"pilot-{RUN}")

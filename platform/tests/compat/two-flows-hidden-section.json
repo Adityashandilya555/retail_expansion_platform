@@ -1,0 +1,2692 @@
+{
+  "schema_version": 1,
+  "org": {
+    "departments": [
+      {
+        "key": "bd",
+        "name": "Business development",
+        "levels": [
+          {
+            "n": 1,
+            "name": "Business development Executive"
+          },
+          {
+            "n": 2,
+            "name": "Business development Supervisor"
+          }
+        ]
+      },
+      {
+        "key": "legal",
+        "name": "Legal",
+        "levels": [
+          {
+            "n": 1,
+            "name": "Legal Executive"
+          },
+          {
+            "n": 2,
+            "name": "Legal Supervisor"
+          }
+        ]
+      },
+      {
+        "key": "design",
+        "name": "Design",
+        "levels": [
+          {
+            "n": 1,
+            "name": "Design Executive"
+          },
+          {
+            "n": 2,
+            "name": "Design Supervisor"
+          }
+        ]
+      },
+      {
+        "key": "pe",
+        "name": "Project estimation",
+        "levels": [
+          {
+            "n": 1,
+            "name": "Project estimation Executive"
+          },
+          {
+            "n": 2,
+            "name": "Project estimation Supervisor"
+          }
+        ]
+      },
+      {
+        "key": "project",
+        "name": "Projects",
+        "levels": [
+          {
+            "n": 1,
+            "name": "Projects Executive"
+          },
+          {
+            "n": 2,
+            "name": "Projects Supervisor"
+          }
+        ]
+      },
+      {
+        "key": "nso",
+        "name": "New store opening",
+        "levels": [
+          {
+            "n": 1,
+            "name": "New store opening Executive"
+          },
+          {
+            "n": 2,
+            "name": "New store opening Supervisor"
+          }
+        ]
+      },
+      {
+        "key": "management",
+        "name": "Management",
+        "levels": [
+          {
+            "n": 1,
+            "name": "Business admin"
+          }
+        ]
+      }
+    ]
+  },
+  "flows": [
+    {
+      "key": "store_launch",
+      "name": "Matrix BD - Site lifecycle",
+      "case_label": "Site",
+      "case_code": {
+        "pattern": "MX-{seq:4}"
+      },
+      "start": {
+        "performers": [
+          {
+            "department": "bd",
+            "level": 1,
+            "or_above": true
+          }
+        ],
+        "form": "start"
+      },
+      "stages": [
+        {
+          "key": "bd_qualification",
+          "name": "BD - Site qualification",
+          "department": "bd",
+          "after": [],
+          "tasks": [
+            {
+              "id": "bd_review_draft",
+              "name": "Review site draft",
+              "performer": {
+                "department": "bd",
+                "level": 2
+              },
+              "outcomes": [
+                {
+                  "id": "shortlist",
+                  "label": "Shortlist"
+                },
+                {
+                  "id": "reject",
+                  "label": "Reject",
+                  "to": "@close",
+                  "comment_required": true
+                },
+                {
+                  "id": "archive",
+                  "label": "Archive",
+                  "to": "@close"
+                }
+              ],
+              "skip_if": {
+                "initiator_at_least": {
+                  "department": "bd",
+                  "level": 2
+                }
+              }
+            },
+            {
+              "id": "bd_site_details",
+              "name": "Submit site details",
+              "performer": {
+                "initiator": true
+              },
+              "form": "bd_site_details"
+            },
+            {
+              "id": "bd_approve_details",
+              "name": "Approve site details",
+              "performer": {
+                "department": "bd",
+                "level": 2
+              },
+              "show": [
+                "store_model",
+                "carpet_area",
+                "frontage_ft",
+                "monthly_rent",
+                "nearest_competitor_m",
+                "site_photos"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "bd_site_details",
+                  "comment_required": true
+                },
+                {
+                  "id": "reject",
+                  "label": "Reject",
+                  "to": "@close",
+                  "comment_required": true
+                },
+                {
+                  "id": "archive",
+                  "label": "Archive",
+                  "to": "@close"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "bd_loi",
+          "name": "BD - LOI",
+          "department": "bd",
+          "after": [
+            "bd_qualification"
+          ],
+          "tasks": [
+            {
+              "id": "bd_upload_loi",
+              "name": "Upload LOI",
+              "performer": {
+                "initiator": true
+              },
+              "form": "bd_upload_loi",
+              "show": [
+                "monthly_rent"
+              ]
+            },
+            {
+              "id": "bd_send_legal",
+              "name": "Send to Legal and Finance",
+              "performer": {
+                "department": "bd",
+                "level": 2
+              },
+              "show": [
+                "loi_file",
+                "loi_signed_on",
+                "monthly_rent"
+              ],
+              "outcomes": [
+                {
+                  "id": "send",
+                  "label": "Send to Legal + Finance"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "bd_upload_loi",
+                  "comment_required": true
+                },
+                {
+                  "id": "reject",
+                  "label": "Reject",
+                  "to": "@close",
+                  "comment_required": true
+                },
+                {
+                  "id": "archive",
+                  "label": "Archive",
+                  "to": "@close"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "legal",
+          "name": "Legal - Due diligence",
+          "department": "legal",
+          "after": [
+            "bd_loi"
+          ],
+          "tasks": [
+            {
+              "id": "legal_dd_checklist",
+              "name": "Fill DD checklist",
+              "performer": {
+                "department": "legal",
+                "level": 1
+              },
+              "form": "legal_dd_checklist",
+              "show": [
+                "loi_file"
+              ]
+            },
+            {
+              "id": "legal_dd_verdict",
+              "name": "Finalise DD verdict",
+              "performer": {
+                "department": "legal",
+                "level": 2
+              },
+              "show": [
+                "dd_title_doc",
+                "dd_sanctioned_plan",
+                "dd_oc_cc",
+                "dd_commercial_use",
+                "dd_property_tax",
+                "dd_electricity",
+                "dd_report",
+                "dd_notes"
+              ],
+              "outcomes": [
+                {
+                  "id": "positive",
+                  "label": "Positive",
+                  "to": "legal_agreement"
+                },
+                {
+                  "id": "negative",
+                  "label": "Negative",
+                  "to": "legal_change_request"
+                }
+              ]
+            },
+            {
+              "id": "legal_change_request",
+              "name": "Raise change request?",
+              "performer": {
+                "department": "bd",
+                "level": 2
+              },
+              "form": "legal_change_request",
+              "show": [
+                "dd_notes",
+                "dd_report"
+              ],
+              "outcomes": [
+                {
+                  "id": "raise",
+                  "label": "Raise change request",
+                  "to": "legal_review_cr"
+                },
+                {
+                  "id": "accept",
+                  "label": "Accept rejection",
+                  "to": "@close"
+                }
+              ]
+            },
+            {
+              "id": "legal_review_cr",
+              "name": "Review change request",
+              "performer": {
+                "department": "legal",
+                "level": 2
+              },
+              "show": [
+                "cr_details"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve, re-finalise verdict",
+                  "to": "legal_dd_verdict"
+                },
+                {
+                  "id": "reject",
+                  "label": "Reject",
+                  "to": "legal_change_request",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "legal_agreement",
+              "name": "Save agreement",
+              "performer": {
+                "department": "legal",
+                "level": 2
+              },
+              "form": "legal_agreement"
+            },
+            {
+              "id": "legal_licensing",
+              "name": "Update licensing (5 licences)",
+              "performer": {
+                "department": "legal",
+                "level": 2
+              },
+              "form": "legal_licensing",
+              "route": [
+                {
+                  "when": "!(lic_fssai && lic_health_trade && lic_shops_estab && lic_fire_noc && lic_storage)",
+                  "to": "legal_licensing",
+                  "label": "Some pending"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "finance",
+          "name": "Finance - CA code",
+          "department": "bd",
+          "after": [
+            "bd_loi"
+          ],
+          "tasks": [
+            {
+              "id": "fin_ca_entry",
+              "name": "Enter CA code, KYC and amount",
+              "performer": {
+                "initiator": true
+              },
+              "form": "fin_ca_entry"
+            },
+            {
+              "id": "fin_supervisor",
+              "name": "Supervisor finance review",
+              "performer": {
+                "department": "bd",
+                "level": 2
+              },
+              "show": [
+                "ca_code",
+                "kyc_done",
+                "ca_amount",
+                "kyc_file"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "fin_ca_entry",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "fin_admin",
+              "name": "Admin finance approval",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "show": [
+                "ca_code",
+                "kyc_done",
+                "ca_amount",
+                "kyc_file",
+                "monthly_rent"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "fin_ca_entry",
+                  "comment_required": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "design",
+          "name": "Design",
+          "department": "design",
+          "after": [
+            "legal",
+            "finance"
+          ],
+          "tasks": [
+            {
+              "id": "design_allocate",
+              "name": "Allocate design executive",
+              "performer": {
+                "department": "design",
+                "level": 2
+              },
+              "form": "design_allocate",
+              "show": [
+                "store_model",
+                "carpet_area",
+                "site_photos"
+              ]
+            },
+            {
+              "id": "design_recce",
+              "name": "Upload recce",
+              "performer": {
+                "from_field": "design_exec"
+              },
+              "form": "design_recce",
+              "show": [
+                "carpet_area",
+                "site_photos"
+              ]
+            },
+            {
+              "id": "design_recce_review",
+              "name": "Review recce",
+              "performer": {
+                "department": "design",
+                "level": 2
+              },
+              "show": [
+                "recce_file"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "design_recce",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "design_2d",
+              "name": "Upload 2D layout",
+              "performer": {
+                "from_field": "design_exec"
+              },
+              "form": "design_2d"
+            },
+            {
+              "id": "design_2d_review",
+              "name": "Review 2D",
+              "performer": {
+                "department": "design",
+                "level": 2
+              },
+              "show": [
+                "layout2d"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "design_2d",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "design_2d_admin",
+              "name": "Admin approve 2D",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "show": [
+                "layout2d"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "design_2d",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "design_3d",
+              "name": "Upload 3D",
+              "performer": {
+                "from_field": "design_exec"
+              },
+              "form": "design_3d"
+            },
+            {
+              "id": "design_3d_review",
+              "name": "Review 3D",
+              "performer": {
+                "department": "design",
+                "level": 2
+              },
+              "show": [
+                "render3d"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "design_3d",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "design_gfc",
+              "name": "GFC approval (Good For Construction)",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "show": [
+                "layout2d",
+                "render3d"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "design_3d",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "design_boq",
+              "name": "Upload BOQ and estimate",
+              "performer": {
+                "from_field": "design_exec"
+              },
+              "form": "design_boq"
+            },
+            {
+              "id": "design_boq_review",
+              "name": "Review BOQ",
+              "performer": {
+                "department": "design",
+                "level": 2
+              },
+              "show": [
+                "boq_file",
+                "boq_estimate"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "design_boq",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "design_final",
+              "name": "Approve design completion",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "show": [
+                "boq_file",
+                "boq_estimate"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "design_boq",
+                  "comment_required": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "pe_budget",
+          "name": "Project Excellence - GFC budget",
+          "department": "pe",
+          "after": [
+            "design"
+          ],
+          "tasks": [
+            {
+              "id": "pe_delegate",
+              "name": "Assign budget owner",
+              "performer": {
+                "department": "pe",
+                "level": 2
+              },
+              "form": "pe_delegate",
+              "show": [
+                "boq_estimate"
+              ]
+            },
+            {
+              "id": "pe_fill",
+              "name": "Fill GFC budget (11 heads)",
+              "performer": {
+                "from_field": "pe_exec"
+              },
+              "form": "pe_fill",
+              "show": [
+                "boq_file",
+                "boq_estimate"
+              ]
+            },
+            {
+              "id": "pe_review",
+              "name": "Review GFC budget",
+              "performer": {
+                "department": "pe",
+                "level": 2
+              },
+              "show": [
+                "bud_professional_fees",
+                "bud_hvac",
+                "bud_furniture",
+                "bud_civil",
+                "bud_kitchen",
+                "bud_branding",
+                "bud_crockery",
+                "bud_utilities",
+                "bud_licencing",
+                "bud_bd_cost",
+                "bud_misc"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "pe_fill",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "pe_admin",
+              "name": "Approve GFC budget",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "show": [
+                "boq_estimate",
+                "bud_professional_fees",
+                "bud_hvac",
+                "bud_furniture",
+                "bud_civil",
+                "bud_kitchen",
+                "bud_branding",
+                "bud_crockery",
+                "bud_utilities",
+                "bud_licencing",
+                "bud_bd_cost",
+                "bud_misc"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "pe_fill",
+                  "comment_required": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "project",
+          "name": "Project execution",
+          "department": "project",
+          "after": [
+            "pe_budget"
+          ],
+          "tasks": [
+            {
+              "id": "prj_allocate",
+              "name": "Propose project initialization",
+              "performer": {
+                "department": "project",
+                "level": 2
+              },
+              "form": "prj_allocate",
+              "show": [
+                "boq_estimate",
+                "bud_civil",
+                "bud_kitchen",
+                "bud_hvac"
+              ]
+            },
+            {
+              "id": "prj_accept",
+              "name": "Accept project allocation",
+              "performer": {
+                "from_field": "project_exec"
+              },
+              "outcomes": [
+                {
+                  "id": "accept",
+                  "label": "Accept"
+                },
+                {
+                  "id": "decline",
+                  "label": "Decline",
+                  "to": "prj_allocate"
+                }
+              ]
+            },
+            {
+              "id": "prj_expected",
+              "name": "Submit expected completion",
+              "performer": {
+                "from_field": "project_exec"
+              },
+              "form": "prj_expected"
+            },
+            {
+              "id": "prj_expected_review",
+              "name": "Approve expected completion",
+              "performer": {
+                "department": "project",
+                "level": 2
+              },
+              "show": [
+                "expected_completion"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "prj_expected",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "prj_mid_visit",
+              "name": "Set mid-project visit",
+              "performer": {
+                "department": "project",
+                "level": 2
+              },
+              "form": "prj_mid_visit"
+            },
+            {
+              "id": "prj_inspection",
+              "name": "Submit inspection and quality audit",
+              "performer": {
+                "from_field": "project_exec"
+              },
+              "form": "prj_inspection",
+              "show": [
+                "mid_visit_date"
+              ]
+            },
+            {
+              "id": "prj_qa_review",
+              "name": "Review quality audit",
+              "performer": {
+                "department": "project",
+                "level": 2
+              },
+              "show": [
+                "inspection_date",
+                "qa_report"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "prj_inspection",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "prj_qa_signoff",
+              "name": "Quality audit sign-off",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "show": [
+                "inspection_date",
+                "qa_report"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "prj_inspection",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "prj_complete",
+              "name": "Mark final completion",
+              "performer": {
+                "from_field": "project_exec"
+              },
+              "form": "prj_complete"
+            },
+            {
+              "id": "prj_push_nso",
+              "name": "Push to NSO handover",
+              "performer": {
+                "department": "project",
+                "level": 2
+              },
+              "show": [
+                "completion_notes",
+                "qa_report"
+              ]
+            }
+          ]
+        },
+        {
+          "key": "nso",
+          "name": "NSO - Opening readiness",
+          "department": "nso",
+          "after": [
+            "project"
+          ],
+          "tasks": [
+            {
+              "id": "nso_comms",
+              "name": "Float launch communications",
+              "performer": {
+                "department": "nso",
+                "level": 1
+              },
+              "form": "nso_comms"
+            },
+            {
+              "id": "nso_readiness",
+              "name": "Complete readiness checks",
+              "performer": {
+                "department": "nso",
+                "level": 1
+              },
+              "form": "nso_readiness",
+              "show": [
+                "lic_fssai",
+                "lic_health_trade",
+                "lic_shops_estab",
+                "lic_fire_noc",
+                "lic_storage",
+                "completion_notes"
+              ]
+            },
+            {
+              "parallel": [
+                {
+                  "id": "nso_signoff",
+                  "name": "NSO sign-off",
+                  "performer": {
+                    "department": "nso",
+                    "level": 2
+                  },
+                  "show": [
+                    "staff_hired",
+                    "pos_ready",
+                    "inventory_stocked"
+                  ]
+                },
+                {
+                  "id": "nso_project_signoff",
+                  "name": "Project sign-off for NSO",
+                  "performer": {
+                    "department": "project",
+                    "level": 2
+                  },
+                  "show": [
+                    "staff_hired",
+                    "pos_ready",
+                    "inventory_stocked"
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "nso_launch_ready",
+              "name": "Final approval: launch ready",
+              "performer": {
+                "department": "nso",
+                "level": 2
+              }
+            }
+          ]
+        },
+        {
+          "key": "launch",
+          "name": "Launch validation",
+          "department": "management",
+          "after": [
+            "nso"
+          ],
+          "tasks": [
+            {
+              "id": "launch_send",
+              "name": "Review details, send for review",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "form": "launch_send",
+              "show": [
+                "monthly_rent",
+                "agreement_status",
+                "ca_amount",
+                "boq_estimate"
+              ]
+            },
+            {
+              "id": "launch_exec_verdict",
+              "name": "Executive verdict",
+              "performer": {
+                "initiator": true
+              },
+              "form": "launch_exec_verdict",
+              "show": [
+                "rent_terms"
+              ]
+            },
+            {
+              "id": "launch_sup_verdict",
+              "name": "Supervisor verdict and rent terms",
+              "performer": {
+                "department": "bd",
+                "level": 2
+              },
+              "form": "launch_sup_verdict",
+              "show": [
+                "exec_verdict",
+                "exec_comment"
+              ]
+            },
+            {
+              "id": "launch_confirm",
+              "name": "Confirm launch terms",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "show": [
+                "exec_verdict",
+                "sup_verdict",
+                "rent_terms"
+              ]
+            },
+            {
+              "id": "launch_go",
+              "name": "Launch site",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "form": "launch_go"
+            }
+          ]
+        },
+        {
+          "key": "closure",
+          "name": "Financial closure",
+          "department": "management",
+          "after": [
+            "launch"
+          ],
+          "tasks": [
+            {
+              "id": "fc_send",
+              "name": "Send for financial closure",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "show": [
+                "launch_date"
+              ]
+            },
+            {
+              "id": "fc_actuals",
+              "name": "Enter actuals vs GFC",
+              "performer": {
+                "from_field": "project_exec"
+              },
+              "form": "fc_actuals",
+              "show": [
+                "bud_civil",
+                "bud_kitchen",
+                "bud_hvac",
+                "bud_furniture"
+              ]
+            },
+            {
+              "id": "fc_review",
+              "name": "Review closure actuals",
+              "performer": {
+                "department": "project",
+                "level": 2
+              },
+              "show": [
+                "actual_total",
+                "actuals_sheet",
+                "boq_estimate"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "fc_actuals",
+                  "comment_required": true
+                }
+              ]
+            },
+            {
+              "id": "fc_admin",
+              "name": "Approve financial closure",
+              "performer": {
+                "department": "management",
+                "level": 1
+              },
+              "show": [
+                "actual_total",
+                "actuals_sheet",
+                "boq_estimate"
+              ],
+              "outcomes": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "send_back",
+                  "label": "Send back",
+                  "to": "fc_actuals",
+                  "comment_required": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "audit",
+      "name": "Store audit",
+      "case_label": "Audit",
+      "case_code": {
+        "pattern": "AU-{seq:3}"
+      },
+      "start": {
+        "performers": [
+          {
+            "department": "bd",
+            "level": 1,
+            "or_above": true
+          }
+        ],
+        "form": "audit_start"
+      },
+      "stages": [
+        {
+          "key": "audit_visit",
+          "name": "Visit",
+          "department": "bd",
+          "tasks": [
+            {
+              "id": "audit_check",
+              "name": "Check the store",
+              "performer": {
+                "department": "bd",
+                "level": 1
+              },
+              "form": "audit_check",
+              "outcomes": [
+                {
+                  "id": "pass",
+                  "label": "Pass"
+                },
+                {
+                  "id": "fail",
+                  "label": "Fail"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "fields": {
+    "site_name": {
+      "type": "text",
+      "label": "Site name",
+      "required": true
+    },
+    "city": {
+      "type": "text",
+      "label": "City",
+      "required": true
+    },
+    "address": {
+      "type": "textarea",
+      "label": "Address",
+      "required": true
+    },
+    "store_model": {
+      "type": "select",
+      "label": "Store model",
+      "options": [
+        {
+          "id": "btc_cafe",
+          "label": "BTC Cafe"
+        },
+        {
+          "id": "btc_cafe_plus",
+          "label": "BTC Cafe+"
+        },
+        {
+          "id": "kiosk",
+          "label": "Kiosk"
+        }
+      ],
+      "required": true
+    },
+    "carpet_area": {
+      "type": "number",
+      "label": "Carpet area (sq ft)",
+      "required": true
+    },
+    "frontage_ft": {
+      "type": "number",
+      "label": "Frontage (ft)",
+      "required": true
+    },
+    "monthly_rent": {
+      "type": "number",
+      "label": "Monthly rent (INR)",
+      "required": true
+    },
+    "nearest_competitor_m": {
+      "type": "number",
+      "label": "Nearest competitor (m)",
+      "required": true
+    },
+    "site_photos": {
+      "type": "document",
+      "label": "Site photos / deck",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "loi_file": {
+      "type": "document",
+      "label": "Signed LOI",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "loi_signed_on": {
+      "type": "date",
+      "label": "LOI signed on",
+      "required": true
+    },
+    "dd_title_doc": {
+      "type": "yes_no",
+      "label": "Title document clear",
+      "required": false
+    },
+    "dd_sanctioned_plan": {
+      "type": "yes_no",
+      "label": "Sanctioned plan",
+      "required": false
+    },
+    "dd_oc_cc": {
+      "type": "yes_no",
+      "label": "OC / CC",
+      "required": false
+    },
+    "dd_commercial_use": {
+      "type": "yes_no",
+      "label": "Commercial use permitted",
+      "required": false
+    },
+    "dd_property_tax": {
+      "type": "yes_no",
+      "label": "Property tax paid",
+      "required": false
+    },
+    "dd_electricity": {
+      "type": "yes_no",
+      "label": "Electricity load OK",
+      "required": false
+    },
+    "dd_report": {
+      "type": "document",
+      "label": "DD report",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "dd_notes": {
+      "type": "textarea",
+      "label": "Notes",
+      "required": false
+    },
+    "cr_details": {
+      "type": "textarea",
+      "label": "Change requested (field and new value)",
+      "required": false
+    },
+    "agreement_status": {
+      "type": "select",
+      "label": "Agreement",
+      "options": [
+        {
+          "id": "signed",
+          "label": "Signed"
+        },
+        {
+          "id": "registered",
+          "label": "Registered"
+        }
+      ],
+      "required": true
+    },
+    "agreement_file": {
+      "type": "document",
+      "label": "Agreement copy",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "lic_fssai": {
+      "type": "yes_no",
+      "label": "FSSAI cleared (yes / N/A)",
+      "required": false
+    },
+    "lic_health_trade": {
+      "type": "yes_no",
+      "label": "Health trade cleared",
+      "required": false
+    },
+    "lic_shops_estab": {
+      "type": "yes_no",
+      "label": "Shops and establishment cleared",
+      "required": false
+    },
+    "lic_fire_noc": {
+      "type": "yes_no",
+      "label": "Fire NOC cleared",
+      "required": false
+    },
+    "lic_storage": {
+      "type": "yes_no",
+      "label": "Storage licence cleared",
+      "required": false
+    },
+    "ca_code": {
+      "type": "text",
+      "label": "CA code",
+      "required": true
+    },
+    "kyc_done": {
+      "type": "yes_no",
+      "label": "KYC complete",
+      "required": false
+    },
+    "ca_amount": {
+      "type": "number",
+      "label": "Amount (INR)",
+      "required": true
+    },
+    "kyc_file": {
+      "type": "document",
+      "label": "KYC documents",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "design_exec": {
+      "type": "user",
+      "label": "Design executive",
+      "required": true
+    },
+    "recce_file": {
+      "type": "document",
+      "label": "Recce report",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "layout2d": {
+      "type": "document",
+      "label": "2D layout",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "render3d": {
+      "type": "document",
+      "label": "3D renders",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "boq_file": {
+      "type": "document",
+      "label": "BOQ",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "boq_estimate": {
+      "type": "number",
+      "label": "Estimate (INR)",
+      "required": true
+    },
+    "pe_exec": {
+      "type": "user",
+      "label": "Budget owner",
+      "required": true
+    },
+    "bud_professional_fees": {
+      "type": "number",
+      "label": "Professional Fees",
+      "required": true
+    },
+    "bud_hvac": {
+      "type": "number",
+      "label": "HVAC",
+      "required": true
+    },
+    "bud_furniture": {
+      "type": "number",
+      "label": "Furniture, Light and Planters",
+      "required": true
+    },
+    "bud_civil": {
+      "type": "number",
+      "label": "Civil and Interiors",
+      "required": true
+    },
+    "bud_kitchen": {
+      "type": "number",
+      "label": "Kitchen Equipment",
+      "required": true
+    },
+    "bud_branding": {
+      "type": "number",
+      "label": "Branding",
+      "required": true
+    },
+    "bud_crockery": {
+      "type": "number",
+      "label": "Crockery and Small Equipments",
+      "required": true
+    },
+    "bud_utilities": {
+      "type": "number",
+      "label": "Utilities",
+      "required": true
+    },
+    "bud_licencing": {
+      "type": "number",
+      "label": "Licencing",
+      "required": true
+    },
+    "bud_bd_cost": {
+      "type": "number",
+      "label": "BD Cost",
+      "required": true
+    },
+    "bud_misc": {
+      "type": "number",
+      "label": "Misc",
+      "required": true
+    },
+    "project_exec": {
+      "type": "user",
+      "label": "Project executive",
+      "required": true
+    },
+    "expected_completion": {
+      "type": "date",
+      "label": "Expected completion",
+      "required": true
+    },
+    "mid_visit_date": {
+      "type": "date",
+      "label": "Mid-project visit",
+      "required": true
+    },
+    "inspection_date": {
+      "type": "date",
+      "label": "Inspection date",
+      "required": true
+    },
+    "qa_report": {
+      "type": "document",
+      "label": "Quality audit report",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "completion_notes": {
+      "type": "textarea",
+      "label": "Completion notes",
+      "required": false
+    },
+    "comms_plan": {
+      "type": "textarea",
+      "label": "Comms plan",
+      "required": true
+    },
+    "staff_hired": {
+      "type": "yes_no",
+      "label": "Staff hired and trained",
+      "required": false
+    },
+    "pos_ready": {
+      "type": "yes_no",
+      "label": "POS ready",
+      "required": false
+    },
+    "inventory_stocked": {
+      "type": "yes_no",
+      "label": "Inventory stocked",
+      "required": false
+    },
+    "rent_terms": {
+      "type": "textarea",
+      "label": "Rent terms",
+      "required": true
+    },
+    "exec_verdict": {
+      "type": "select",
+      "label": "Verdict",
+      "options": [
+        {
+          "id": "approve",
+          "label": "Approve"
+        },
+        {
+          "id": "reject",
+          "label": "Reject"
+        }
+      ],
+      "required": true
+    },
+    "exec_comment": {
+      "type": "textarea",
+      "label": "Comment",
+      "required": false
+    },
+    "sup_verdict": {
+      "type": "select",
+      "label": "Verdict",
+      "options": [
+        {
+          "id": "approve",
+          "label": "Approve"
+        },
+        {
+          "id": "reject",
+          "label": "Reject"
+        }
+      ],
+      "required": true
+    },
+    "launch_date": {
+      "type": "date",
+      "label": "Launch date",
+      "required": true
+    },
+    "actual_total": {
+      "type": "number",
+      "label": "Actual spend total (INR)",
+      "required": true
+    },
+    "actuals_sheet": {
+      "type": "document",
+      "label": "Actuals sheet",
+      "required": false,
+      "document": {
+        "accept": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "max_mb": 25,
+        "keep_versions": false
+      }
+    },
+    "dd_partner_notes": {
+      "type": "textarea",
+      "label": "Partner notes"
+    },
+    "audit_store": {
+      "type": "text",
+      "label": "Store",
+      "required": true
+    },
+    "audit_notes": {
+      "type": "textarea",
+      "label": "Notes"
+    }
+  },
+  "forms": {
+    "start": {
+      "sections": [
+        {
+          "key": "site",
+          "title": "Site",
+          "rows": [
+            [
+              {
+                "field": "site_name"
+              }
+            ],
+            [
+              {
+                "field": "city"
+              }
+            ],
+            [
+              {
+                "field": "address"
+              }
+            ],
+            [
+              {
+                "field": "store_model"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "bd_site_details": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Submit site details",
+          "rows": [
+            [
+              {
+                "field": "carpet_area"
+              }
+            ],
+            [
+              {
+                "field": "frontage_ft"
+              }
+            ],
+            [
+              {
+                "field": "monthly_rent"
+              }
+            ],
+            [
+              {
+                "field": "nearest_competitor_m"
+              }
+            ],
+            [
+              {
+                "field": "site_photos"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "bd_upload_loi": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Upload LOI",
+          "rows": [
+            [
+              {
+                "field": "loi_file"
+              }
+            ],
+            [
+              {
+                "field": "loi_signed_on"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "legal_dd_checklist": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Fill DD checklist",
+          "rows": [
+            [
+              {
+                "field": "dd_title_doc"
+              }
+            ],
+            [
+              {
+                "field": "dd_sanctioned_plan"
+              }
+            ],
+            [
+              {
+                "field": "dd_oc_cc"
+              }
+            ],
+            [
+              {
+                "field": "dd_commercial_use"
+              }
+            ],
+            [
+              {
+                "field": "dd_property_tax"
+              }
+            ],
+            [
+              {
+                "field": "dd_electricity"
+              }
+            ],
+            [
+              {
+                "field": "dd_report"
+              }
+            ],
+            [
+              {
+                "field": "dd_notes"
+              }
+            ]
+          ]
+        },
+        {
+          "key": "partner",
+          "title": "Partner review",
+          "hidden_below_level": {
+            "department": "legal",
+            "level": 2
+          },
+          "rows": [
+            [
+              {
+                "field": "dd_partner_notes"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "legal_change_request": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Raise change request?",
+          "rows": [
+            [
+              {
+                "field": "cr_details"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "legal_agreement": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Save agreement",
+          "rows": [
+            [
+              {
+                "field": "agreement_status"
+              }
+            ],
+            [
+              {
+                "field": "agreement_file"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "legal_licensing": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Update licensing (5 licences)",
+          "rows": [
+            [
+              {
+                "field": "lic_fssai"
+              }
+            ],
+            [
+              {
+                "field": "lic_health_trade"
+              }
+            ],
+            [
+              {
+                "field": "lic_shops_estab"
+              }
+            ],
+            [
+              {
+                "field": "lic_fire_noc"
+              }
+            ],
+            [
+              {
+                "field": "lic_storage"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "fin_ca_entry": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Enter CA code, KYC and amount",
+          "rows": [
+            [
+              {
+                "field": "ca_code"
+              }
+            ],
+            [
+              {
+                "field": "kyc_done"
+              }
+            ],
+            [
+              {
+                "field": "ca_amount"
+              }
+            ],
+            [
+              {
+                "field": "kyc_file"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "design_allocate": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Allocate design executive",
+          "rows": [
+            [
+              {
+                "field": "design_exec"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "design_recce": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Upload recce",
+          "rows": [
+            [
+              {
+                "field": "recce_file"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "design_2d": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Upload 2D layout",
+          "rows": [
+            [
+              {
+                "field": "layout2d"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "design_3d": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Upload 3D",
+          "rows": [
+            [
+              {
+                "field": "render3d"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "design_boq": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Upload BOQ and estimate",
+          "rows": [
+            [
+              {
+                "field": "boq_file"
+              }
+            ],
+            [
+              {
+                "field": "boq_estimate"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "pe_delegate": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Assign budget owner",
+          "rows": [
+            [
+              {
+                "field": "pe_exec"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "pe_fill": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Fill GFC budget (11 heads)",
+          "rows": [
+            [
+              {
+                "field": "bud_professional_fees"
+              }
+            ],
+            [
+              {
+                "field": "bud_hvac"
+              }
+            ],
+            [
+              {
+                "field": "bud_furniture"
+              }
+            ],
+            [
+              {
+                "field": "bud_civil"
+              }
+            ],
+            [
+              {
+                "field": "bud_kitchen"
+              }
+            ],
+            [
+              {
+                "field": "bud_branding"
+              }
+            ],
+            [
+              {
+                "field": "bud_crockery"
+              }
+            ],
+            [
+              {
+                "field": "bud_utilities"
+              }
+            ],
+            [
+              {
+                "field": "bud_licencing"
+              }
+            ],
+            [
+              {
+                "field": "bud_bd_cost"
+              }
+            ],
+            [
+              {
+                "field": "bud_misc"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "prj_allocate": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Propose project initialization",
+          "rows": [
+            [
+              {
+                "field": "project_exec"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "prj_expected": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Submit expected completion",
+          "rows": [
+            [
+              {
+                "field": "expected_completion"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "prj_mid_visit": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Set mid-project visit",
+          "rows": [
+            [
+              {
+                "field": "mid_visit_date"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "prj_inspection": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Submit inspection and quality audit",
+          "rows": [
+            [
+              {
+                "field": "inspection_date"
+              }
+            ],
+            [
+              {
+                "field": "qa_report"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "prj_complete": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Mark final completion",
+          "rows": [
+            [
+              {
+                "field": "completion_notes"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "nso_comms": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Float launch communications",
+          "rows": [
+            [
+              {
+                "field": "comms_plan"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "nso_readiness": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Complete readiness checks",
+          "rows": [
+            [
+              {
+                "field": "staff_hired"
+              }
+            ],
+            [
+              {
+                "field": "pos_ready"
+              }
+            ],
+            [
+              {
+                "field": "inventory_stocked"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "launch_send": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Review details, send for review",
+          "rows": [
+            [
+              {
+                "field": "rent_terms"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "launch_exec_verdict": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Executive verdict",
+          "rows": [
+            [
+              {
+                "field": "exec_verdict"
+              }
+            ],
+            [
+              {
+                "field": "exec_comment"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "launch_sup_verdict": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Supervisor verdict and rent terms",
+          "rows": [
+            [
+              {
+                "field": "sup_verdict"
+              }
+            ],
+            [
+              {
+                "field": "rent_terms"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "launch_go": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Launch site",
+          "rows": [
+            [
+              {
+                "field": "launch_date"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "fc_actuals": {
+      "sections": [
+        {
+          "key": "details",
+          "title": "Enter actuals vs GFC",
+          "rows": [
+            [
+              {
+                "field": "actual_total"
+              }
+            ],
+            [
+              {
+                "field": "actuals_sheet"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "audit_start": {
+      "sections": [
+        {
+          "key": "store",
+          "title": "Store",
+          "rows": [
+            [
+              {
+                "field": "audit_store"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "audit_check": {
+      "sections": [
+        {
+          "key": "notes",
+          "title": "Notes",
+          "rows": [
+            [
+              {
+                "field": "audit_notes"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "apps": {
+    "theme": "quartz",
+    "accent": "slate",
+    "nav": [
+      {
+        "page": "home",
+        "label": "Home",
+        "visible_to": [
+          "*"
+        ]
+      },
+      {
+        "page": "sites",
+        "label": "Sites",
+        "visible_to": [
+          "*"
+        ]
+      },
+      {
+        "page": "bd",
+        "label": "Business development",
+        "visible_to": [
+          "bd",
+          "management"
+        ]
+      },
+      {
+        "page": "legal",
+        "label": "Legal",
+        "visible_to": [
+          "legal",
+          "management"
+        ]
+      },
+      {
+        "page": "design",
+        "label": "Design",
+        "visible_to": [
+          "design",
+          "management"
+        ]
+      },
+      {
+        "page": "pe",
+        "label": "Project estimation",
+        "visible_to": [
+          "pe",
+          "management"
+        ]
+      },
+      {
+        "page": "project",
+        "label": "Projects",
+        "visible_to": [
+          "project",
+          "management"
+        ]
+      },
+      {
+        "page": "nso",
+        "label": "New store opening",
+        "visible_to": [
+          "nso",
+          "management"
+        ]
+      },
+      {
+        "page": "management",
+        "label": "Management",
+        "visible_to": [
+          "management",
+          "management"
+        ]
+      }
+    ],
+    "pages": [
+      {
+        "key": "home",
+        "layout": "standard",
+        "regions": {
+          "main": [
+            {
+              "block": "task_inbox",
+              "props": {
+                "scope": "mine",
+                "group_by": "case"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "key": "sites",
+        "layout": "standard",
+        "regions": {
+          "main": [
+            {
+              "block": "case_table",
+              "props": {
+                "flow": "store_launch",
+                "columns": [
+                  "code",
+                  "site_name",
+                  "city",
+                  "stage",
+                  "status",
+                  "open_tasks"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "key": "bd",
+        "layout": "standard",
+        "department": "bd",
+        "regions": {
+          "main": [
+            {
+              "block": "task_inbox",
+              "props": {
+                "scope": "team"
+              }
+            },
+            {
+              "block": "case_table",
+              "props": {
+                "stages": [
+                  "bd_qualification",
+                  "bd_loi",
+                  "finance"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "key": "legal",
+        "layout": "standard",
+        "department": "legal",
+        "regions": {
+          "main": [
+            {
+              "block": "task_inbox",
+              "props": {
+                "scope": "team"
+              }
+            },
+            {
+              "block": "case_table",
+              "props": {
+                "stages": [
+                  "legal"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "key": "design",
+        "layout": "standard",
+        "department": "design",
+        "regions": {
+          "main": [
+            {
+              "block": "task_inbox",
+              "props": {
+                "scope": "team"
+              }
+            },
+            {
+              "block": "case_table",
+              "props": {
+                "stages": [
+                  "design"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "key": "pe",
+        "layout": "standard",
+        "department": "pe",
+        "regions": {
+          "main": [
+            {
+              "block": "task_inbox",
+              "props": {
+                "scope": "team"
+              }
+            },
+            {
+              "block": "case_table",
+              "props": {
+                "stages": [
+                  "pe_budget"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "key": "project",
+        "layout": "standard",
+        "department": "project",
+        "regions": {
+          "main": [
+            {
+              "block": "task_inbox",
+              "props": {
+                "scope": "team"
+              }
+            },
+            {
+              "block": "case_table",
+              "props": {
+                "stages": [
+                  "project"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "key": "nso",
+        "layout": "standard",
+        "department": "nso",
+        "regions": {
+          "main": [
+            {
+              "block": "task_inbox",
+              "props": {
+                "scope": "team"
+              }
+            },
+            {
+              "block": "case_table",
+              "props": {
+                "stages": [
+                  "nso"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "key": "management",
+        "layout": "standard",
+        "department": "management",
+        "regions": {
+          "main": [
+            {
+              "block": "task_inbox",
+              "props": {
+                "scope": "team"
+              }
+            },
+            {
+              "block": "case_table",
+              "props": {
+                "stages": [
+                  "launch",
+                  "closure"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "key": "site",
+        "layout": "case",
+        "flow": "store_launch",
+        "regions": {
+          "header": [
+            {
+              "block": "case_header",
+              "props": {
+                "title_field": "site_name",
+                "fields": [
+                  "city",
+                  "store_model"
+                ]
+              }
+            }
+          ],
+          "overview": [
+            {
+              "block": "case_fields"
+            }
+          ],
+          "tasks": [
+            {
+              "block": "case_tasks"
+            }
+          ]
+        }
+      },
+      {
+        "key": "audit",
+        "layout": "case",
+        "flow": "audit",
+        "regions": {
+          "header": [
+            {
+              "block": "case_header"
+            }
+          ],
+          "tasks": [
+            {
+              "block": "case_tasks"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

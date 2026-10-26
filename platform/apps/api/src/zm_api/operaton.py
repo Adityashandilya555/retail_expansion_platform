@@ -231,6 +231,15 @@ class OperatonClient:
         params = {"firstResult": first, "maxResults": max_results}
         return await self._call("list_tasks", "POST", "task", params=params, json=dict(query))
 
+    async def all_tasks(self, query: Mapping[str, Any], *, page: int = 200) -> list[Json]:
+        """Every task `query` matches, `page` at a time: an inbox shows the whole queue (#30)."""
+        out: list[Json] = []
+        while True:
+            found = await self.list_tasks(query, first=len(out), max_results=page)
+            out += found
+            if len(found) < page:
+                return out
+
     async def get_task(self, task_id: str) -> Json:
         return await self._call("get_task", "GET", f"task/{_id(task_id)}")
 

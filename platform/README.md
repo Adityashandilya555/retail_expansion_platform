@@ -13,6 +13,7 @@ Our code on top of the Operaton fork. Conventions: [AGENTS.md](AGENTS.md) · pro
 cp .env.example .env        # optional for now; never commit .env
 scripts/dev-up.sh           # Supabase CLI vault, then docker compose
 uv run pytest -m integration
+uv run pytest -m isolation  # the two local clients can't reach each other (#31)
 docker compose down && supabase --workdir infra stop   # data volumes are kept; add -v to drop them
 ```
 
@@ -22,9 +23,9 @@ docker compose down && supabase --workdir infra stop   # data volumes are kept; 
 | `api` | http://localhost:8000/healthz | FastAPI platform API |
 | `worker` | — | worker loop (JSON logs) |
 | `operaton-pilot` | http://localhost:8080/engine-rest | pilot engine, DB = Supabase CLI Postgres, schema `operaton`. Our image (`infra/operaton`): REST only, service account `zm-service` / `zm-local-only`, `/health` open |
-| `operaton-iso` | http://localhost:8081/engine-rest | isolation client engine (`qsr-local`), DB = `pg-iso` |
+| `operaton-iso` | http://localhost:8081/engine-rest | isolation client engine (`qsr-local`), DB = `pg-iso`. Its own service password, `zm-iso-local-only` (#31) |
 | `pg-platform` | Postgres `:5433` | control plane stand-in |
-| `pg-iso` | Postgres `:5434` | isolation client vault |
+| `pg-iso` | Postgres `:5434` | isolation client vault; roles `zm_api` / `zm_engine` with their own passwords (`ZM_ISO_*`, #31) |
 
 A port already taken on your machine? Move it with `API_PORT`, `OPERATON_PILOT_PORT`, `OPERATON_ISO_PORT`, `PG_PLATFORM_PORT` or `PG_ISO_PORT` (for example `OPERATON_PILOT_PORT=8090 scripts/dev-up.sh`); the integration tests read the same variables.
 
@@ -34,6 +35,7 @@ uv sync --all-packages
 uv run ruff check . && uv run ruff format --check .
 uv run pytest                      # unit; integration tests are marked and skipped by default
 uv run zm-schema export --check && uv run zm-api openapi --check   # committed generated files are current
+uv run zm-compat --fixtures        # every template and synthetic release still compiles and draws (#31)
 
 pnpm install
 pnpm typecheck && pnpm lint && pnpm test
@@ -188,6 +190,24 @@ For test clients only, `zm-worker deprovision <slug> --yes` deletes `operaton-<s
 | `GET /app/cases/{code}` | The same, plus stage times, the start form's `sections` as the user sees them, the open `tasks` they can see (`can_act`), and the `history` of committed decisions. Another client's code is 404. |
 
 **Stage states** come from Operaton's history of the main process: `case_status` and one `m_<stage>` per stage, set by the compiler. The list makes one variable request for all cases. A closed case also reads its call activities' history, so a stage the close cancelled shows `closed`, not `done`. Field values follow level masking; everyone in the client sees every case (scope rules: #56).
+
+## Isolation and compatibility (#31)
+**Two local clients**, each with its own vault, engine and credentials (`ZM_ISO_*` for qsr-local):
+- `pilot-local`: Matrix Retail, on the Supabase CLI vault and operaton-pilot;
+- `qsr-local`: QSR, on pg-iso and operaton-iso.
+
+`zm-worker provision-local <slug> --dsn <vault superuser DSN> --operaton-url <engine>/engine-rest` registers a client on local resources. It runs the provisioning steps minus the cloud calls: migrations, the registry row, seed-draft. `pytest -m isolation` (`tests/isolation/`, CI job `zm-isolation`) does this for both clients, publishes v1, and checks:
+1. the other client's task ids, cases and UI are out of reach;
+2. a forged token is refused;
+3. each engine holds only its own client's processes;
+4. database credentials don't work across vaults;
+5. a user can't sign in with the other client's workspace code;
+6. a client token can't use the owner console;
+7. a service account can't use the other client's engine.
+
+A broken resolver must trip check 1 (the negative control).
+
+**`zm-compat --fixtures`** compiles every template and every synthetic release in `tests/compat/`. It then checks each page against the layout and block manifests in `packages/zm-blocks`. A block not built yet must be listed in `packages/zm-blocks/planned.json` with the issue that builds it. When that block ships its `manifest.json`, remove it from the list.
 
 ## Layout
 ```

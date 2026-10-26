@@ -892,11 +892,15 @@ name = "zm-compiler"
 version = "0.1.0"
 source = { editable = "packages/compiler" }
 dependencies = [
+    { name = "jsonschema" },
     { name = "zm-schema" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "zm-schema", editable = "packages/schema" }]
+requires-dist = [
+    { name = "jsonschema", specifier = ">=4.23" },
+    { name = "zm-schema", editable = "packages/schema" },
+]
 
 [[package]]
 name = "zm-platform"

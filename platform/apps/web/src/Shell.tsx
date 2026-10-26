@@ -2,11 +2,11 @@
 // pages, already filtered to this user's departments by the API.
 import { Alert, Anchor, Button, Center, Loader, Menu, Stack, Text, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { PageRenderer, defaultCasePage } from "@zm/blocks";
+import { BlocksApi, PageRenderer, defaultCasePage } from "@zm/blocks";
 import { AppFrame, ZmProvider } from "@zm/ui";
 import { LogOut } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router";
-import { currentUser, loadUi, signOut, type AppUi, type Workspace } from "./session";
+import { api, currentUser, loadUi, signOut, type AppUi, type Workspace } from "./session";
 
 function NotFound() {
   return (
@@ -104,12 +104,14 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
         ) : !release ? (
           <Text c="dimmed">Nothing has been published for this workspace yet.</Text>
         ) : (
-          <Routes>
-            <Route index element={<PageRoute ui={release} pageKey={home} />} />
-            <Route path="cases/:code" element={<CaseRoute ui={release} />} />
-            <Route path=":page" element={<PageRoute ui={release} pageKey={section} />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <BlocksApi value={api}>
+            <Routes>
+              <Route index element={<PageRoute ui={release} pageKey={home} />} />
+              <Route path="cases/:code" element={<CaseRoute ui={release} />} />
+              <Route path=":page" element={<PageRoute ui={release} pageKey={section} />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BlocksApi>
         )}
       </AppFrame>
     );

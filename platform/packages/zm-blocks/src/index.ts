@@ -1,5 +1,6 @@
 // @zm/blocks (#27): layouts and blocks, each with a manifest.json, and the renderer that draws a
 // release's page from them.
+export { BlocksApi, useBlocksApi } from "./api";
 export { PageRenderer, defaultCasePage } from "./PageRenderer";
 export {
   blocks,
