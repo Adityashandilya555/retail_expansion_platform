@@ -208,8 +208,9 @@ def drive(http: httpx.Client, code: str, users: list[Mapping[str, Any]]) -> list
 
 
 def check_cases_api(http: httpx.Client, s: Session, codes: list[str]) -> bool:
-    """`GET /app/cases` (#91) lists the three cases; until that route exists, say so loudly
-    rather than pass silently. Returns whether the list was checked."""
+    """`GET /app/cases` (#91) lists the three cases at their stages: the first with Legal open,
+    the second only in its first stage, the third past Legal; all still open. Until that route
+    exists, say so loudly rather than pass silently. Returns whether the list was checked."""
     if "get" not in _paths(http).get("/app/cases", {}):  # POST (start a case) is #26's
         print("WARNING: GET /app/cases isn't there yet (#91): the case list wasn't checked; the")
         print("         stages above come from each case's open tasks")
@@ -217,9 +218,26 @@ def check_cases_api(http: httpx.Client, s: Session, codes: list[str]) -> bool:
     cases = http.get("/app/cases", headers={"Authorization": f"Bearer {s.tokens['bd2']}"})
     if cases.status_code != 200:
         raise DemoError(f"GET /app/cases → {cases.status_code} {cases.text}")
-    listed = {c.get("code") for c in cases.json()}
-    if not set(codes) <= listed:
-        raise DemoError(f"GET /app/cases doesn't list {', '.join(codes)}")
+    rows = {c.get("code"): c for c in cases.json()}
+    missing = [c for c in codes if c not in rows]
+    if missing:
+        raise DemoError(f"GET /app/cases doesn't list {', '.join(missing)}")
+    states = {c: {st["key"]: st["state"] for st in rows[c].get("stages", [])} for c in codes}
+    first, second, third = (states[c] for c in codes)
+    problems = []
+    if first.get("legal") != "open":
+        problems.append(f"{codes[0]}: legal is {first.get('legal')}, not open")
+    if second.get("bd_qualification") != "open" or any(
+        v != "queued" for k, v in second.items() if k != "bd_qualification"
+    ):
+        problems.append(f"{codes[1]}: should be in bd_qualification only, is {second}")
+    if third.get("legal") != "done":
+        problems.append(f"{codes[2]}: legal is {third.get('legal')}, not done")
+    problems += [
+        f"{c} is {rows[c].get('status')}" for c in codes if rows[c].get("status") != "open"
+    ]
+    if problems:
+        raise DemoError("GET /app/cases disagrees with where the cases are: " + "; ".join(problems))
     return True
 
 

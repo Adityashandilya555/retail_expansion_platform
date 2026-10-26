@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+import httpx
 import pytest
 
 DEMO = Path(__file__).resolve().parents[1] / "scripts/demo_s1.py"
@@ -67,22 +68,49 @@ def test_check_cases_api_warns_while_the_route_is_missing(capsys: pytest.Capture
     assert "isn't there yet (#91)" in capsys.readouterr().out
 
 
-def test_check_cases_api_needs_every_code_once_it_exists() -> None:
-    import httpx
+def _row(code: str, status: str = "open", **stages: str) -> dict:
+    keys = ["bd_qualification", "bd_loi", "legal", "finance", "design"]
+    return {
+        "code": code,
+        "status": status,
+        "stages": [{"key": k, "state": stages.get(k, "queued")} for k in keys],
+    }
 
-    demo = demo_driver()
-    body = [{"code": "MX-0001"}, {"code": "MX-0002"}]
 
+GOOD = [
+    _row("MX-0001", bd_qualification="done", bd_loi="done", legal="open", finance="open"),
+    _row("MX-0002", bd_qualification="open"),
+    _row("MX-0003", bd_qualification="done", bd_loi="done", legal="done", finance="open"),
+]
+
+
+def cases_api(body: list) -> httpx.Client:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/openapi.json":
             return httpx.Response(200, json={"paths": {"/app/cases": {"get": {}, "post": {}}}})
         return httpx.Response(200, json=body)
 
-    http = httpx.Client(base_url="http://api.test", transport=httpx.MockTransport(handler))
-    session = demo.Session(http, {"bd2": "t"})
-    assert demo.check_cases_api(http, session, ["MX-0001", "MX-0002"]) is True
+    return httpx.Client(base_url="http://api.test", transport=httpx.MockTransport(handler))
+
+
+def test_check_cases_api_checks_codes_and_stages_once_it_exists() -> None:
+    demo = demo_driver()
+    codes = ["MX-0001", "MX-0002", "MX-0003"]
+    http = cases_api(GOOD)
+    assert demo.check_cases_api(http, demo.Session(http, {"bd2": "t"}), codes) is True
+
+    missing = cases_api(GOOD[:2])
     with pytest.raises(demo.DemoError, match="MX-0003"):
-        demo.check_cases_api(http, session, ["MX-0001", "MX-0003"])
+        demo.check_cases_api(missing, demo.Session(missing, {"bd2": "t"}), codes)
+
+    wrong = [GOOD[0], _row("MX-0002", bd_qualification="done", bd_loi="open"), GOOD[2]]
+    bad = cases_api(wrong)
+    with pytest.raises(demo.DemoError, match="MX-0002: should be in bd_qualification only"):
+        demo.check_cases_api(bad, demo.Session(bad, {"bd2": "t"}), codes)
+
+    closed = cases_api([GOOD[0], GOOD[1], _row("MX-0003", "closed", legal="closed")])
+    with pytest.raises(demo.DemoError, match="legal is closed, not done"):
+        demo.check_cases_api(closed, demo.Session(closed, {"bd2": "t"}), codes)
 
 
 def test_main_runs_the_drive_with_the_api_and_users_from_env(

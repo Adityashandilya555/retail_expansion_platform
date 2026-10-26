@@ -31,6 +31,9 @@ def test_1_another_clients_case_is_404(world: World) -> None:
     if not any(p.startswith("/app/cases/{") for p in paths):
         pytest.skip("GET /app/cases/{id} arrives with #91; this check runs from then on")
     for me, other in ((world.pilot, world.qsr), (world.qsr, world.pilot)):
+        # positive control: the client's own case opens, so the 404 below isn't a blanket one
+        own = world.http.get(f"/app/cases/{me.case['code']}", headers=me.auth())
+        assert own.status_code == 200, own.text
         assert checks.cross_client_case(world.http, me.auth(), other.case["code"]) == []
 
 
