@@ -2,6 +2,8 @@
 // configures them per client by their manifests; it never writes code (AGENTS.md, step 3).
 import type { components } from "@zm/api-client";
 import type { ComponentType, ReactNode } from "react";
+import { TaskInbox } from "../blocks/task_inbox/Block";
+import taskInboxManifest from "../blocks/task_inbox/manifest.json";
 import { CaseLayout } from "../layouts/case/Layout";
 import caseManifest from "../layouts/case/manifest.json";
 import { StandardLayout } from "../layouts/standard/Layout";
@@ -38,8 +40,10 @@ export type LayoutManifest = {
 export type LayoutProps = { regions: Partial<Record<string, ReactNode>> };
 export type LayoutEntry = { manifest: LayoutManifest; Layout: ComponentType<LayoutProps> };
 
-/** task_inbox (S1-14, #30) and the case blocks (S1-25, #92) register here. */
-export const blocks: BlockRegistry = {};
+/** The case blocks (S1-25, #92) register here too. */
+export const blocks: BlockRegistry = {
+  task_inbox: { 1: { manifest: taskInboxManifest, Block: TaskInbox } },
+};
 
 export const layouts: Record<string, LayoutEntry> = {
   standard: { manifest: standardManifest, Layout: StandardLayout },

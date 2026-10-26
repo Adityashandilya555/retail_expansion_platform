@@ -69,6 +69,22 @@ def test_list_tasks_posts_the_query_with_paging(op: OperatonClient) -> None:
 
 
 @respx.mock
+def test_all_tasks_pages_until_a_short_page(op: OperatonClient) -> None:
+    """An inbox shows the whole queue (#30): 5 tasks over pages of 2."""
+    tasks = [{"id": f"t{i}"} for i in range(5)]
+
+    def page(request: httpx.Request) -> httpx.Response:
+        first, size = int(request.url.params["firstResult"]), int(request.url.params["maxResults"])
+        return httpx.Response(200, json=tasks[first : first + size])
+
+    route = respx.post(f"{BASE}/task").mock(side_effect=page)
+    query = {"candidateGroups": ["legal__L2"], "includeAssignedTasks": True}
+    assert run(op.all_tasks(query, page=2)) == tasks
+    assert [c.request.url.params["firstResult"] for c in route.calls] == ["0", "2", "4"]
+    assert all(json.loads(c.request.content) == query for c in route.calls)
+
+
+@respx.mock
 def test_task_claim_complete_and_history(op: OperatonClient) -> None:
     respx.get(f"{BASE}/task/t1").respond(200, json={"id": "t1", "formKey": "zm:legal_dd_checklist"})
     claim = respx.post(f"{BASE}/task/t1/claim").respond(204)

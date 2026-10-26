@@ -478,9 +478,8 @@ async def list_tasks(
         if case is not None:
             q["processInstanceBusinessKey"] = case
         q["sorting"] = [{"sortBy": "created", "sortOrder": "asc"}]
-    # shortcut: the first 200 per query; paging arrives with the inbox block (#30)
     found: dict[str, Json] = {}
-    for result in await asyncio.gather(*(ctx.operaton.list_tasks(q) for q in queries)):
+    for result in await asyncio.gather(*(ctx.operaton.all_tasks(q) for q in queries)):
         for t in result:
             found.setdefault(t["id"], t)
     ordered = sorted(found.values(), key=lambda t: (t["created"], t["id"]))

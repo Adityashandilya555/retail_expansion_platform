@@ -47,8 +47,9 @@ function renderAt(path: string) {
   );
 }
 
-// The real blocks come with #30 and #92; until then the shell draws stand-ins with their manifests.
-// Vitest isolates modules per test file, so the registry is only changed here.
+// The shell draws stand-ins with the real manifests (#92's blocks don't exist yet; task_inbox's own
+// tests live with it). Vitest isolates modules per test file, so the registry is only changed here.
+const realBlocks = { ...blocks };
 beforeAll(() => Object.assign(blocks, testBlocks));
 
 afterEach(() => {
@@ -105,6 +106,24 @@ test("a wrong password shows the same generic error", async () => {
   await user.type(screen.getByLabelText(/Email/), "legal.l1@pilot.demo");
   await user.type(screen.getByLabelText(/Password/), "nope{Enter}");
   expect(await screen.findByText("Wrong email or password.")).toBeDefined();
+});
+
+test("the shell hands the signed-in API to the blocks: Home's task_inbox loads the user's tasks (#30)", async () => {
+  Object.assign(blocks, { task_inbox: realBlocks.task_inbox });
+  try {
+    const task = { id: "t1", name: "DD checklist", flow: "store_launch", case_code: "MX-0001", stage: "legal" };
+    signedInApi(sampleUi, {
+      "GET /app/tasks": (r) =>
+        r.headers.get("authorization") === "Bearer t1"
+          ? json([{ ...task, created: "2026-10-20T09:00:00Z", assignee: null, form_key: "zm:dd" }])
+          : problem(401, "Sign in again"),
+    });
+    renderAt("/app");
+    const site = await screen.findByRole("table", { name: /MX-0001/ });
+    expect(within(site).getByText("DD checklist")).toBeDefined();
+  } finally {
+    Object.assign(blocks, { task_inbox: testBlocks.task_inbox });
+  }
 });
 
 test("the app signs in silently with the refresh cookie", async () => {

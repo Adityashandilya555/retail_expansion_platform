@@ -11,12 +11,11 @@
     "@mantine/core": "~9.7.2",
     "@zm/api-client": "workspace:*",
     "@zm/forms": "workspace:*",
+    "@zm/ui": "workspace:*",
     "react-router": "8.5.0"
   },
-  "devDependencies": {
-    "@zm/ui": "workspace:*"
-  },
   "peerDependencies": {
+    "@tanstack/react-query": "^5.104.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   }

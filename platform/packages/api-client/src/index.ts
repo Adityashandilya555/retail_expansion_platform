@@ -25,3 +25,5 @@ export function createApiClient(baseUrl: string, getToken?: () => string | null 
   });
   return client;
 }
+
+export type ApiClient = ReturnType<typeof createApiClient>;

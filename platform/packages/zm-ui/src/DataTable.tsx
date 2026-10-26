@@ -27,7 +27,8 @@ export function DataTable<T>({
   onRetry,
   emptyText = "Nothing here yet",
 }: {
-  caption: string;
+  /** Names the table; e.g. a group header (code and stage pill) in task_inbox. */
+  caption: ReactNode;
   columns: Column<T>[];
   rows: T[];
   rowKey: (row: T) => string;
