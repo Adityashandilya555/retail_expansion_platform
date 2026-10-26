@@ -80,6 +80,10 @@ def workflow() -> dict[str, Any]:
             "rows": [[{"field": "deal_notes"}]],
         }
     )
+    # also on a later task's form, visibly: fields must still follow the start form's masking
+    doc["forms"]["bd_site_details"]["sections"].append(
+        {"key": "deal_again", "title": "Deal", "rows": [[{"field": "deal_notes"}]]}
+    )
     return doc
 
 
@@ -238,9 +242,18 @@ def test_the_list_matches_operaton_with_one_history_request(
         calls.append(len(ids))
         return await real(self, ids, names, **kw)
 
+    activities: list[str] = []
+    real_activities = OperatonClient.history_activities
+
+    async def counting_activities(self: OperatonClient, pi: str, *a: Any) -> Any:
+        activities.append(pi)
+        return await real_activities(self, pi, *a)
+
     monkeypatch.setattr(OperatonClient, "history_variables", counting)
+    monkeypatch.setattr(OperatonClient, "history_activities", counting_activities)
     found = rows(world)
     assert calls == [3]  # one request for every case's variables
+    assert len(activities) == 1  # only the closed case reads its call activities
     a, b = found[world.codes["A"]], found[world.codes["B"]]
     assert a["title"] == "Indiranagar" and a["status"] == "open"
     assert states(b)["bd_qualification"] == "open"
@@ -272,6 +285,7 @@ def test_a_case_closed_in_legal(world: World) -> None:
     assert all(states(c)[k] == "queued" for k in ("design", "pe_budget", "nso", "closure"))
     assert c["open_tasks"] == 0
     assert list(rows(world, status="closed")) == [world.codes["C"]]
+    assert rows(world, status="completed") == {}
     assert world.codes["C"] not in rows(world, status="open")
     assert len(rows(world, flow="store_launch")) == 3 and rows(world, flow="nope") == {}
 
@@ -286,6 +300,23 @@ def test_hidden_sections_are_masked_in_both_endpoints(world: World) -> None:
     l2 = world.get("bd2", f"/app/cases/{code}")
     deal = next(s for s in l2["sections"] if s["key"] == "deal")
     assert deal["fields"][0]["value"] == "Rent can drop 5%"
+
+
+def test_my_tasks_count_in_the_list(world: World) -> None:
+    found = rows(world, "legal1")
+    assert found[world.codes["A"]]["my_tasks"] == 1  # legal_dd_checklist
+    assert found[world.codes["B"]]["my_tasks"] == 0
+    assert rows(world, "bd2")[world.codes["B"]]["my_tasks"] == 0  # bd_site_details is bd1's
+    assert rows(world, "bd1")[world.codes["B"]]["my_tasks"] == 1
+
+
+def test_the_closed_case_detail_has_its_ends(world: World) -> None:
+    c = world.get("legal1", f"/app/cases/{world.codes['C']}")
+    st = {s["key"]: s for s in c["stages"]}
+    assert st["legal"]["state"] == "closed" and st["legal"]["ended_at"]
+    assert st["finance"]["state"] == "closed" and st["finance"]["ended_at"]
+    assert st["design"]["state"] == "queued" and st["design"]["started_at"] is None
+    assert c["status"] == "closed" and c["open_tasks"] == 0
 
 
 def test_unknown_code_is_404(world: World) -> None:
@@ -305,6 +336,7 @@ def test_the_detail_has_times_tasks_and_decisions(world: World) -> None:
         and mine["Fill DD checklist"]["stage"] == "legal"
     )
     assert a["my_tasks"] == 1
+    assert a["open_tasks"] == 2  # the whole case, as in the list; `tasks` is what legal1 sees
     lead = {t["name"]: t for t in world.get("legal2", f"/app/cases/{world.codes['A']}")["tasks"]}
     assert lead["Fill DD checklist"]["can_act"] is False  # their team's task: read-only
 

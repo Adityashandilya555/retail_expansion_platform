@@ -197,3 +197,29 @@ async def _history_calls() -> None:
     finally:
         await op.aclose()
     assert variables.call_count == 1 and activities.called
+
+
+def test_masked_start_values_follow_the_start_form_only() -> None:
+    """A field hidden on the start form stays hidden even if a task form shows it."""
+    from zm_compiler import compile
+    from zm_schema import migrate
+
+    doc = matrix_retail()
+    doc["fields"]["deal_notes"] = {"type": "textarea", "label": "Deal notes"}
+    doc["forms"]["start"]["sections"].append(
+        {
+            "key": "deal",
+            "title": "Deal",
+            "hidden_below_level": {"department": "bd", "level": 2},
+            "rows": [[{"field": "deal_notes"}]],
+        }
+    )
+    doc["forms"]["bd_site_details"]["sections"].append(
+        {"key": "deal_again", "title": "Deal", "rows": [[{"field": "deal_notes"}]]}
+    )
+    spec = compile(migrate(doc), "pilot-local").forms["start:store_launch"]
+    form = {"schema": spec.schema, "layout": spec.layout}
+    values = {"site_name": "Indiranagar", "deal_notes": "secret"}
+    assert cases.masked_start_values(form, values, {"legal": 1}) == {"site_name": "Indiranagar"}
+    assert cases.masked_start_values(form, values, {"bd": 2}) == values
+    assert cases.masked_start_values(None, values, {"bd": 2}) == {}

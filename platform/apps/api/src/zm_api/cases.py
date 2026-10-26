@@ -12,6 +12,8 @@ Visibility v1: every user of the client sees every case's header, status and sta
 values hide what the user's level can't see (scope rules: #56).
 """
 
+import asyncio
+import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,9 +28,11 @@ from zm_api.context import ClientContext
 from zm_api.errors import NotFound
 from zm_api.operaton import Json
 
+_log = logging.getLogger("zm_api.cases")
+CLOSED_READS = 8  # closed cases' activity histories read at once (no batch query exists)
 StageState = Literal["queued", "open", "done", "closed"]
 CaseStatus = Literal["open", "completed", "closed"]
-MAX_CASES = 500  # shortcut: the newest 500; paging arrives with the Sites list block (#92)
+MAX_CASES = 500  # shortcut: the newest 500 (after ?status=); paging comes with #92
 
 
 @dataclass(frozen=True)
@@ -131,6 +135,17 @@ def title(workflow: Mapping[str, Any], flow: Mapping[str, Any], values: Mapping[
     return ""
 
 
+def masked_start_values(
+    start_form: Mapping[str, Any] | None, values: Mapping[str, Any], levels: Mapping[str, int]
+) -> dict[str, Any]:
+    """Start values the user may see: exactly the fields of the start form as `visible_form`
+    shows it to them, so `fields` and `sections` always agree."""
+    if start_form is None:
+        return {}
+    shown = set(tasks.visible_form(start_form, levels)["schema"].get("properties", {}))
+    return {k: v for k, v in values.items() if k in shown}
+
+
 def task_name(workflow: Mapping[str, Any], task_def_key: str) -> str:
     """A task's display name; approval steps are named as the compiler names them."""
     base, _, approval = task_def_key.partition("__appr_")
@@ -204,7 +219,8 @@ async def list_cases(
     flow: str | None = None,
     status: CaseStatus | None = None,
 ) -> list[CaseRow]:
-    """Every case (newest first), with its stages, start values (masked by level) and tasks."""
+    """Cases, newest first: stages, start values (masked by level) and task counts. `?status=`
+    is applied before the 500-row cap, from the same single history request."""
     async with ctx.db.connect() as conn:
         me = await tasks.person(conn, user_id)
         rows = (
@@ -212,7 +228,8 @@ async def list_cases(
                 await conn.execute(
                     text(
                         f"select {_COLUMNS} from app.cases where (cast(:f as text) is null"
-                        " or flow_key = :f) order by created_at desc, code desc limit :n"
+                        " or flow_key = :f) order by created_at desc, code desc"
+                        + ("" if status else " limit :n")
                     ),
                     {"f": flow, "n": MAX_CASES},
                 )
@@ -221,8 +238,9 @@ async def list_cases(
             .all()
         )
         cases = [tasks.Case(**r) for r in rows]
-        workflows = await tasks._workflows(conn, {c.release_version for c in cases})
-        values = await _start_values(conn, [c.id for c in cases])
+        versions = {c.release_version for c in cases}
+        workflows = await tasks._workflows(conn, versions)
+        start_forms = await _start_forms(conn, versions)
     if not cases:
         return []
     names = {"case_status"} | {
@@ -231,33 +249,44 @@ async def list_cases(
     history = _by_instance(
         await ctx.operaton.history_variables([c.process_instance_id for c in cases], sorted(names))
     )
-    open_counts = await _task_counts(ctx, [c.code for c in cases])
+    picked = []
+    for c in cases:
+        variables = history.get(c.process_instance_id, {})
+        if "case_status" not in variables:  # the engine lost it, or never started it
+            _log.warning(
+                "case %s has no history in Operaton", c.code, extra={"client": ctx.client.slug}
+            )
+        if status is None or case_status(variables) == status:
+            picked.append(c)
+    picked = picked[:MAX_CASES]
+    async with ctx.db.connect() as conn:
+        values = await _start_values(conn, [c.id for c in picked])
+    closed = [c for c in picked if case_status(history.get(c.process_instance_id, {})) == "closed"]
+    activities = await _closed_activities(ctx, closed)
+    open_counts = await _task_counts(ctx, [c.code for c in picked])
     mine: dict[str, int] = {}
     for t in await tasks.list_tasks(ctx, user_id, "mine"):
         mine[t.case_code] = mine.get(t.case_code, 0) + 1
 
     out = []
-    for c in cases:
+    for c in picked:
         workflow = workflows[c.release_version]
         flow_def = tasks._flow(workflow, c.flow)
         if flow_def is None:
             continue
         variables = history.get(c.process_instance_id, {})
-        st = case_status(variables)
-        if status is not None and st != status:
-            continue
-        activities = (
-            await ctx.operaton.history_activities(c.process_instance_id) if st == "closed" else None
+        shown = masked_start_values(
+            start_forms.get((c.release_version, c.flow)), values.get(c.id, {}), me.levels
         )
-        hidden = tasks.hidden_fields(workflow, me.levels)
-        shown = {k: v for k, v in values.get(c.id, {}).items() if k not in hidden}
         out.append(
             CaseRow(
                 code=c.code,
                 flow=c.flow,
                 title=title(workflow, flow_def, shown) or c.code,
-                status=st,
-                stages=stage_states(flow_def["stages"], variables, activities),
+                status=case_status(variables),
+                stages=stage_states(
+                    flow_def["stages"], variables, activities.get(c.process_instance_id)
+                ),
                 fields=shown,
                 open_tasks=open_counts.get(c.code, 0),
                 my_tasks=mine.get(c.code, 0),
@@ -266,6 +295,37 @@ async def list_cases(
             )
         )
     return out
+
+
+async def _start_forms(
+    conn: AsyncConnection, versions: Iterable[int]
+) -> dict[tuple[int, str], dict[str, Any]]:
+    """(release version, flow) → that release's start form `{schema, layout}`."""
+    rows = await conn.execute(
+        text("select version, forms from app.releases where version = any(:v)"),
+        {"v": sorted(set(versions))},
+    )
+    return {
+        (r.version, key.removeprefix("start:")): form
+        for r in rows
+        for key, form in r.forms.items()
+        if key.startswith("start:")
+    }
+
+
+async def _closed_activities(ctx: ClientContext, closed: list[tasks.Case]) -> dict[str, list[Json]]:
+    """Call-activity history of each closed case, a few at a time. Operaton's activity query
+    takes one process instance (HistoricActivityInstanceQueryDto has no `processInstanceIdIn`),
+    so this is one request per closed case; open and completed cases need none."""
+    limit = asyncio.Semaphore(CLOSED_READS)
+
+    async def read(c: tasks.Case) -> tuple[str, list[Json]]:
+        async with limit:
+            return c.process_instance_id, await ctx.operaton.history_activities(
+                c.process_instance_id
+            )
+
+    return dict(await asyncio.gather(*(read(c) for c in closed)))
 
 
 @dataclass
@@ -362,8 +422,8 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
         await ctx.operaton.history_variables([case.process_instance_id], ["case_status"])
     ).get(case.process_instance_id, {})
     activities = await ctx.operaton.history_activities(case.process_instance_id)
-    hidden = tasks.hidden_fields(workflow, me.levels)
-    shown = {k: v for k, v in values.items() if k not in hidden}
+    start = forms.get(f"start:{case.flow}")
+    shown = masked_start_values(start, values, me.levels)
     row = CaseRow(
         code=case.code,
         flow=case.flow,
@@ -386,10 +446,9 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
     open_tasks = [
         OpenTask(t.id, t.name, t.stage, t.assignee, t.id in mine_ids) for t in seen.values()
     ]
-    row.open_tasks = len(open_tasks)
+    row.open_tasks = (await _task_counts(ctx, [code])).get(code, 0)  # as in the list: all of them
     row.my_tasks = len(mine_ids)
 
-    start = forms.get(f"start:{case.flow}")
     return CaseDetail(
         row=row,
         sections=sections(tasks.visible_form(start, me.levels), shown) if start else [],
