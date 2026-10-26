@@ -15,3 +15,6 @@ coverage.xml
 .pytest_cache/
 .ruff_cache/
 *.tsbuildinfo
+
+# demo users with their passwords (scripts/demo_s1.py): never committed
+.demo-users.json

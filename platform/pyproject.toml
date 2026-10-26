@@ -51,8 +51,12 @@ testpaths = [
     "infra/operaton/tests",
     "tests",
 ]
-markers = ["integration: needs the local stack from scripts/dev-up.sh"]
-addopts = ["-m", "not integration", "--import-mode=importlib"]
+markers = [
+    "integration: needs the local stack from scripts/dev-up.sh",
+    "isolation: two local clients can't reach each other (#31); needs the local stack too",
+]
+addopts = ["-m", "not integration and not isolation", "--import-mode=importlib"]
 
 [tool.coverage.run]
-source = ["zm_api", "zm_worker", "zm_compiler", "zm_schema"]
+# scripts/ too: the demo driver and the local helpers (#31) are run by tests from their path
+source = ["zm_api", "zm_worker", "zm_compiler", "zm_schema", "scripts"]

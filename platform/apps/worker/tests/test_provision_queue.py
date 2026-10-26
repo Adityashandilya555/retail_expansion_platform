@@ -378,7 +378,7 @@ def test_seed_writes_the_first_draft_and_keeps_an_edited_one() -> None:
     """railway.seed on the migrated pg-iso vault, as the zm_api role the API uses. pg-iso is the
     qsr-local isolation client's vault, so its draft is put back afterwards."""
     iso = os.environ.get("PG_ISO_PORT", 5434)
-    password = os.environ.get("ZM_API_DB_PASSWORD", "zm-api-local")
+    password = os.environ.get("ZM_ISO_API_DB_PASSWORD", "zm-api-iso-local")
     admin = f"postgresql://postgres:postgres@localhost:{iso}/postgres"
     dsn = f"postgresql+asyncpg://zm_api:{password}@localhost:{iso}/postgres"
     with psycopg.connect(admin, autocommit=True) as c:

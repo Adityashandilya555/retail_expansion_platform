@@ -18,7 +18,17 @@ SECRETS = {
     "zm_engine": os.environ.get("ZM_ENGINE_DB_PASSWORD", "zm-engine-local"),
     "zm_api": os.environ.get("ZM_API_DB_PASSWORD", "zm-api-local"),
 }
-VAULT_PORTS = [54322, int(os.environ.get("PG_ISO_PORT", 5434))]
+PG_ISO = int(os.environ.get("PG_ISO_PORT", 5434))
+# qsr-local's vault has its own role passwords (#31); applying pilot's there would reset them
+ISO_SECRETS = {
+    "zm_engine": os.environ.get("ZM_ISO_ENGINE_DB_PASSWORD", "zm-engine-iso-local"),
+    "zm_api": os.environ.get("ZM_ISO_API_DB_PASSWORD", "zm-api-iso-local"),
+}
+VAULT_PORTS = [54322, PG_ISO]
+
+
+def secrets_for(port: int) -> dict[str, str]:
+    return ISO_SECRETS if port == PG_ISO else SECRETS
 
 
 def url(port: int, user: str = "postgres", password: str = "postgres") -> str:
@@ -28,7 +38,8 @@ def url(port: int, user: str = "postgres", password: str = "postgres") -> str:
 def connect(port: int, role: str | None = None) -> psycopg.Connection:
     if role is None:
         return psycopg.connect(url(port), autocommit=True, connect_timeout=5)
-    return psycopg.connect(url(port, role, SECRETS[role]), autocommit=True, connect_timeout=5)
+    password = secrets_for(port)[role]
+    return psycopg.connect(url(port, role, password), autocommit=True, connect_timeout=5)
 
 
 def test_cli_passes_passwords_from_env(monkeypatch) -> None:
@@ -58,8 +69,8 @@ def test_apply_refuses_missing_password() -> None:
 @pytest.mark.integration
 @pytest.mark.parametrize("port", VAULT_PORTS)
 def test_second_run_applies_nothing(port: int) -> None:
-    vault_migrate.apply(url(port), SECRETS)
-    assert vault_migrate.apply(url(port), SECRETS) == []
+    vault_migrate.apply(url(port), secrets_for(port))
+    assert vault_migrate.apply(url(port), secrets_for(port)) == []
 
 
 @pytest.mark.integration
@@ -107,10 +118,10 @@ def test_operaton_tables_are_created_by_zm_engine_in_operaton(port: int) -> None
 @pytest.mark.integration
 @pytest.mark.parametrize("port", VAULT_PORTS)
 def test_edited_migration_fails_clearly(port: int, tmp_path: Path) -> None:
-    vault_migrate.apply(url(port), SECRETS)
+    vault_migrate.apply(url(port), secrets_for(port))
     first = sorted(vault_migrate.MIGRATIONS_DIR.glob("*.sql"))[0]
     edited = tmp_path / first.name
     shutil.copy(first, edited)
     edited.write_text(edited.read_text() + "\n-- edited after it was applied\n")
     with pytest.raises(vault_migrate.MigrationChangedError, match=f"{first.name} was already"):
-        vault_migrate.apply(url(port), SECRETS, tmp_path)
+        vault_migrate.apply(url(port), secrets_for(port), tmp_path)

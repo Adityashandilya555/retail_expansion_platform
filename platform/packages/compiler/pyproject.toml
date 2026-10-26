@@ -3,7 +3,10 @@ name = "zm-compiler"
 version = "0.1.0"
 description = "workflow.json -> BPMN/DMN + form/UI specs -> release (S1-08a)"
 requires-python = ">=3.12,<3.13"
-dependencies = ["zm-schema"]
+dependencies = ["jsonschema>=4.23", "zm-schema"]
+
+[project.scripts]
+zm-compat = "zm_compiler.compat:main"
 
 [tool.uv.sources]
 zm-schema = { workspace = true }

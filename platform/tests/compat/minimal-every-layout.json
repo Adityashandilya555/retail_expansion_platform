@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "org": {
+    "departments": [
+      {
+        "key": "ops",
+        "name": "Operations",
+        "levels": [
+          {
+            "n": 1,
+            "name": "Operator"
+          },
+          {
+            "n": 2,
+            "name": "Lead"
+          }
+        ]
+      }
+    ]
+  },
+  "flows": [
+    {
+      "key": "visit",
+      "name": "Store visit",
+      "case_label": "Visit",
+      "case_code": {
+        "pattern": "V-{seq:3}"
+      },
+      "start": {
+        "performers": [
+          {
+            "department": "ops",
+            "level": 1,
+            "or_above": true
+          }
+        ],
+        "form": "visit_start"
+      },
+      "stages": [
+        {
+          "key": "check",
+          "name": "Check",
+          "department": "ops",
+          "tasks": [
+            {
+              "id": "visit_check",
+              "name": "Check the store",
+              "performer": {
+                "department": "ops",
+                "level": 1
+              },
+              "form": "visit_check",
+              "show": [
+                "store"
+              ]
+            },
+            {
+              "id": "visit_review",
+              "name": "Review",
+              "performer": {
+                "department": "ops",
+                "level": 2
+              },
+              "outcomes": [
+                {
+                  "id": "ok",
+                  "label": "OK"
+                },
+                {
+                  "id": "redo",
+                  "label": "Redo",
+                  "to": "visit_check",
+                  "comment_required": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "fields": {
+    "store": {
+      "type": "text",
+      "label": "Store",
+      "required": true
+    },
+    "notes": {
+      "type": "textarea",
+      "label": "Notes"
+    },
+    "lead_notes": {
+      "type": "textarea",
+      "label": "Lead notes"
+    }
+  },
+  "forms": {
+    "visit_start": {
+      "sections": [
+        {
+          "key": "store",
+          "title": "Store",
+          "rows": [
+            [
+              {
+                "field": "store"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "visit_check": {
+      "sections": [
+        {
+          "key": "notes",
+          "title": "Notes",
+          "rows": [
+            [
+              {
+                "field": "notes"
+              }
+            ]
+          ]
+        },
+        {
+          "key": "lead",
+          "title": "Lead only",
+          "hidden_below_level": {
+            "department": "ops",
+            "level": 2
+          },
+          "rows": [
+            [
+              {
+                "field": "lead_notes"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "apps": {
+    "theme": "quartz",
+    "nav": [
+      {
+        "page": "home",
+        "label": "Home",
+        "visible_to": [
+          "*"
+        ]
+      },
+      {
+        "page": "visits",
+        "label": "Visits",
+        "visible_to": [
+          "ops"
+        ]
+      }
+    ],
+    "pages": [
+      {
+        "key": "home",
+        "layout": "standard",
+        "regions": {
+          "main": [
+            {
+              "block": "task_inbox"
+            }
+          ]
+        }
+      },
+      {
+        "key": "visits",
+        "layout": "standard",
+        "regions": {
+          "main": [
+            {
+              "block": "case_table"
+            }
+          ],
+          "aside": [
+            {
+              "block": "task_inbox"
+            }
+          ]
+        }
+      },
+      {
+        "key": "visit",
+        "layout": "case",
+        "flow": "visit",
+        "regions": {
+          "header": [
+            {
+              "block": "case_header"
+            }
+          ],
+          "overview": [
+            {
+              "block": "case_fields"
+            }
+          ],
+          "tasks": [
+            {
+              "block": "case_tasks"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "kpis": []
+}

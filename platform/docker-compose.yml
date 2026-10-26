@@ -73,6 +73,10 @@ services:
     environment:
       <<: *operaton-env
       DB_URL: jdbc:postgresql://pg-iso:5432/postgres?currentSchema=operaton
+      # the isolation client has credentials of its own, so the isolation suite (#31) can show
+      # pilot's don't work here
+      DB_PASSWORD: ${ZM_ISO_ENGINE_DB_PASSWORD:-zm-engine-iso-local}
+      ZM_ADMIN_USER_PASSWORD: ${ZM_ISO_ADMIN_USER_PASSWORD:-zm-iso-local-only}
 
   api:
     build:

@@ -44,8 +44,16 @@ PLATFORM_URL = (
     f"postgresql+asyncpg://postgres:postgres@localhost:{os.environ.get('PG_PLATFORM_PORT', 5433)}"
     "/postgres"
 )
-ZM_API_PASSWORD = os.environ.get("ZM_API_DB_PASSWORD", "zm-api-local")
-SERVICE_PASSWORD = os.environ.get("ZM_ADMIN_USER_PASSWORD", "zm-local-only")
+# each client has its own credentials (#31): pilot's don't work on qsr's vault or engine
+ZM_API_PASSWORDS = {
+    "pilot": os.environ.get("ZM_API_DB_PASSWORD", "zm-api-local"),
+    "qsr": os.environ.get("ZM_ISO_API_DB_PASSWORD", "zm-api-iso-local"),
+}
+SERVICE_PASSWORDS = {
+    "pilot": os.environ.get("ZM_ADMIN_USER_PASSWORD", "zm-local-only"),
+    "qsr": os.environ.get("ZM_ISO_ADMIN_USER_PASSWORD", "zm-iso-local-only"),
+}
+SERVICE_PASSWORDS["down"] = SERVICE_PASSWORDS["pilot"]  # nothing listens there anyway
 PG_ISO = int(os.environ.get("PG_ISO_PORT", "5434"))
 VAULTS = {"pilot": 54322, "qsr": PG_ISO}
 ENGINES = {
@@ -107,8 +115,8 @@ async def platform_sql(statement: str, **params: Any) -> list[dict]:
 
 async def register(name: str, vault: str) -> tuple[uuid.UUID, str]:
     slug = f"{name}-{uuid.uuid4().hex[:8]}"
-    dsn = f"postgresql://zm_api:{ZM_API_PASSWORD}@localhost:{VAULTS[vault]}/postgres"
-    sealed = secrets.seal({"zm_api_dsn": dsn, "service_account_password": SERVICE_PASSWORD})
+    dsn = f"postgresql://zm_api:{ZM_API_PASSWORDS[vault]}@localhost:{VAULTS[vault]}/postgres"
+    sealed = secrets.seal({"zm_api_dsn": dsn, "service_account_password": SERVICE_PASSWORDS[name]})
     rows = await platform_sql(
         "insert into platform.clients (slug, name, workspace_code, template_key, status,"
         " operaton_url, bucket, secrets) values (:slug, :name, :code, 'matrix-retail', 'ready',"
@@ -160,24 +168,29 @@ def clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[Clients]:
         vault_sql(vault, "delete from app.releases")
         vault_sql(vault, "delete from app.drafts")
     for name in ("pilot", "qsr"):
-        with httpx.Client(base_url=ENGINES[name], auth=("zm-service", SERVICE_PASSWORD)) as op:
+        with engine_client(name) as op:
             found = op.get("deployment", params={"name": f"{c.slugs[name]}-release"}).json()
             for d in found:
                 op.delete(f"deployment/{d['id']}", params={"cascade": "true"})
 
 
+def engine_client(engine: str) -> httpx.Client:
+    """`engine`'s REST API as its own service account."""
+    return httpx.Client(base_url=ENGINES[engine], auth=("zm-service", SERVICE_PASSWORDS[engine]))
+
+
 def deployments(engine: str, name: str) -> list[dict]:
-    with httpx.Client(base_url=ENGINES[engine], auth=("zm-service", SERVICE_PASSWORD)) as op:
+    with engine_client(engine) as op:
         return op.get("deployment", params={"name": name}).json()
 
 
 def deployment_count(engine: str) -> int:
-    with httpx.Client(base_url=ENGINES[engine], auth=("zm-service", SERVICE_PASSWORD)) as op:
+    with engine_client(engine) as op:
         return op.get("deployment/count").json()["count"]
 
 
 def definitions(engine: str, deployment_id: str) -> list[str]:
-    with httpx.Client(base_url=ENGINES[engine], auth=("zm-service", SERVICE_PASSWORD)) as op:
+    with engine_client(engine) as op:
         found = op.get("process-definition", params={"deploymentId": deployment_id}).json()
     return sorted(d["key"] for d in found)
 
@@ -203,7 +216,7 @@ def test_first_publish_goes_to_the_clients_own_engine_and_vault(clients: Clients
     assert "zm_" + clients.slugs["pilot"].replace("-", "_") + "__store_launch" in keys
 
     # the level groups exist in pilot's engine
-    with httpx.Client(base_url=ENGINES["pilot"], auth=("zm-service", SERVICE_PASSWORD)) as op:
+    with engine_client("pilot") as op:
         assert op.get("group/legal__L1").status_code == 200
         assert op.get("group/management__L1").status_code == 200
 
@@ -285,7 +298,7 @@ def test_a_form_change_is_v2_and_running_cases_keep_v1_forms(clients: Clients) -
         " from app.releases where version = 2",
     )
     assert new_title == [("Site name (as on the lease)",)]
-    with httpx.Client(base_url=ENGINES["pilot"], auth=("zm-service", SERVICE_PASSWORD)) as op:
+    with engine_client("pilot") as op:
         resources = op.get(f"deployment/{v2.deployment_id}/resources").json()
     assert RELEASE_RESOURCE in {r["name"] for r in resources}
     assert task["formKey"].startswith("zm:")
