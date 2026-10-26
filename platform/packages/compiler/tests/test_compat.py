@@ -33,7 +33,8 @@ def test_everything_we_ship_passes_today(capsys: pytest.CaptureFixture[str]) -> 
     assert compat.main(["--fixtures"]) == 0
     out = capsys.readouterr().out
     assert "4 configs compile and draw" in out
-    assert "'task_inbox' is placed" in out and "planned in #30" in out
+    assert "'case_table' is placed" in out and "planned in #92" in out
+    assert "'task_inbox'" not in out  # built (#30): checked against its manifest, not counted
 
 
 def test_a_removed_layout_names_the_template_and_page() -> None:
@@ -94,7 +95,6 @@ def test_a_built_block_is_checked_against_its_manifest() -> None:
         },
     }
     real = packages(blocks={"task_inbox": manifest})
-    del real.planned["task_inbox"]
     ui = {
         "pages": [
             {
@@ -116,9 +116,9 @@ def test_a_built_block_is_checked_against_its_manifest() -> None:
 
 
 def test_a_planned_block_with_a_manifest_is_stale() -> None:
-    real = packages(blocks={"task_inbox": {"name": "task_inbox", "regions": ["main"]}})
+    real = packages(blocks={"case_table": {"name": "case_table", "regions": ["main"]}})
     assert messages(compat.check_packages(real)) == [
-        "planned.json · task_inbox: has a manifest now: remove it from planned.json"
+        "planned.json · case_table: has a manifest now: remove it from planned.json"
     ]
 
 
@@ -155,4 +155,4 @@ def test_a_layout_dropped_from_the_registry_doesnt_count(tmp_path: Path) -> None
     loaded = compat.Packages.load(root)
     assert set(loaded.layouts) == {"standard"}
     assert compat.registered(real, "layouts") == {"standard", "case"}
-    assert compat.registered(real, "blocks") == set()
+    assert compat.registered(real, "blocks") == {"task_inbox"}  # blocks are keyed by version

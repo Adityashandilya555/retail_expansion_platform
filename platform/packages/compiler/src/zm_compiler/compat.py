@@ -32,8 +32,9 @@ PLATFORM = Path(__file__).resolve().parents[4]
 BLOCKS_DIR = PLATFORM / "packages/zm-blocks"
 TEMPLATES_DIR = PLATFORM / "packages/templates"
 FIXTURES_DIR = PLATFORM / "tests/compat"
-# `export const layouts: … = { name: { manifest: …`: the names the shell can draw
-_REGISTERED = re.compile(r"^\s*(\w+):\s*\{\s*manifest:", re.M)
+# the names the shell can draw: `layouts = { name: { manifest: …` and, by version (#27),
+# `blocks = { name: { 1: { manifest: …`
+_REGISTERED = re.compile(r"^\s*(\w+):\s*\{\s*(?:\d+:\s*\{\s*)?manifest:", re.M)
 
 
 def registered(source: str, export: str) -> set[str]:
