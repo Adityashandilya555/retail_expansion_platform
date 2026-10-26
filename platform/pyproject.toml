@@ -58,4 +58,5 @@ markers = [
 addopts = ["-m", "not integration and not isolation", "--import-mode=importlib"]
 
 [tool.coverage.run]
-source = ["zm_api", "zm_worker", "zm_compiler", "zm_schema"]
+# scripts/ too: the demo driver and the local helpers (#31) are run by tests from their path
+source = ["zm_api", "zm_worker", "zm_compiler", "zm_schema", "scripts"]

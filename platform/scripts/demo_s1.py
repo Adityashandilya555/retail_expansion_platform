@@ -1,9 +1,11 @@
 """Sprint 1 demo driver (#31): put Matrix Retail cases at three different stages, through the API.
 
-    uv run python scripts/demo_s1.py --api https://<api> --client <workspace code> \\
-        [--users .demo-users.json] [--app-url https://<client app>]
+    API_BASE_URL=https://<api> uv run python scripts/demo_s1.py --client <workspace code> \\
+        [--app-url https://<client app>]
 
-The users file holds the demo users with their passwords (gitignored; never commit it):
+The API comes from API_BASE_URL (http or https). The users file is DEMO_USERS_FILE (default
+`.demo-users.json`, inside the current directory) and holds the demo users with their passwords
+(gitignored; never commit it):
 `{"users": [{"email", "password", "department", "level"}, ...]}` with at least BD L1, BD L2,
 Legal L1 and Legal L2. `zm-api users seed` prints the passwords of users it creates.
 
@@ -229,17 +231,37 @@ def _paths(http: httpx.Client) -> dict[str, dict[str, Any]]:
         return {}
 
 
-def main(argv: list[str] | None = None) -> int:
+def api_url() -> str:
+    """API_BASE_URL, which must be an http(s) URL with a host."""
+    url = httpx.URL(os.environ.get("API_BASE_URL", ""))
+    if url.scheme not in {"http", "https"} or not url.host:
+        raise DemoError("set API_BASE_URL to the platform API, e.g. https://api.example.com")
+    return str(url)
+
+
+def users_file() -> Path:
+    """DEMO_USERS_FILE (default .demo-users.json): a file inside the current directory only."""
+    here = Path.cwd().resolve()
+    path = (here / os.environ.get("DEMO_USERS_FILE", ".demo-users.json")).resolve()
+    if not path.is_relative_to(here) or not path.is_file():
+        raise DemoError(f"no users file at {path.name} inside {here} (DEMO_USERS_FILE)")
+    return path
+
+
+def main(argv: list[str] | None = None, transport: httpx.BaseTransport | None = None) -> int:
     parser = argparse.ArgumentParser(prog="demo_s1", description=__doc__.split("\n")[0])
-    parser.add_argument("--api", required=True, help="the platform API's base URL")
     parser.add_argument("--client", required=True, help="the client's workspace code")
-    parser.add_argument("--users", default=".demo-users.json", help="demo users with passwords")
     parser.add_argument(
         "--app-url", default=os.environ.get("ZM_WEB_URL", ""), help="client app (ZM_WEB_URL)"
     )
     args = parser.parse_args(argv)
-    users = json.loads(Path(args.users).read_text())["users"]
-    with httpx.Client(base_url=args.api, timeout=60) as http:
+    try:
+        base, path = api_url(), users_file()
+    except DemoError as e:
+        print(f"demo_s1: {e}", file=sys.stderr)
+        return 2
+    users = json.loads(path.read_text())["users"]
+    with httpx.Client(base_url=base, timeout=60, transport=transport) as http:
         try:
             codes = drive(http, args.client, users)
         except DemoError as e:

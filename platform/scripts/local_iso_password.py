@@ -9,6 +9,7 @@ Operaton's 3 s login delay, so a stack that is already rotated answers at once.
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -31,12 +32,12 @@ OLD = ENV.get("ZM_ADMIN_USER_PASSWORD", "zm-local-only")
 NEW = ENV.get("ZM_ISO_ADMIN_USER_PASSWORD", "zm-iso-local-only")
 
 
-def main() -> int:
-    with httpx.Client(base_url=BASE, timeout=10) as http:
+def main(http: httpx.Client | None = None, sleep: Callable[[float], None] = time.sleep) -> int:
+    with http or httpx.Client(base_url=BASE, timeout=10) as http:
         if http.get("user/count", auth=(USER, NEW)).status_code == 200:
             print("operaton-iso: service password already its own")
             return 0
-        time.sleep(4)  # the failed try above locks the user for 3 s
+        sleep(4)  # the failed try above locks the user for 3 s
         body = {"password": NEW, "authenticatedUserPassword": OLD}
         done = http.put(f"user/{USER}/credentials", json=body, auth=(USER, OLD))
     if done.status_code != 204:

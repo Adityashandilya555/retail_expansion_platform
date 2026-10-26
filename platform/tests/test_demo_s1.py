@@ -83,3 +83,46 @@ def test_check_cases_api_needs_every_code_once_it_exists() -> None:
     assert demo.check_cases_api(http, session, ["MX-0001", "MX-0002"]) is True
     with pytest.raises(demo.DemoError, match="MX-0003"):
         demo.check_cases_api(http, session, ["MX-0001", "MX-0003"])
+
+
+def test_main_runs_the_drive_with_the_api_and_users_from_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture
+) -> None:
+    import json
+
+    import httpx
+
+    demo = demo_driver()
+    (tmp_path / ".demo-users.json").write_text(json.dumps({"users": []}))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("API_BASE_URL", "https://api.test")
+    monkeypatch.delenv("DEMO_USERS_FILE", raising=False)
+    transport = httpx.MockTransport(lambda r: httpx.Response(500))
+    # no users in the file: the drive stops at sign-in and says which role is missing
+    assert demo.main(["--client", "PILOT"], transport=transport) == 1
+    assert "no bd L1 user" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"API_BASE_URL": "file:///etc/passwd"}, "API_BASE_URL"),
+        ({"API_BASE_URL": ""}, "API_BASE_URL"),
+        ({"API_BASE_URL": "https://api.test", "DEMO_USERS_FILE": "../outside.json"}, "users file"),
+        ({"API_BASE_URL": "https://api.test", "DEMO_USERS_FILE": "missing.json"}, "users file"),
+    ],
+)
+def test_main_refuses_a_bad_url_or_a_file_outside_the_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture, env, message
+) -> None:
+    demo = demo_driver()
+    work = tmp_path / "work"
+    work.mkdir()
+    (tmp_path / "outside.json").write_text("{}")
+    monkeypatch.chdir(work)
+    for var in ("API_BASE_URL", "DEMO_USERS_FILE"):
+        monkeypatch.delenv(var, raising=False)
+    for var, value in env.items():
+        monkeypatch.setenv(var, value)
+    assert demo.main(["--client", "PILOT"]) == 2
+    assert message in capsys.readouterr().err

@@ -7,7 +7,7 @@ These steps assume the pilot client is provisioned and `ready` in the owner cons
 1. **Templates and the draft.** Run `uv run zm-api templates sync`. Provisioning already seeded the draft (S2-02b).
 2. **Publish v1.** In the owner console, go to Clients → Matrix Retail → Publish. Or call `POST /owner/clients/<id>/publish` with an owner token.
 3. **Demo users.** Run `railway run uv run zm-api users seed --client <slug> packages/templates/matrix-retail/demo-users.json`. It prints each new user's password once.
-4. **Users file.** Put those passwords in `platform/.demo-users.json`. The file is gitignored; never commit it and never paste it into chat or an issue.
+4. **Users file.** Put those passwords in `platform/.demo-users.json` (or another file inside `platform/`, named by `DEMO_USERS_FILE`). The file is gitignored; never commit it and never paste it into chat or an issue.
    ```json
    {"users": [
      {"email": "bd.l1@matrix-retail.demo", "password": "…", "department": "bd", "level": 1},
@@ -20,7 +20,7 @@ These steps assume the pilot client is provisioned and `ready` in the owner cons
 
 ## Run the driver (about 1 minute)
 ```bash
-uv run python scripts/demo_s1.py --api https://<api domain> --client <workspace code> --app-url https://<client app domain>
+API_BASE_URL=https://<api domain> uv run python scripts/demo_s1.py --client <workspace code> --app-url https://<client app domain>
 ```
 It exits 0 and prints three codes, for example `MX-0001 (at Legal), MX-0002 (first stage), MX-0003 (Legal done)`, plus the app URL and the workspace code. If it exits 1, the message says which step or check failed.
 
