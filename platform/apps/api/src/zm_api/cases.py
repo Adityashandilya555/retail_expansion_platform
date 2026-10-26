@@ -194,6 +194,25 @@ async def _start_values(conn: AsyncConnection, case_ids: Iterable[UUID]) -> dict
     return out
 
 
+HISTORY_CHUNK = 400  # process instances per history request; at most 500 when listing
+
+
+async def history_variables(ctx: ClientContext, ids: list[str], names: list[str]) -> list[Json]:
+    """The variables of many process instances: one request per HISTORY_CHUNK instances (a
+    single one for any list of up to 500 cases; more only for `?status=` over every case). More
+    rows than the chunk can hold would mean a cut-off answer, so that is an error."""
+    out: list[Json] = []
+    for i in range(0, len(ids), HISTORY_CHUNK):
+        chunk = ids[i : i + HISTORY_CHUNK]
+        limit = len(chunk) * len(names)  # each variable has one history row per instance
+        # one row more than the chunk can hold: getting it means the answer isn't what we asked
+        found = await ctx.operaton.history_variables(chunk, names, max_results=limit + 1)
+        if len(found) > limit:
+            raise RuntimeError(f"history request for {len(chunk)} cases passed {limit} rows")
+        out += found
+    return out
+
+
 def _by_instance(found: list[Json]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for v in found:
@@ -247,7 +266,7 @@ async def list_cases(
         f"m_{s['key']}" for wf in workflows.values() for fl in wf["flows"] for s in fl["stages"]
     }
     history = _by_instance(
-        await ctx.operaton.history_variables([c.process_instance_id for c in cases], sorted(names))
+        await history_variables(ctx, [c.process_instance_id for c in cases], sorted(names))
     )
     picked = []
     for c in cases:

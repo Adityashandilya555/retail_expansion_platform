@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 import respx
 from fastapi.testclient import TestClient
 
@@ -223,3 +224,38 @@ def test_masked_start_values_follow_the_start_form_only() -> None:
     assert cases.masked_start_values(form, values, {"legal": 1}) == {"site_name": "Indiranagar"}
     assert cases.masked_start_values(form, values, {"bd": 2}) == values
     assert cases.masked_start_values(None, values, {"bd": 2}) == {}
+
+
+class FakeEngine:
+    def __init__(self, rows_per_instance: int) -> None:
+        self.calls: list[tuple[int, int]] = []
+        self.per = rows_per_instance
+
+    async def history_variables(
+        self, ids: list[str], names: list[str], *, max_results: int
+    ) -> list:
+        self.calls.append((len(ids), max_results))
+        return [{"processInstanceId": i, "name": "case_status"} for i in ids] * self.per
+
+
+def test_history_is_read_in_chunks_and_a_full_page_is_an_error() -> None:
+    from types import SimpleNamespace
+
+    engine = FakeEngine(1)
+    ctx = SimpleNamespace(operaton=engine)
+    ids = [f"p{i}" for i in range(cases.HISTORY_CHUNK * 2 + 1)]
+    found = asyncio.run(cases.history_variables(ctx, ids, ["case_status", "m_legal"]))  # type: ignore[arg-type]
+    assert len(found) == len(ids)
+    full_page = cases.HISTORY_CHUNK * 2 + 1  # 2 names per instance, plus the one-too-many row
+    assert engine.calls == [
+        (cases.HISTORY_CHUNK, full_page),
+        (cases.HISTORY_CHUNK, full_page),
+        (1, 3),
+    ]
+    one = FakeEngine(1)
+    asyncio.run(cases.history_variables(SimpleNamespace(operaton=one), ids[:500], ["x"]))  # type: ignore[arg-type]
+    assert len(one.calls) == 2  # 400 + 100
+
+    full = SimpleNamespace(operaton=FakeEngine(2))  # more rows than 1 name allows: not trusted
+    with pytest.raises(RuntimeError, match="passed"):
+        asyncio.run(cases.history_variables(full, ids[:10], ["x"]))  # type: ignore[arg-type]

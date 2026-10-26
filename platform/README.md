@@ -184,7 +184,7 @@ For test clients only, `zm-worker deprovision <slug> --yes` deletes `operaton-<s
 ### Cases read API (#91)
 | Endpoint | What it returns |
 |---|---|
-| `GET /app/cases?flow=&status=open\|completed\|closed` | Every case (newest first, up to 500): `{code, flow, title, status, stages[{key, name, department, state}], fields, open_tasks, my_tasks, created_at, release_version}`. |
+| `GET /app/cases?flow=&status=open\|completed\|closed` | Every case (newest first, up to 500): `{code, flow, title, status, stages[{key, name, department, state, started_at, ended_at}], fields, open_tasks, my_tasks, created_at, release_version}`; stage times are set for closed cases (the detail always has them). |
 | `GET /app/cases/{code}` | The same, plus stage times, the start form's `sections` as the user sees them, the open `tasks` they can see (`can_act`), and the `history` of committed decisions. Another client's code is 404. |
 
 **Stage states** come from Operaton's history of the main process: `case_status` and one `m_<stage>` per stage, set by the compiler. The list makes one variable request for all cases. A closed case also reads its call activities' history, so a stage the close cancelled shows `closed`, not `done`. Field values follow level masking; everyone in the client sees every case (scope rules: #56).
