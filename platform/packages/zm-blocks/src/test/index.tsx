@@ -1,5 +1,6 @@
-// Test fixtures for the renderer and the shell: a `GET /app/ui` answer and stand-in blocks.
-// The real blocks arrive with S1-14 (task_inbox, #30) and S1-25 (case_*, #92).
+// Test fixtures for the renderer and the shell: a `GET /app/ui` answer and stand-in blocks, so
+// those tests need no API. The case blocks (case_*, #92) arrive with S1-25.
+import taskInboxManifest from "../../blocks/task_inbox/manifest.json";
 import type { AppUi, BlockEntry, BlockManifest, BlockRegistry } from "../registry";
 
 /** Legal L1's `GET /app/ui` on release v1 (the API has already dropped other departments' pages). */
@@ -70,15 +71,9 @@ function stub(name: string, regions: string[], properties: Record<string, unknow
   };
 }
 
-/** Stand-ins with the real manifests' regions and props (task_inbox as specified in #30). */
+/** Stand-ins with the real manifests' regions and props (task_inbox's real manifest itself). */
 export const testBlocks: BlockRegistry = {
-  task_inbox: {
-    1: stub("task_inbox", ["main", "aside"], {
-      scope: { enum: ["mine", "team"], default: "mine" },
-      flow: { type: "string" },
-      group_by: { enum: ["case", "none"], default: "case" },
-    }),
-  },
+  task_inbox: { 1: { ...stub("task_inbox", []), manifest: taskInboxManifest } },
   case_table: { 1: stub("case_table", ["main"], { flow: { type: "string" }, stages: { type: "array" } }) },
   case_header: { 1: stub("case_header", ["header"], { title_field: { type: "string" } }) },
   case_fields: { 1: stub("case_fields", ["overview"]) },

@@ -1,0 +1,16 @@
+{
+  "name": "task_inbox",
+  "version": 1,
+  "description": "Open tasks for the current user (mine) or their department (team), grouped by case. Each row opens the task on its case page.",
+  "regions": ["main", "aside"],
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "scope": { "enum": ["mine", "team"], "default": "mine" },
+      "flow": { "type": "string" },
+      "group_by": { "enum": ["case", "none"], "default": "case" },
+      "columns": { "type": "array", "items": { "enum": ["case", "task", "stage", "created", "assignee"] } }
+    }
+  }
+}
