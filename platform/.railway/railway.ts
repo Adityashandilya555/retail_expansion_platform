@@ -5,7 +5,7 @@
 // marked preserve() keep each environment's own values. Run from platform/ after `railway link`,
 // once per environment, from the branch that environment tracks: production only from a clean
 // checkout of origin/release (applying from main would push unpromoted config), test from main:
-//   railway environment test        # or production
+//   npx @railway/cli environment test   # or production
 //   npx @railway/cli config plan    # read-only diff against the linked environment
 //   npx @railway/cli config apply   # applies after confirmation
 // Per-client `operaton-<slug>` services are created by the worker through the Railway API (S2-02b),
@@ -26,8 +26,19 @@ const REGION = "asia-southeast1-eqsg3a"; // D2
 const shared = ["/platform/packages/**", "/platform/pyproject.toml", "/platform/uv.lock"];
 
 export default defineRailway((ctx) => {
-  // what each environment deploys: test is every merge to main; production only what was promoted
-  const branch = ctx.isEnvironment("production") ? "release" : "main";
+  // what each environment deploys: test is every merge to main; production only what was promoted.
+  // Names are compared exactly; an unknown or missing one (a renamed environment, `config pull`
+  // without a link) fails rather than quietly pointing production back at main.
+  const branch = ctx.isEnvironment("production")
+    ? "release"
+    : ctx.isEnvironment("test")
+      ? "main"
+      : undefined;
+  if (branch === undefined) {
+    throw new Error(
+      `railway.ts: unknown environment ${ctx.environment ?? "(none)"}; expected test or production`,
+    );
+  }
   const source = github(REPO, { branch, rootDirectory: "platform" });
 
   const api = service("api", {
