@@ -169,7 +169,7 @@ Implementing: restate the spec → failing tests from acceptance criteria → im
 Milestones: `Sprint 1 — Foundation`, `Sprint 2 — Configure and run`, `Backlog`.
 
 ## Git and PRs
-Branch `<issue#>-<slug>` from `main`; one issue per PR; title `#<n> <title>`; body `Closes #<n>`, summary, test evidence, env vars. Conventional commits. No direct pushes to `main` or `release`, no force-push on shared branches. Feature PRs target `main`; production moves only by a `main` → `release` PR (merge commit, 1 review; `platform/docs/ENVIRONMENTS.md`). Adi (repo owner) merges: his own PRs need no second approval once CI is green, and other collaborators' PRs need his review.
+Branch `<issue#>-<slug>` from `main`; one issue per PR; title `#<n> <title>`; body `Closes #<n>`, summary, test evidence, env vars. Conventional commits. No direct pushes to `main` or `release`, no force-push on shared branches. Feature PRs target `main`; production moves only by a `main` → `release` PR (merge commit, 1 review; `platform/docs/ENVIRONMENTS.md`). Adi (repo owner) merges: his own PRs to `main` need no second approval once CI is green, and other collaborators' PRs need his review. A `main` → `release` promotion always needs another collaborator's approval (GitHub doesn't count the author's own; no bypass).
 
 ## Code conventions
 - Python 3.12, typed, Pydantic v2 at boundaries, async SQLAlchemy, `httpx.AsyncClient` for Operaton, JSON logs with `client` + `request_id`.

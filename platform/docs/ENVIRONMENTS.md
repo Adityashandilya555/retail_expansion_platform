@@ -16,14 +16,17 @@ Both environments run the same images and configuration, with different data and
 | Client vaults | Supabase CLI (`pilot-local`), `pg-iso` (`qsr-local`) | `zm-test-<slug>` (`SUPABASE_PROJECT_PREFIX=zm-test-`) | `zm-<slug>` (`SUPABASE_PROJECT_PREFIX=zm-`) |
 | Railway environment | — (docker compose) | `test` in project `zm-platform` | `production` in project `zm-platform` |
 | Client engines | `operaton-pilot`, `operaton-iso` | `operaton-<slug>` in Railway `test` only | `operaton-<slug>` in Railway `production` only |
-| `ENVIRONMENT` | `local` | `test` | `production` |
+| `ENVIRONMENT` (Railway; informational, nothing reads it yet) | `local` | `test` | `production` |
 
 Replace each TBD with the real URL when it is created (checklist step 6). URLs are not secrets; tokens and passwords never go here.
 
 ## Rules
 - **Nothing is shared between test and production:** not `JWT_SECRET`, not `SECRETS_ENCRYPTION_KEY`, and not a Supabase project. A token from one is refused by the other (401). A sealed secret from one can't be opened by the other.
 - **Same names, different values:** the variables are the same in both Railway environments. In `.railway/railway.ts` they are `preserve()`, so each environment keeps its own values.
-- **Branch tracking comes from the file:** `.railway/railway.ts` sets each environment's branch (`ctx.isEnvironment("production") ? "release" : "main"`). Apply it once per environment.
+- **Branch tracking comes from the file:** `.railway/railway.ts` sets each environment's branch (`ctx.isEnvironment("production") ? "release" : "main"`; it compares the environment **name**, case-sensitive). Apply it once per environment, **from the branch that environment tracks**:
+  - production: only from a clean checkout of `origin/release`. Applying from `main` would push unpromoted config, such as `OPERATON_IMAGE`, `preDeploy` or watch patterns;
+  - test: from `main`.
+- **Promotion needs a second person.** `release` requires 1 approving review, and GitHub doesn't count a PR author's own approval. Nobody can bypass it, not even the repo admin. So every promotion and hotfix needs another collaborator's review. That's intended: it's the "checked on test by someone else" step.
 - **Each worker provisions only its own environment:** Railway provides `RAILWAY_ENVIRONMENT_ID`, so a test client's `operaton-<slug>` is created only in `test`.
 - **Demo rehearsals run on test first** (S1-16, S2-20).
 
@@ -31,14 +34,14 @@ Replace each TBD with the real URL when it is created (checklist step 6). URLs a
 1. Merge to `main` as usual. Test redeploys: Railway `api`/`worker` for their watch paths, and the Vercel Preview of `main`.
 2. Check the change on test (the test URLs above).
 3. Open a PR **`main` → `release`** titled `release: <date>`, listing the PRs it carries.
-4. It needs 1 approving review (ruleset `release`). Merge it with a **merge commit**, never squash or rebase, so `release` keeps `main`'s history.
+4. It needs 1 approving review from someone other than the author (ruleset `release`). The ruleset allows only a **merge commit**, so `release` keeps `main`'s history. An approval stays valid if more PRs merge to `main` meanwhile; the promotion then carries them too, so re-check the PR's commit list before merging.
 5. Production redeploys from `release`: Railway `api` and `worker`, and the Vercel production builds of `zm-web` and `zm-console`.
 6. Check production's `/healthz` and the client app.
 
 **Hotfix:** fix on `main` (PR), check on test, then promote as above. Nothing is pushed to `release` directly.
 
 ## Setting it up (checklist for #61)
-These are the cloud steps; the repo side is in PR #61. Secrets are typed into the dashboards by a person, never into git, issues, PRs or chat.
+These are the cloud steps; the repo side is in PR #131. Secrets are typed into the dashboards by a person, never into git, issues, PRs or chat.
 
 1. **Billing (HUMAN):** approve the extra Supabase compute for the test projects (supabase.com → Organization → Billing). The org is on Pro (D18).
 2. **Supabase test control plane** (supabase MCP):
@@ -48,27 +51,30 @@ These are the cloud steps; the repo side is in PR #61. Secrets are typed into th
    4. Run `get_advisors` and fix anything it reports.
 3. **The `release` branch and its ruleset** (do this before production tracks it):
    ```bash
+   git fetch origin
    git push origin origin/main:refs/heads/release
    gh api -X POST repos/Adityashandilya555/retail_expansion_platform/rulesets --input platform/infra/github/ruleset-release.json
    ```
-4. **Railway `test` environment** (railway MCP or dashboard):
-   1. Duplicate `production` as `test`.
-   2. In `test`, set new values for:
+4. **Railway `test` environment** (railway MCP or dashboard). A duplicate starts with **production's** variables: its database, its keys, `SUPABASE_PROJECT_PREFIX=zm-`. A test deploy before they are replaced would run `main`'s migrations against the production control plane, and a test worker would take production's provisioning jobs. So:
+   1. Duplicate `production` as `test` with the changes **staged, not deployed**. If a deploy starts anyway, remove the `api` and `worker` services from `test` until step 4.2 is done.
+   2. In `test`, replace every value before the first deploy:
       - `JWT_SECRET` and `SECRETS_ENCRYPTION_KEY`: new ones, never production's;
-      - `PLATFORM_DATABASE_URL`: `zm-platform-test`'s session pooler;
-      - `SUPABASE_PLATFORM_*`;
+      - `PLATFORM_DATABASE_URL` (session pooler) and `SUPABASE_PLATFORM_*`: `zm-platform-test`'s;
       - `SUPABASE_PROJECT_PREFIX=zm-test-`;
-      - `ENVIRONMENT=test`;
       - `CORS_ALLOWED_ORIGINS`: the two test frontend URLs only;
       - `API_BASE_URL`: the test API domain;
-      - `SUPABASE_ACCESS_TOKEN`, `SUPABASE_ORG_ID` and `RAILWAY_API_TOKEN`: a project token for the same project.
-   3. Run `railway environment test`, then `npx @railway/cli config plan`. The plan should show the services tracking `main`. Then `config apply`.
+      - `ENVIRONMENT=test`;
+      - `RAILWAY_API_TOKEN`: a **new project token created for the `test` environment**. A project token is scoped to one environment, so production's can't create services in `test`. `RAILWAY_API_TOKEN_TYPE` is unchanged.
+      - `SUPABASE_ACCESS_TOKEN` and `SUPABASE_ORG_ID`: the same org values as production (one Pro org, D18). The prefix keeps the projects apart.
+      - Third-party keys (`ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `SENTRY_*`), once used: separate test keys are recommended but optional.
+   3. From `main`, run `railway environment test`, then `npx @railway/cli config plan`. The plan should show the services tracking `main`, and **no service created or deleted**. If it shows creates, the duplicated environment doesn't carry the `platform` partial's ownership: transfer it with `railway config partials` first. Then `config apply`.
    4. Run `railway domain --service api` in `test`, and put the domain in the table above.
-5. **Railway `production`:** run `railway environment production`, then `npx @railway/cli config plan`. The only change should be the source branch, `main` → `release`. Then `config apply`. Do this after step 3, so the branch exists.
+5. **Railway `production`:** do this after step 3, so the branch exists, and **from a clean checkout of `origin/release`**. Run `railway environment production`, then `npx @railway/cli config plan`. The only change should be the source branch, `main` → `release`. Then `config apply`.
 6. **Vercel** (vercel MCP or dashboard), for both `zm-web` and `zm-console`:
    1. Settings → Git → Production Branch = `release`.
-   2. Settings → Environment Variables → Preview: `VITE_API_BASE_URL` = the test API, `ENVIRONMENT=test`.
-   3. Redeploy the `main` Preview, then fill in the table.
+   2. Settings → Environment Variables: `VITE_API_BASE_URL` = the test API, scoped to **Preview, branch `main`**. Scoped to all of Preview, every PR preview would call the test API and be refused by its CORS (which lists only the `git-main` URLs).
+   3. Settings → Deployment Protection: Pro protects preview URLs with Vercel Authentication by default. Allow the `main` branch URL (or give test a custom domain), so rehearsals and testers without a Vercel seat can open it.
+   4. Redeploy the `main` Preview, then fill in the table.
 7. **Verify, and record the results in #61:**
    - **Branch tracking:** a merge to `main` touching `platform/apps/api/**` deploys test's `api` only (`list-deployments` per environment). The first `main` → `release` PR redeploys production's `api` and `worker`, and rebuilds the Vercel production frontends.
    - **Health:** `curl https://<test api>/healthz` and `curl https://<production api>/healthz` both answer `{"ok": true}`.

@@ -3,7 +3,8 @@
 // source of truth for the `api` and `worker` services in both environments (D16, #61): `test` tracks
 // `main`, `production` tracks `release` (promoted from main by PR; docs/ENVIRONMENTS.md). Variables
 // marked preserve() keep each environment's own values. Run from platform/ after `railway link`,
-// once per environment:
+// once per environment, from the branch that environment tracks: production only from a clean
+// checkout of origin/release (applying from main would push unpromoted config), test from main:
 //   railway environment test        # or production
 //   npx @railway/cli config plan    # read-only diff against the linked environment
 //   npx @railway/cli config apply   # applies after confirmation
