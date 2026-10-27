@@ -5,6 +5,7 @@ Read by every coding agent working on Z-Matrix. Three collaborators work here, e
 ## Repository
 - **This repo:** `Adityashandilya555/retail_expansion_platform`, a GitHub **fork of `operaton/operaton`** (Apache 2.0). Issues, PRs and milestones live here.
 - **Our code lives only under `platform/`.** Everything else at the root is Operaton, kept identical to upstream unless an `area:engine` issue explicitly changes it.
+- **Environments (D16):** `main` deploys to **test**, and `release` deploys to **production**, promoted from `main` by a reviewed PR. URLs, projects and the promotion steps: `platform/docs/ENVIRONMENTS.md`.
 - Remotes: `origin` = our fork, `upstream` = `operaton/operaton`. Sync upstream on a branch `chore/sync-upstream-<date>` with `git fetch upstream && git merge upstream/main`; never rebase `main`. Procedure and the list of fork deltas: `platform/docs/FORK.md`.
 - **PRs and issues always open on our fork.** GitHub defaults a fork's PRs to the parent repo. Always target our fork: `gh repo set-default Adityashandilya555/retail_expansion_platform` once, and pass `--repo Adityashandilya555/retail_expansion_platform` to `gh pr create` / `gh issue create`. A PR opened against `operaton/operaton` by mistake must be closed immediately.
 - Reference copies for mapping: a pristine upstream checkout (`../operaton` in the Retailexpansion workspace, indexed in Sourcegraph as `github.com/operaton/operaton`) and the prototype `github.com/Shrey2149/outpost`.
@@ -168,7 +169,7 @@ Implementing: restate the spec → failing tests from acceptance criteria → im
 Milestones: `Sprint 1 — Foundation`, `Sprint 2 — Configure and run`, `Backlog`.
 
 ## Git and PRs
-Branch `<issue#>-<slug>` from `main`; one issue per PR; title `#<n> <title>`; body `Closes #<n>`, summary, test evidence, env vars. Conventional commits. No direct pushes to `main`, no force-push on shared branches. Adi (repo owner) merges: his own PRs need no second approval once CI is green, and other collaborators' PRs need his review.
+Branch `<issue#>-<slug>` from `main`; one issue per PR; title `#<n> <title>`; body `Closes #<n>`, summary, test evidence, env vars. Conventional commits. No direct pushes to `main` or `release`, no force-push on shared branches. Feature PRs target `main`; production moves only by a `main` → `release` PR (merge commit, 1 review; `platform/docs/ENVIRONMENTS.md`). Adi (repo owner) merges: his own PRs need no second approval once CI is green, and other collaborators' PRs need his review.
 
 ## Code conventions
 - Python 3.12, typed, Pydantic v2 at boundaries, async SQLAlchemy, `httpx.AsyncClient` for Operaton, JSON logs with `client` + `request_id`.

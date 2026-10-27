@@ -8,7 +8,8 @@ on:
       - 'platform/**'
       - '.github/workflows/zm-*.yml'
   push:
-    branches: [main]
+    # main deploys to test, release to production (D16, platform/docs/ENVIRONMENTS.md)
+    branches: [main, release]
     paths:
       - 'platform/**'
       - '.github/workflows/zm-*.yml'
