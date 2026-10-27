@@ -1,0 +1,11 @@
+{
+  "name": "case_tasks",
+  "version": 1,
+  "description": "The open tasks on a case the user can act on, each opening its form inline (`?task=<id>` opens one directly), and the case's decision history: task, who, outcome, comment, when.",
+  "regions": ["tasks"],
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

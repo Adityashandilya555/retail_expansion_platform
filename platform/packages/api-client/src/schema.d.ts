@@ -959,6 +959,13 @@ export interface components {
             show: {
                 [key: string]: unknown;
             };
+            /**
+             * Show Labels
+             * @description The label of each field `show` may hold, from the release.
+             */
+            show_labels: {
+                [key: string]: string;
+            };
             task: components["schemas"]["TaskItem"];
         };
         /** TaskItem */

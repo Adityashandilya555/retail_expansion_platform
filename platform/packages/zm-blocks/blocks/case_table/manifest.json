@@ -1,0 +1,15 @@
+{
+  "name": "case_table",
+  "version": 1,
+  "description": "The cases of a flow, e.g. the Sites list: search, stage filter chips kept in the URL, status, days in the current stage and a mini stage tracker. `columns` picks from code, title, the flow's start field keys, stage, status, age, open_tasks and my_tasks; `stages` keeps only cases currently in those stages. A row opens the case page.",
+  "regions": ["main"],
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "flow": { "type": "string" },
+      "columns": { "type": "array", "items": { "type": "string" } },
+      "stages": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "case_fields",
+  "version": 1,
+  "description": "A case's start-form values, read-only, by section, as the user's level may see them. `sections` keeps only those section keys.",
+  "regions": ["overview"],
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sections": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}

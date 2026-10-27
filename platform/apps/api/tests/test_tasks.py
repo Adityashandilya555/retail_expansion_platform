@@ -410,6 +410,7 @@ def test_submit_completes_in_operaton_and_commits_long_text_only_here(
     detail = world.http.get(f"/app/tasks/{verdict_item['id']}", headers=world.auth("legal2")).json()
     assert detail["editable"] is True
     assert detail["show"]["dd_notes"] == notes and detail["show"]["dd_title_doc"] is True
+    assert detail["show_labels"]["dd_title_doc"] == "Title document clear"  # from the release
 
 
 def test_a_crash_after_completing_is_finished_by_the_reconciler(

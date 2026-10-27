@@ -33,8 +33,8 @@ def test_everything_we_ship_passes_today(capsys: pytest.CaptureFixture[str]) -> 
     assert compat.main(["--fixtures"]) == 0
     out = capsys.readouterr().out
     assert "4 configs compile and draw" in out
-    assert "'case_table' is placed" in out and "planned in #92" in out
-    assert "'task_inbox'" not in out  # built (#30): checked against its manifest, not counted
+    # every block the templates place is built (#30, #92): checked against its manifest, not counted
+    assert "planned in" not in out
 
 
 def test_a_removed_layout_names_the_template_and_page() -> None:
@@ -48,7 +48,7 @@ def test_a_removed_layout_names_the_template_and_page() -> None:
 
 def test_a_removed_block_names_the_template_and_page() -> None:
     real = packages()
-    del real.planned["case_header"]  # neither built nor planned any more
+    del real.blocks["case_header"]  # its manifest gone, and not planned
     found = messages(compat.check_document("template qsr", template("qsr"), real))
     assert found == [
         "template qsr · page store: block 'case_header' (region header) has no manifest and"
@@ -116,7 +116,10 @@ def test_a_built_block_is_checked_against_its_manifest() -> None:
 
 
 def test_a_planned_block_with_a_manifest_is_stale() -> None:
-    real = packages(blocks={"case_table": {"name": "case_table", "regions": ["main"]}})
+    real = packages(
+        blocks={"case_table": {"name": "case_table", "regions": ["main"]}},
+        planned={"case_table": "#92"},
+    )
     assert messages(compat.check_packages(real)) == [
         "planned.json · case_table: has a manifest now: remove it from planned.json"
     ]
@@ -155,4 +158,11 @@ def test_a_layout_dropped_from_the_registry_doesnt_count(tmp_path: Path) -> None
     loaded = compat.Packages.load(root)
     assert set(loaded.layouts) == {"standard"}
     assert compat.registered(real, "layouts") == {"standard", "case"}
-    assert compat.registered(real, "blocks") == {"task_inbox"}  # blocks are keyed by version
+    # blocks are keyed by version
+    assert compat.registered(real, "blocks") == {
+        "task_inbox",
+        "case_table",
+        "case_header",
+        "case_fields",
+        "case_tasks",
+    }

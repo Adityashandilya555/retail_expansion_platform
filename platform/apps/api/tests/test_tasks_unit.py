@@ -57,6 +57,12 @@ def form(doc: dict[str, Any], key: str) -> dict[str, Any]:
     return {"schema": spec.schema, "layout": spec.layout}
 
 
+def test_show_labels_come_from_the_releases_fields() -> None:
+    """A task's read-only `show` panel names each value as the release does (#92)."""
+    labels = tasks.field_labels(matrix_retail(), ["dd_notes", "dd_title_doc", "gone"])
+    assert labels == {"dd_notes": "Notes", "dd_title_doc": "Title document clear", "gone": "gone"}
+
+
 def test_a_section_hidden_below_l2_is_left_out_for_l1() -> None:
     full = form(with_hidden_section(matrix_retail()), "legal_dd_checklist")
     l1 = tasks.visible_form(full, {"legal": 1})

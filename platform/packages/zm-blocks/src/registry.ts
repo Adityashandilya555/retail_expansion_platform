@@ -2,6 +2,14 @@
 // configures them per client by their manifests; it never writes code (AGENTS.md, step 3).
 import type { components } from "@zm/api-client";
 import type { ComponentType, ReactNode } from "react";
+import { CaseFields } from "../blocks/case_fields/Block";
+import caseFieldsManifest from "../blocks/case_fields/manifest.json";
+import { CaseHeader } from "../blocks/case_header/Block";
+import caseHeaderManifest from "../blocks/case_header/manifest.json";
+import { CaseTable } from "../blocks/case_table/Block";
+import caseTableManifest from "../blocks/case_table/manifest.json";
+import { CaseTasks } from "../blocks/case_tasks/Block";
+import caseTasksManifest from "../blocks/case_tasks/manifest.json";
 import { TaskInbox } from "../blocks/task_inbox/Block";
 import taskInboxManifest from "../blocks/task_inbox/manifest.json";
 import { CaseLayout } from "../layouts/case/Layout";
@@ -40,9 +48,13 @@ export type LayoutManifest = {
 export type LayoutProps = { regions: Partial<Record<string, ReactNode>> };
 export type LayoutEntry = { manifest: LayoutManifest; Layout: ComponentType<LayoutProps> };
 
-/** The case blocks (S1-25, #92) register here too. */
+/** Every block the shell can draw (task_inbox #30; the case blocks #92). */
 export const blocks: BlockRegistry = {
   task_inbox: { 1: { manifest: taskInboxManifest, Block: TaskInbox } },
+  case_table: { 1: { manifest: caseTableManifest, Block: CaseTable } },
+  case_header: { 1: { manifest: caseHeaderManifest, Block: CaseHeader } },
+  case_fields: { 1: { manifest: caseFieldsManifest, Block: CaseFields } },
+  case_tasks: { 1: { manifest: caseTasksManifest, Block: CaseTasks } },
 };
 
 export const layouts: Record<string, LayoutEntry> = {

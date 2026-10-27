@@ -62,6 +62,8 @@ class TaskDetail(_Model):
     form: FormOut
     show: dict[str, Any]
     """Read-only values from earlier steps, by field key."""
+    show_labels: dict[str, str]
+    """The label of each field `show` may hold, from the release."""
 
 
 class SubmitIn(_Model):
@@ -116,6 +118,7 @@ async def get_task(task_id: str, ctx: ClientCtx, uid: UserId) -> TaskDetail:
         editable=view.editable,
         form=FormOut(**view.form),
         show=show,
+        show_labels=tasks.field_labels(view.release.workflow, fields),
     )
 
 

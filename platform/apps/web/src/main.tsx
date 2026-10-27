@@ -2,17 +2,23 @@ import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 
-// /dev/ui exists only on the dev server: in production builds this branch and its chunk are dropped.
-const DevUi = import.meta.env.DEV ? lazy(() => import("./dev/DevUi")) : null;
-const showDevUi = DevUi !== null && window.location.pathname.startsWith("/dev/ui");
+// /dev/ui and /dev/layouts exist only on the dev server: in production builds this branch and the
+// pages' chunks are dropped.
+const Dev = !import.meta.env.DEV
+  ? null
+  : window.location.pathname.startsWith("/dev/ui")
+    ? lazy(() => import("./dev/DevUi"))
+    : window.location.pathname.startsWith("/dev/layouts")
+      ? lazy(() => import("./dev/DevLayouts"))
+      : null;
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing");
 createRoot(root).render(
   <StrictMode>
-    {showDevUi && DevUi ? (
+    {Dev ? (
       <Suspense fallback={null}>
-        <DevUi />
+        <Dev />
       </Suspense>
     ) : (
       <App />
