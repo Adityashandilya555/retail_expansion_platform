@@ -8,6 +8,8 @@ on:
       - 'platform/**'
       - '.github/workflows/zm-*.yml'
   push:
+    # main only: a promotion PR into release (D16, platform/docs/ENVIRONMENTS.md) runs this as a
+    # pull_request, and a push trigger on release would make zizmor treat the caches as poisonable
     branches: [main]
     paths:
       - 'platform/**'

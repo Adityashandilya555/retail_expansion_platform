@@ -46,7 +46,8 @@ class FakeRailway:
     """Just enough of Railway's GraphQL API, with state, to see what a re-run changes."""
 
     def __init__(self) -> None:
-        self.services: dict[str, str] = {}  # name → id
+        self.services: dict[str, str] = {}  # name → id, with an instance in this environment
+        self.elsewhere: dict[str, str] = {}  # name → id, only in another environment
         self.image: str | None = None
         self.variables: dict[str, str] = {}
         self.deployment: dict[str, str] | None = None
@@ -70,6 +71,7 @@ class FakeRailway:
                 "variables",
                 "deploymentLogs",
                 "serviceDelete",
+                "environment",
                 "project",
             )
             if name + "(" in query
@@ -77,8 +79,12 @@ class FakeRailway:
         self.calls.append((op, v))
         self.headers.append(request.headers)
         data: Any
-        if op == "project":
-            edges = [{"node": {"id": i, "name": n}} for n, i in self.services.items()]
+        if op == "environment":
+            edges = [{"node": {"serviceId": i, "serviceName": n}} for n, i in self.services.items()]
+            data = {"environment": {"serviceInstances": {"edges": edges}}}
+        elif op == "project":
+            both = {**self.elsewhere, **self.services}
+            edges = [{"node": {"id": i, "name": n}} for n, i in both.items()]
             data = {"project": {"services": {"edges": edges}}}
         elif op == "serviceCreate":
             self.services[v["input"]["name"]] = "svc-1"
@@ -453,9 +459,9 @@ def test_seed_draft_without_a_template_row_fails() -> None:
 def test_deprovision_deletes_the_service_and_the_project(fake: FakeRailway) -> None:
     mock(fake)
     fake.services["operaton-pilot"] = "svc-1"
-    delete = respx.delete(f"https://api.supabase.com/v1/projects/{SECRETS['supabase_ref']}").mock(
-        return_value=httpx.Response(200, json={})
-    )
+    project = f"https://api.supabase.com/v1/projects/{SECRETS['supabase_ref']}"
+    respx.get(project).mock(return_value=httpx.Response(200, json={"name": "zm-pilot"}))
+    delete = respx.delete(project).mock(return_value=httpx.Response(200, json={}))
     rec = Recorder()
 
     deleted = railway.deprovision(context(rec))
@@ -472,6 +478,9 @@ def test_deprovision_deletes_the_service_and_the_project(fake: FakeRailway) -> N
 @respx.mock
 def test_deprovision_needs_no_image(fake: FakeRailway) -> None:
     mock(fake)
+    respx.get(url__startswith="https://api.supabase.com/v1/projects/").mock(
+        return_value=httpx.Response(404)
+    )
     respx.delete(url__startswith="https://api.supabase.com/v1/projects/").mock(
         return_value=httpx.Response(404)
     )
@@ -481,10 +490,52 @@ def test_deprovision_needs_no_image(fake: FakeRailway) -> None:
 @respx.mock
 def test_deprovision_twice_deletes_nothing_more(fake: FakeRailway) -> None:
     mock(fake)
+    respx.get(url__startswith="https://api.supabase.com/v1/projects/").mock(
+        return_value=httpx.Response(404)
+    )
     respx.delete(url__startswith="https://api.supabase.com/v1/projects/").mock(
         return_value=httpx.Response(404)
     )
     assert railway.deprovision(context(Recorder())) == []
+
+
+@respx.mock
+def test_deprovision_never_deletes_another_prefixs_project(fake: FakeRailway) -> None:
+    """Test and production share one org token (D16): a test worker (prefix zm-test-) must not
+    delete a production `zm-` project, whatever ref its secrets hold."""
+    mock(fake)
+    project = f"https://api.supabase.com/v1/projects/{SECRETS['supabase_ref']}"
+    respx.get(project).mock(return_value=httpx.Response(200, json={"name": "zm-pilot"}))
+    delete = respx.delete(project).mock(return_value=httpx.Response(200, json={}))
+    with pytest.raises(RuntimeError, match="not a zm-test- project"):
+        railway.deprovision(context(Recorder(), replace(SETTINGS, prefix="zm-test-")))
+    assert not delete.called
+
+
+@respx.mock
+def test_deprovision_leaves_another_environments_engine_alone(fake: FakeRailway) -> None:
+    mock(fake)
+    fake.elsewhere["operaton-pilot"] = "svc-prod"
+    respx.get(url__startswith="https://api.supabase.com/v1/projects/").mock(
+        return_value=httpx.Response(404)
+    )
+    respx.delete(url__startswith="https://api.supabase.com/v1/projects/").mock(
+        return_value=httpx.Response(404)
+    )
+    assert railway.deprovision(context(Recorder())) == []
+    assert fake.ops("serviceDelete") == []
+
+
+@respx.mock
+def test_a_slug_used_in_another_environment_needs_a_person(fake: FakeRailway) -> None:
+    """The engine is looked up in this worker's environment; the same name existing only in
+    another one (a slug rehearsed on test) stops with what to do, and creates nothing."""
+    mock(fake)
+    fake.elsewhere["operaton-pilot"] = "svc-test"
+    with pytest.raises(NeedsHuman, match="already exists in another environment"):
+        railway.operaton_service(context(Recorder()))
+    assert fake.ops("serviceCreate") == [] and fake.ops("serviceInstance") == []
+    assert fake.ops("environment") == [{"e": "env"}]
 
 
 def test_deprovision_cli_needs_yes(monkeypatch, capsys) -> None:

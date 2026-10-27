@@ -30,7 +30,11 @@ PORT = 8080  # Operaton Run's port; Railway's health check probes $PORT (infra/o
 DEAD = {"FAILED", "CRASHED", "REMOVED", "SKIPPED"}
 LOG_CHARS = 800  # newest deployment log lines kept for last_error (which keeps 1000 characters)
 
-FIND = "query($p: String!) { project(id: $p) { services { edges { node { id name } } } } }"
+# Services belong to the project; each environment has its own instances (D16: test and
+# production share zm-platform). Look a client's engine up in this worker's environment only.
+FIND = """query($e: String!) { environment(id: $e) {
+    serviceInstances { edges { node { serviceId serviceName } } } } }"""
+FIND_PROJECT = "query($p: String!) { project(id: $p) { services { edges { node { id name } } } } }"
 CREATE = "mutation($input: ServiceCreateInput!) { serviceCreate(input: $input) { id } }"
 INSTANCE = """query($s: String!, $e: String!) { serviceInstance(serviceId: $s, environmentId: $e) {
     source { image } latestDeployment { id status }
@@ -86,9 +90,16 @@ def _base_url(ctx: Context) -> str:
     return f"http://{_service_name(ctx)}.railway.internal:{PORT}"  # NOSONAR python:S5332
 
 
-def _find(http: httpx.Client, auth: dict[str, str], project: str, name: str) -> str | None:
-    edges = gql(http, auth, FIND, p=project)["project"]["services"]["edges"]
-    return next((e["node"]["id"] for e in edges if e["node"]["name"] == name), None)
+def _find(http: httpx.Client, auth: dict[str, str], env: str, name: str) -> str | None:
+    """`name`'s service id if it has an instance in environment `env`."""
+    edges = gql(http, auth, FIND, e=env)["environment"]["serviceInstances"]["edges"]
+    return next((e["node"]["serviceId"] for e in edges if e["node"]["serviceName"] == name), None)
+
+
+def _elsewhere(http: httpx.Client, auth: dict[str, str], project: str, name: str) -> bool:
+    """Whether the project has `name` at all (then in another environment, if not in ours)."""
+    edges = gql(http, auth, FIND_PROJECT, p=project)["project"]["services"]["edges"]
+    return any(e["node"]["name"] == name for e in edges)
 
 
 def operaton_service(ctx: Context) -> None:
@@ -102,7 +113,14 @@ def operaton_service(ctx: Context) -> None:
     if not image:
         raise RuntimeError("set OPERATON_IMAGE on the worker")
     name = _service_name(ctx)
-    service = _find(ctx.http, auth, project, name)
+    service = _find(ctx.http, auth, env, name)
+    if service is None and _elsewhere(ctx.http, auth, project, name):
+        # a slug lives in one environment only (e.g. a demo rehearsed on test under this slug)
+        raise NeedsHuman(
+            f"{name} already exists in another environment of zm-platform. Give this client a "
+            f"slug not used there, or delete {name} in that environment (Railway → zm-platform "
+            f"→ that environment → {name} → Settings → Delete service)"
+        )
     if service is None:
         ctx.seal(deploy_pending=True)  # Railway's first deployment has none of our variables
         created = gql(
@@ -272,12 +290,22 @@ def deprovision(ctx: Context) -> list[str]:
     ctx.register(status="suspended")
     deleted: list[str] = []
     project, env, auth = _railway(ctx.settings)
-    service = _find(ctx.http, auth, project, _service_name(ctx))
+    service = _find(ctx.http, auth, env, _service_name(ctx))
     if service is not None:
         gql(ctx.http, auth, DELETE, id=service, e=env)
         deleted.append(f"Railway service {_service_name(ctx)}")
     ref = ctx.secrets.get("supabase_ref")
     if ref:
+        # test and production share one org token (D16): delete only a project of our prefix
+        found = ctx.mgmt.get(f"/v1/projects/{ref}")
+        if found.status_code != 404:
+            found.raise_for_status()
+            project_name = str(found.json().get("name", ""))
+            if not project_name.startswith(ctx.settings.prefix):
+                raise RuntimeError(
+                    f"Supabase project {ref} is {project_name!r}, not a {ctx.settings.prefix}"
+                    " project: not deleting it"
+                )
         response = ctx.mgmt.delete(f"/v1/projects/{ref}")
         if response.status_code != 404:
             response.raise_for_status()

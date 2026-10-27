@@ -225,10 +225,10 @@ tests/integration   smoke tests for the local stack
 ```
 
 ## Deploy: Railway (`api`, `worker`)
-Project `zm-platform`, environment `production`, region `asia-southeast1-eqsg3a` (D2). The two services are defined in **`.railway/railway.ts`**, using Railway Infrastructure as Code. Config as code (`railway.json`) is deprecated, and new services can't opt in to it.
+Project `zm-platform`, environments `test` (tracks `main`) and `production` (tracks `release`), region `asia-southeast1-eqsg3a` (D2, D16; `docs/ENVIRONMENTS.md`). The two services are defined in **`.railway/railway.ts`**, using Railway Infrastructure as Code. Config as code (`railway.json`) is deprecated, and new services can't opt in to it.
 
 What the file sets for each service:
-- **Source:** the GitHub repo, branch `main`, with root directory `platform`. The Dockerfiles use `platform/` as their build context, the same as compose, and `dockerfilePath` is relative to it.
+- **Source:** the GitHub repo, branch `main` in `test` and `release` in `production` (`ctx.isEnvironment("production")`), with root directory `platform`. Apply the file once per environment (`npx @railway/cli environment <name>`, then `config plan` / `config apply`; production only from a clean `origin/release` checkout). The Dockerfiles use `platform/` as their build context, the same as compose, and `dockerfilePath` is relative to it.
 - **Watch patterns:** repo-absolute, so only `platform/apps/<svc>/**`, `platform/packages/**`, `pyproject.toml` and `uv.lock` (plus `infra/supabase/**` for the worker) trigger a deploy. Operaton-only merges deploy nothing.
 - **Deploy:** one replica in `asia-southeast1-eqsg3a`; restart on failure is Railway's default, so the file doesn't set it.
 - **api only:** healthcheck `/healthz`. The api listens on `$PORT`, injected by Railway. Pre-deploy runs the control-plane migrations (`alembic -c apps/api/alembic.ini -x db=platform upgrade head`, S1-04); a failed migration stops the deploy.
