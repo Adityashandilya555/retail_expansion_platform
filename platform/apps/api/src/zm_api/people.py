@@ -19,7 +19,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, StringConstraints
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from zm_api import releases, secrets
@@ -125,25 +124,29 @@ async def _set_memberships(conn: AsyncConnection, user_id: UUID, ms: list[Member
 
 
 async def invite(ctx: ClientContext, body: UserIn, *, admin: bool = False) -> UserOut:
-    """An `invited` person with their memberships and a one-time invite for the worker to email."""
+    """An `invited` person with their memberships and a one-time invite for the worker to email.
+    Someone invited who never accepted gets this name and these memberships (a client admin stays
+    one) and a new invite in place of the old, whose link stops working; anyone else is a 409."""
     raw = token_bytes.token_urlsafe(32)
     async with ctx.db.begin() as conn:
-        try:
-            user_id = (
-                await conn.execute(
-                    text(
-                        "insert into app.users (email, name, is_client_admin)"
-                        " values (:e, :n, :a) returning id"
-                    ),
-                    {"e": body.email, "n": body.name, "a": admin},
-                )
-            ).scalar_one()
-        except IntegrityError:  # the only unique column is the email
+        user_id = (
+            await conn.execute(
+                text(
+                    "insert into app.users (email, name, is_client_admin) values (:e, :n, :a)"
+                    " on conflict (email) do update set name = excluded.name,"
+                    " is_client_admin = app.users.is_client_admin or excluded.is_client_admin"
+                    " where app.users.status = 'invited' returning id"
+                ),
+                {"e": body.email, "n": body.name, "a": admin},
+            )
+        ).scalar_one_or_none()
+        if user_id is None:
             raise Conflict(
                 "Email taken",
                 errors=[FieldError(path="/email", message="Someone here already uses this email")],
-            ) from None
+            )
         await _set_memberships(conn, user_id, body.memberships)
+        await conn.execute(text("delete from app.invites where user_id = :id"), {"id": user_id})
         await conn.execute(
             text(
                 "insert into app.invites (user_id, token_hash, sealed, expires_at)"

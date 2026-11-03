@@ -191,7 +191,8 @@ def test_the_owner_invites_the_client_admin_who_accepts_and_can_sign_in(world: W
         [],
     )
     world.ids[ADMIN] = admin["id"]
-    assert world.http.post(path, json=body, headers=world.owner).status_code == 409
+    again = world.http.post(path, json=body, headers=world.owner)  # not accepted yet: a new link
+    assert (again.status_code, again.json()["id"]) == (201, admin["id"]), again.text
     unknown = f"/owner/clients/{uuid.uuid4()}/client-admin"
     assert world.http.post(unknown, json=body, headers=world.owner).status_code == 404
 
@@ -208,6 +209,7 @@ def test_the_owner_invites_the_client_admin_who_accepts_and_can_sign_in(world: W
         " on u.id = i.user_id where u.email = %s",
         ADMIN,
     )
+    # one invite: the second one replaced the first
     assert len(stored) == 1 and stored[0][1] is None and stored[0][2] is not None
     assert raw.split(".", 1)[1] not in stored[0][0]
 
@@ -221,6 +223,7 @@ def test_the_owner_invites_the_client_admin_who_accepts_and_can_sign_in(world: W
 
     login = {"workspace_code": world.slug.upper(), "email": ADMIN, "password": PASSWORD}
     assert world.http.post("/auth/login", json=login).status_code == 200
+    assert world.http.post(path, json=body, headers=world.owner).status_code == 409  # active now
 
 
 def test_the_admin_invites_priya_legal_l1_who_then_sees_legal_tasks(world: World) -> None:
@@ -323,10 +326,12 @@ def test_non_admins_get_403_and_levels_outside_the_release_422(world: World) -> 
     )
 
 
-def test_an_expired_invite_cant_be_accepted(world: World) -> None:
+def test_an_expired_invite_is_404_until_the_admin_invites_the_person_again(world: World) -> None:
     late = {"email": "late@people.test", "name": "Late Person"}
-    assert world.http.post("/app/admin/users", json=late, headers=world.admin()).status_code == 201
+    first = world.http.post("/app/admin/users", json=late, headers=world.admin())
+    assert first.status_code == 201
     world.send_invites()
+    old = world.token_for(late["email"])
     vault_sql(
         "pilot",
         "update app.invites set expires_at = now() - interval '1 minute' where user_id ="
@@ -336,3 +341,29 @@ def test_an_expired_invite_cant_be_accepted(world: World) -> None:
     assert world.accept(late["email"]).status_code == 404
     bad = {"token": f"{world.slug}.nope", "password": PASSWORD}
     assert world.http.post("/auth/invite/accept", json=bad).status_code == 404
+    assert world.send_invites() == {}  # the worker skips expired invites
+
+    legal = [{"department": "legal", "level": 1, "scope": "own"}]
+    again = {**late, "name": "Late, Again", "memberships": legal}
+    reissued = world.http.post("/app/admin/users", json=again, headers=world.admin())
+    assert reissued.status_code == 201, reissued.text
+    person = reissued.json()
+    assert (person["id"], person["name"], person["memberships"]) == (
+        first.json()["id"],
+        "Late, Again",
+        legal,
+    )
+    assert world.send_invites() == {"sent": 1}
+    assert world.token_for(late["email"]) != old
+    accepted = world.accept(late["email"])
+    assert accepted.status_code == 200, accepted.text
+
+    for taken in (late, {"email": PRIYA, "name": "Priya"}):  # active people keep the 409
+        response = world.http.post("/app/admin/users", json=taken, headers=world.admin())
+        assert response.status_code == 409, response.text
+
+    deputy = {"email": "deputy@people.test", "name": "Deputy"}
+    owner_path = f"/owner/clients/{world.client_id}/client-admin"
+    assert world.http.post(owner_path, json=deputy, headers=world.owner).status_code == 201
+    by_admin = world.http.post("/app/admin/users", json=deputy, headers=world.admin())
+    assert (by_admin.status_code, by_admin.json()["is_client_admin"]) == (201, True)  # no demotion
