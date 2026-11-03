@@ -1,7 +1,7 @@
 import { Alert, Code, Text } from "@mantine/core";
 import { ajv } from "@zm/forms";
 import { Component, useEffect, type ReactNode } from "react";
-import { blocks, layouts, type AppUi, type BlockRef, type BlockRegistry, type LayoutManifest, type UiPage } from "./registry";
+import { blocks, layouts, newest, type AppUi, type BlockRef, type BlockRegistry, type LayoutManifest, type UiPage } from "./registry";
 
 type Region = LayoutManifest["regions"][number];
 
@@ -44,13 +44,10 @@ class Boundary extends Component<{ name: string; children: ReactNode }, { proble
 }
 
 function Slot({ at, region, index, page, ui, registry }: { at: BlockRef; region: Region; index: number; page: UiPage; ui: AppUi; registry: BlockRegistry }) {
-  const versions = registry[at.block] ?? {};
-  // ponytail: the newest version until releases record which one they placed (blocks_used, D14)
-  const entry = versions[Math.max(...Object.keys(versions).map(Number))];
+  const entry = newest(registry[at.block] ?? {});
   let problem: string | null = null;
   if (!entry) problem = "unknown block";
-  else if (!entry.manifest.regions.includes(region.key) || (region.allowed_blocks && !region.allowed_blocks.includes(at.block)))
-    problem = `not allowed in region "${region.key}"`;
+  else if (!entry.manifest.regions.includes(region.key)) problem = `not allowed in region "${region.key}"`;
   else if (region.max !== undefined && index >= region.max) problem = `region "${region.key}" takes at most ${region.max}`;
   else {
     const validate = ajv.compile(entry.manifest.props); // Ajv caches by schema object

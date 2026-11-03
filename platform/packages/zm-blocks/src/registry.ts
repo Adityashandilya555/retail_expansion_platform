@@ -35,6 +35,11 @@ export type BlockEntry = { manifest: BlockManifest; Block: ComponentType<BlockPr
 /** Block name → manifest version → block. The shell keeps every version a live release uses (D14). */
 export type BlockRegistry = Record<string, Record<number, BlockEntry>>;
 
+/** The version the shell draws and catalogue.json lists. */
+// ponytail: the newest version until releases record which one they placed (blocks_used, D14)
+export const newest = (versions: Record<number, BlockEntry>): BlockEntry | undefined =>
+  versions[Math.max(...Object.keys(versions).map(Number))];
+
 /** A layout's `manifest.json`: its named regions, in drawing order. */
 export type LayoutManifest = {
   name: string;
@@ -42,7 +47,8 @@ export type LayoutManifest = {
   description: string;
   /** Page properties the layout needs, e.g. `flow` for `case`. */
   requires?: string[];
-  regions: { key: string; description: string; allowed_blocks?: string[]; max?: number }[];
+  /** A region takes the blocks whose manifest lists it (catalogue.json shows them as `allowed_blocks`). */
+  regions: { key: string; description: string; max?: number }[];
 };
 /** Only non-empty regions are passed. */
 export type LayoutProps = { regions: Partial<Record<string, ReactNode>> };
