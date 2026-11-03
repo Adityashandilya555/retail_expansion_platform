@@ -7,11 +7,13 @@ level that may act (`or_above`), so a user needs only their own level's group. S
 """
 
 import secrets as token_bytes
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from zm_api import auth
 from zm_api.context import ClientContext, PlatformRegistry
@@ -59,9 +61,10 @@ async def mirror(
         await op.remove_member(group, uid)
 
 
-async def sync_user(ctx: ClientContext, user_id: UUID) -> None:
-    """Mirror one of `ctx`'s users into its Operaton; a deactivated user keeps no groups."""
-    async with ctx.db.connect() as conn:
+async def sync_user(ctx: ClientContext, user_id: UUID, conn: AsyncConnection | None = None) -> None:
+    """Mirror one of `ctx`'s users into its Operaton; only an active user keeps groups. With
+    `conn`, it mirrors what that open transaction holds, so a failure can roll the change back."""
+    async with ctx.db.connect() if conn is None else nullcontext(conn) as conn:
         user = (
             (
                 await conn.execute(

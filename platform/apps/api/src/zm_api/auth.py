@@ -94,6 +94,11 @@ class LoginIn(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class InviteAcceptIn(BaseModel):
+    token: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=12, max_length=256)
+
+
 class OwnerLoginIn(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=1, max_length=256)
@@ -335,6 +340,43 @@ async def refresh(request: Request, response: Response) -> TokenOut:
         raise Unauthorized()
     _set_cookie(response, CLIENT, f"{slug}.{rotated[1]}")
     return access_token(rotated[0], "client", slug)
+
+
+@router.post("/invite/accept")
+async def accept_invite(body: InviteAcceptIn, request: Request, response: Response) -> TokenOut:
+    """An invited person (S2-23) sets their password and is signed in. The token
+    (`<slug>.<random>`, `zm_api.people`) works once, for 7 days. The Operaton mirror runs inside
+    the transaction, so if it fails the invite still works."""
+    from zm_api.users import sync_user
+
+    slug, _, raw = body.token.partition(".")
+    ctx = await request.app.state.resolver.resolve(slug) if slug and raw else None
+    user_id = None
+    if ctx is not None:
+        async with ctx.db.begin() as conn:
+            user_id = (
+                await conn.execute(
+                    text(
+                        "delete from app.invites i using app.users u where i.token_hash = :h"
+                        " and u.id = i.user_id and u.status = 'invited' and i.expires_at > now()"
+                        " returning i.user_id"
+                    ),
+                    {"h": _sha(raw)},
+                )
+            ).scalar_one_or_none()
+            if user_id is not None:
+                await conn.execute(
+                    text(
+                        "update app.users set password_hash = :p, status = 'active' where id = :id"
+                    ),
+                    {"p": hash_password(body.password), "id": user_id},
+                )
+                await sync_user(ctx, user_id, conn)
+                refresh_raw = await _issue(conn, CLIENT, user_id)
+    if user_id is None:
+        raise NotFound("This invite link is invalid or has expired")
+    _set_cookie(response, CLIENT, f"{slug}.{refresh_raw}")
+    return access_token(user_id, "client", slug)
 
 
 @router.post("/logout", status_code=204)

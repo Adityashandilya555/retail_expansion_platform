@@ -4,6 +4,65 @@
  */
 
 export interface paths {
+    "/app/admin/departments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Departments
+         * @description What memberships may name: the active release's departments and levels.
+         */
+        get: operations["list_departments_app_admin_departments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Users */
+        get: operations["list_users_app_admin_users_get"];
+        put?: never;
+        /** Invite User */
+        post: operations["invite_user_app_admin_users_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/admin/users/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update User
+         * @description New memberships and/or status, then the Operaton mirror. If Operaton fails (502) the change
+         *     is kept; sending the same request again finishes the mirror.
+         */
+        patch: operations["update_user_app_admin_users__user_id__patch"];
+        trace?: never;
+    };
     "/app/cases": {
         parameters: {
             query?: never;
@@ -144,6 +203,28 @@ export interface paths {
         get: operations["app_ui_app_ui_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/invite/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Invite
+         * @description An invited person (S2-23) sets their password and is signed in. The token
+         *     (`<slug>.<random>`, `zm_api.people`) works once, for 7 days. The Operaton mirror runs inside
+         *     the transaction, so if it fails the invite still works.
+         */
+        post: operations["accept_invite_auth_invite_accept_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -324,6 +405,26 @@ export interface paths {
         get: operations["get_client_detail_owner_clients__client_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/clients/{client_id}/client-admin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Invite Client Admin
+         * @description The client's admin, invited by email (they manage people, never the flow, forms or UI).
+         */
+        post: operations["invite_client_admin_owner_clients__client_id__client_admin_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -663,6 +764,21 @@ export interface components {
             /** Task Name */
             task_name: string;
         };
+        /** Department */
+        Department: {
+            /**
+             * Key
+             * @description Department key; Operaton candidate groups are derived as `<key>__L<n>`.
+             */
+            key: string;
+            /**
+             * Levels
+             * @description Contiguous from 1 (L1 = most junior).
+             */
+            levels: components["schemas"]["Level"][];
+            /** Name */
+            name: string;
+        };
         /** FieldError */
         FieldError: {
             /** Message */
@@ -697,6 +813,27 @@ export interface components {
             schema: {
                 [key: string]: unknown;
             };
+        };
+        /** InviteAcceptIn */
+        InviteAcceptIn: {
+            /** Password */
+            password: string;
+            /** Token */
+            token: string;
+        };
+        /** InviteIn */
+        InviteIn: {
+            /** Email */
+            email: string;
+            /** Name */
+            name: string;
+        };
+        /** Level */
+        Level: {
+            /** N */
+            n: number;
+            /** Name */
+            name: string;
         };
         /** LoginIn */
         LoginIn: {
@@ -1060,6 +1197,51 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** UserIn */
+        UserIn: {
+            /** Email */
+            email: string;
+            /**
+             * Memberships
+             * @default []
+             */
+            memberships: components["schemas"]["Membership"][];
+            /** Name */
+            name: string;
+        };
+        /** UserOut */
+        UserOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Email */
+            email: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Client Admin */
+            is_client_admin: boolean;
+            /** Memberships */
+            memberships: components["schemas"]["Membership"][];
+            /** Name */
+            name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "invited" | "active" | "deactivated";
+        };
+        /** UserPatch */
+        UserPatch: {
+            /** Memberships */
+            memberships?: components["schemas"]["Membership"][] | null;
+            /** Status */
+            status?: ("active" | "deactivated") | null;
+        };
         /** WorkspaceIn */
         WorkspaceIn: {
             /** Workspace Code */
@@ -1083,6 +1265,134 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_departments_app_admin_departments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Department"][];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_users_app_admin_users_get: {
+        parameters: {
+            query?: {
+                status?: ("invited" | "active" | "deactivated") | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"][];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invite_user_app_admin_users_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_user_app_admin_users__user_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_cases_app_cases_get: {
         parameters: {
             query?: {
@@ -1325,6 +1635,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppUi"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    accept_invite_auth_invite_accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteAcceptIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenOut"];
                 };
             };
             /** @description Problem details (RFC 9457) */
@@ -1660,6 +2003,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClientDetail"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invite_client_admin_owner_clients__client_id__client_admin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
                 };
             };
             /** @description Problem details (RFC 9457) */
