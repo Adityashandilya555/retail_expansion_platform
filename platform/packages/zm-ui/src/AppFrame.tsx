@@ -29,7 +29,8 @@ export function AppFrame({
 }) {
   const [collapsed, setCollapsed] = useLocalStorage({
     key: "zm:sidebar-collapsed",
-    defaultValue: false,
+    // a phone's first visit starts on the 72 px rail: the 232 px sidebar pushes a 375 px page sideways
+    defaultValue: window.matchMedia("(max-width: 48em)").matches,
     getInitialValueInEffect: false,
   });
 
