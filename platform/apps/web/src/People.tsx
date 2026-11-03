@@ -160,6 +160,16 @@ function EditPerson({ user, departments, selfId, onDone }: { user: UserOut; depa
     onDone();
   }
 
+  /** Someone who never accepted: the same invite again, with a new link (the old one stops working). */
+  async function resend() {
+    setPending(true);
+    const failed = await save(api.POST("/app/admin/users", { body: { email: user.email, name: user.name, memberships } }));
+    setPending(false);
+    if (failed) return setErrors(failed);
+    notifyInfo("Invite sent", `${user.name} gets a new email to set a password.`);
+    onDone();
+  }
+
   return (
     <Stack>
       <Group justify="space-between">
@@ -180,6 +190,11 @@ function EditPerson({ user, departments, selfId, onDone }: { user: UserOut; depa
               Deactivate
             </Button>
           )
+        )}
+        {user.status === "invited" && (
+          <Button variant="default" loading={pending} onClick={() => void resend()}>
+            Resend invite
+          </Button>
         )}
         <Button ml="auto" loading={pending} onClick={() => void patch({ memberships })}>
           Save

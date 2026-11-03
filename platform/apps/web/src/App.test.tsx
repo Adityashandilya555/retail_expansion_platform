@@ -446,6 +446,17 @@ test("moving Priya to L2, and deactivating her after a confirmation, PATCH her",
   ]);
 });
 
+test("resending an invite POSTs the invited person's email, name and memberships again", async () => {
+  const invited = { ...PRIYA, status: "invited" };
+  const seen = adminApi({ "GET /app/admin/users": () => json([invited]), "POST /app/admin/users": () => json(invited, 201) });
+  renderAt("/app/admin/people");
+  const user = userEvent.setup();
+  await user.click(await screen.findByText("Priya"));
+  await user.click(within(await screen.findByRole("dialog", { name: "Priya" })).getByRole("button", { name: "Resend invite" }));
+  await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Priya" })).toBeNull());
+  expect(await bodies(seen, "POST")).toEqual([{ email: PRIYA.email, name: "Priya", memberships: PRIYA.memberships }]);
+});
+
 test("/invite/:token sets the password and opens the app", async () => {
   const sent: unknown[] = [];
   api({
