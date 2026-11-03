@@ -86,6 +86,10 @@ export default defineRailway((ctx) => {
       SUPABASE_CLIENT_INSTANCE_SIZE: "micro",
       PLATFORM_DATABASE_URL: preserve(),
       SECRETS_ENCRYPTION_KEY: preserve(),
+      // Invite emails (S2-23): until all three are set in the dashboard, invites wait unsent.
+      RESEND_API_KEY: preserve(),
+      EMAIL_FROM: preserve(),
+      CLIENT_APP_BASE_URL: preserve(), // the zm-web domain of this environment
     },
   });
 
