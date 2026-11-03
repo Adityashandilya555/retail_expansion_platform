@@ -330,3 +330,141 @@ test("a failing GET /app/ui shows an error with Retry", async () => {
   await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("region", { name: "task_inbox" })).toBeDefined();
 });
+
+// --- people (S2-23) -------------------------------------------------------------------------------
+
+const ADMIN = { ...ME, name: "Client Admin", is_client_admin: true, memberships: [] };
+const PRIYA = {
+  id: "0b4c6f2e-1111-4a2b-9c3d-0000000000bb",
+  email: "priya@pilot.demo",
+  name: "Priya",
+  status: "active",
+  is_client_admin: false,
+  memberships: [{ department: "legal", level: 1, scope: "own" }],
+  created_at: "2026-11-01T09:00:00Z",
+};
+const DEPARTMENTS = [
+  { key: "bd", name: "Business development", levels: [{ n: 1, name: "BD Manager" }] },
+  { key: "legal", name: "Legal", levels: [{ n: 1, name: "Legal Executive" }, { n: 2, name: "Legal Supervisor" }] },
+];
+
+/** A signed-in client admin with the people API; returns the people requests it saw. */
+function adminApi(routes: Record<string, Handler> = {}): Request[] {
+  const seen: Request[] = [];
+  const people: Record<string, Handler> = { "GET /app/admin/users": () => json([PRIYA]), ...routes };
+  api({
+    "POST /auth/refresh": () => json(TOKEN),
+    "GET /app/me": () => json(ADMIN),
+    "GET /app/ui": () => json(sampleUi),
+    "GET /app/admin/departments": () => json(DEPARTMENTS),
+    ...Object.fromEntries(Object.entries(people).map(([key, handler]) => [key, (r: Request) => (seen.push(r.clone()), handler(r))])),
+  });
+  return seen;
+}
+
+const bodies = (seen: Request[], method: string) => Promise.all(seen.filter((r) => r.method === method).map((r) => r.json()));
+
+test("a client admin's People nav item opens /app/admin/people; other users have none", async () => {
+  adminApi();
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  await userEvent.setup().click(nav().getByRole("button", { name: "People" }));
+  const people = await screen.findByRole("table", { name: "People" });
+  expect(await within(people).findByText("Legal L1")).toBeDefined();
+  expect(nav().getByRole("button", { name: "People" }).getAttribute("aria-current")).toBe("page");
+
+  cleanup();
+  forget();
+  signedInApi(sampleUi);
+  renderAt("/app/admin/people");
+  expect(await screen.findByRole("heading", { name: "Page not found" })).toBeDefined();
+  expect(nav().queryByRole("button", { name: "People" })).toBeNull();
+});
+
+test("the status filter asks the API for that status", async () => {
+  const seen = adminApi();
+  renderAt("/app/admin/people");
+  await screen.findByRole("table", { name: "People" });
+  await userEvent.setup().click(screen.getByText("Deactivated"));
+  await vi.waitFor(() => expect(seen.map((r) => new URL(r.url).search)).toEqual(["", "?status=deactivated"]));
+});
+
+test("inviting Priya, Legal L1, sends her department and level; a taken email shows under the field", async () => {
+  let taken = true;
+  const seen = adminApi({
+    "POST /app/admin/users": () =>
+      taken
+        ? json(
+            {
+              type: "about:blank",
+              title: "Conflict",
+              status: 409,
+              detail: "Email taken",
+              request_id: "r",
+              errors: [{ path: "/email", message: "Someone here already uses this email" }],
+            },
+            409,
+          )
+        : json({ ...PRIYA, status: "invited" }, 201),
+  });
+  renderAt("/app/admin/people");
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Invite person" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Invite person" }));
+  await user.type(dialog.getByLabelText(/Email/), "priya@pilot.demo");
+  await user.type(dialog.getByLabelText(/Name/), "Priya");
+  await user.click(dialog.getByRole("button", { name: "Add department" }));
+  await user.selectOptions(dialog.getByLabelText("Department 1"), "legal");
+  await user.click(dialog.getByRole("button", { name: "Send invite" }));
+  expect(await dialog.findByText("Someone here already uses this email")).toBeDefined();
+
+  taken = false;
+  await user.click(dialog.getByRole("button", { name: "Send invite" }));
+  await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Invite person" })).toBeNull());
+  const posted = await bodies(seen, "POST");
+  expect(posted[1]).toEqual({ email: "priya@pilot.demo", name: "Priya", memberships: [{ department: "legal", level: 1, scope: "own" }] });
+});
+
+test("moving Priya to L2, and deactivating her after a confirmation, PATCH her", async () => {
+  const seen = adminApi({ [`PATCH /app/admin/users/${PRIYA.id}`]: () => json(PRIYA) });
+  renderAt("/app/admin/people");
+  const user = userEvent.setup();
+  await user.click(await screen.findByText("Priya"));
+  const drawer = within(await screen.findByRole("dialog", { name: "Priya" }));
+  await user.selectOptions(drawer.getByLabelText("Level in Legal"), "2");
+  await user.click(drawer.getByRole("button", { name: "Save" }));
+  await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Priya" })).toBeNull());
+
+  await user.click(await screen.findByText("Priya"));
+  await user.click(within(await screen.findByRole("dialog", { name: "Priya" })).getByRole("button", { name: "Deactivate" }));
+  const confirm = within(await screen.findByRole("dialog", { name: "Deactivate Priya?" }));
+  await user.click(confirm.getByRole("button", { name: "Deactivate" }));
+  await vi.waitFor(() => expect(seen.filter((r) => r.method === "PATCH")).toHaveLength(2));
+  expect(await bodies(seen, "PATCH")).toEqual([
+    { memberships: [{ department: "legal", level: 2, scope: "own" }] },
+    { status: "deactivated" },
+  ]);
+});
+
+test("/invite/:token sets the password and opens the app", async () => {
+  const sent: unknown[] = [];
+  api({
+    "POST /auth/invite/accept": async (r) => {
+      sent.push(await r.json());
+      return json(TOKEN);
+    },
+    "GET /app/me": (r) => (r.headers.get("authorization") === "Bearer t1" ? json(ME) : problem(401, "Sign in again")),
+    "GET /app/ui": () => json(sampleUi),
+  });
+  renderAt("/invite/pilot-local.abc123");
+  await userEvent.setup().type(await screen.findByLabelText(/New password/), "a-long-enough-password{Enter}");
+  expect(await screen.findByRole("region", { name: "task_inbox" })).toBeDefined();
+  expect(sent).toEqual([{ token: "pilot-local.abc123", password: "a-long-enough-password" }]);
+});
+
+test("an expired invite link says so", async () => {
+  api({ "POST /auth/invite/accept": () => problem(404, "This invite link is invalid or has expired") });
+  renderAt("/invite/pilot-local.old");
+  await userEvent.setup().type(await screen.findByLabelText(/New password/), "a-long-enough-password{Enter}");
+  expect(await screen.findByText(/invalid or has expired/)).toBeDefined();
+});

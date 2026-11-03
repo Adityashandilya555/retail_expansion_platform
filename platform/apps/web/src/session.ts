@@ -80,6 +80,24 @@ export async function signIn(code: string, email: string, password: string): Pro
   }
 }
 
+/** Sets an invited person's password from the emailed `/invite/<token>` link and signs them in (S2-23). */
+export async function acceptInvite(inviteToken: string, password: string): Promise<Outcome<null>> {
+  try {
+    const { data, response } = await api.POST("/auth/invite/accept", { body: { token: inviteToken, password } });
+    if (!data) {
+      const message =
+        response.status === 404
+          ? "This invite link is invalid or has expired. Ask your administrator for a new one."
+          : "Choose a password of at least 12 characters.";
+      return { ok: false, message };
+    }
+    keep(data);
+    return { ok: true, value: null };
+  } catch {
+    return { ok: false, message: OFFLINE };
+  }
+}
+
 /** A new access token from the refresh cookie; true when signed in. */
 export function refresh(): Promise<boolean> {
   const started = generation;

@@ -4,9 +4,12 @@ import { Alert, Anchor, Button, Center, Loader, Menu, Stack, Text, Title } from 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BlocksApi, PageRenderer, defaultCasePage } from "@zm/blocks";
 import { AppFrame, ZmProvider } from "@zm/ui";
-import { LogOut } from "lucide-react";
+import { LogOut, Users } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router";
+import { People } from "./People";
 import { api, currentUser, loadUi, signOut, type AppUi, type Workspace } from "./session";
+
+const PEOPLE = "admin/people"; // the client admin's page (S2-23), whatever the release holds
 
 function NotFound() {
   return (
@@ -56,7 +59,8 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
   const queries = useQueryClient();
   const me = useQuery({ queryKey: ["me"], queryFn: currentUser });
   const ui = useQuery({ queryKey: ["ui"], queryFn: loadUi, enabled: Boolean(me.data) });
-  const section = useParams()["*"]?.split("/")[0] || undefined;
+  const path = useParams()["*"] ?? "";
+  const section = path.split("/")[0] || undefined;
 
   if (me.data === null) return <Navigate to="/" replace />;
   const look = ui.data?.client ?? workspace ?? undefined;
@@ -75,11 +79,13 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
   } else {
     const release = ui.data;
     const home = release?.nav[0]?.page;
+    const admin = me.data.is_client_admin;
+    const nav = (release?.nav ?? []).map((n) => ({ key: n.page, label: n.label }));
     body = (
       <AppFrame
         clientName={release?.client.name ?? me.data.client.name}
-        nav={(release?.nav ?? []).map((n) => ({ key: n.page, label: n.label }))}
-        activeKey={section ?? home}
+        nav={admin ? [...nav, { key: PEOPLE, label: "People", icon: Users }] : nav}
+        activeKey={path === PEOPLE ? PEOPLE : (section ?? home)}
         onNavigate={(key) => navigate(`/app/${key}`)}
         user={{ name: me.data.name, email: me.data.email }}
         userMenu={
@@ -95,7 +101,9 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
           </Menu.Item>
         }
       >
-        {ui.isError ? (
+        {admin && path === PEOPLE ? (
+          <People selfId={me.data.id} />
+        ) : ui.isError ? (
           <Alert color="red" title="Couldn't load this workspace.">
             <Button mt="sm" variant="default" onClick={() => void ui.refetch()}>
               Retry
