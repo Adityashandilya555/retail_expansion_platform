@@ -7,7 +7,8 @@
    existing deployment (no new version); any change, a form label included (it changes
    `zm-release.json`), redeploys every resource, which the stage call activities bound with
    `calledElementBinding="deployment"` need (DeployCmd.java:207-263, CallableElementUtil:94-96).
-4. Record the release as the next active version, unless that deployment is already recorded.
+4. Record the release as the next active version, unless that deployment is already recorded,
+   and on the draft as its `base_version`.
    Steps 1-4 run in one client-database transaction under a per-client advisory lock, so two
    publishes at once deploy and number their versions in the same order.
 5. Index it in `platform.releases` (idempotent, so a retried publish repairs a missing row).
@@ -152,6 +153,9 @@ async def publish(
                 )
             elif not row.active:  # Operaton's latest is an older release: make it current again
                 row = await releases.activate(conn, row.version)
+            await conn.execute(
+                text("update app.drafts set base_version = :v where id = 1"), {"v": row.version}
+            )
 
         async with platform.begin() as conn:
             await conn.execute(

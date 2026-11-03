@@ -292,6 +292,7 @@ def test_a_form_change_is_v2_and_running_cases_keep_v1_forms(clients: Clients) -
     title = old.forms["start:store_launch"]["schema"]["properties"]["site_name"]["title"]
     assert title == "Site name"
     assert vault_sql("pilot", "select version from app.releases where active") == [(2,)]
+    assert vault_sql("pilot", "select base_version from app.drafts") == [(2,)]
     new_title = vault_sql(
         "pilot",
         "select forms->'start:store_launch'->'schema'->'properties'->'site_name'->>'title'"
@@ -359,14 +360,14 @@ def test_owner_publishes_through_the_api(clients: Clients) -> None:
         JWT_SECRET,
         algorithm="HS256",
     )
+    auth = {"Authorization": f"Bearer {owner_token}"}
     with TestClient(create_app()) as api:
-        response = api.post(
-            f"/owner/clients/{clients.ids['pilot']}/publish",
-            headers={"Authorization": f"Bearer {owner_token}"},
-        )
+        response = api.post(f"/owner/clients/{clients.ids['pilot']}/publish", headers=auth)
+        draft = api.get(f"/owner/clients/{clients.ids['pilot']}/draft", headers=auth)
     assert response.status_code == 200, response.text
     body = response.json()
     assert (body["version"], body["created"]) == (1, True)
+    assert draft.json()["base_version"] == 1  # the draft records the release it was published as
 
 
 def test_users_get_the_published_ui_for_their_departments(clients: Clients) -> None:
