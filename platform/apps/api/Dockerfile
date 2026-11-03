@@ -10,6 +10,8 @@ COPY packages/compiler packages/compiler
 COPY packages/schema packages/schema
 # starter templates: `zm-api templates sync` and `zm-api drafts seed` read them (#18, #23)
 COPY packages/templates packages/templates
+# the UI packages' catalogue: validation checks pages against it, the agent lists it (#37)
+COPY packages/zm-blocks/catalogue.json packages/zm-blocks/catalogue.json
 # Wheels only (--no-build): no setup/build-backend code runs. Our own code is not installed;
 # it runs from source via PYTHONPATH.
 RUN uv sync --frozen --no-dev --no-build --no-install-workspace --package zm-api

@@ -132,9 +132,9 @@
       {"page": "legal_overview", "label": "Legal", "visible_to": ["legal", "admin"]}
     ],
     "pages": [
-      {"key": "home", "layout": "home", "regions": {"hero": [{"block": "kpi_tile", "props": {"kpi": "loi_to_legal"}}], "main": [{"block": "task_inbox"}]}},
-      {"key": "legal_overview", "layout": "department", "department": "legal", "regions": {"main": [{"block": "task_inbox", "props": {"scope": "team"}}]}},
-      {"key": "site", "layout": "case", "flow": "site_launch", "regions": {"main": [{"block": "case_header"}]}}
+      {"key": "home", "layout": "standard", "regions": {"main": [{"block": "task_inbox"}]}},
+      {"key": "legal_overview", "layout": "standard", "department": "legal", "regions": {"main": [{"block": "task_inbox", "props": {"scope": "team"}}]}},
+      {"key": "site", "layout": "case", "flow": "site_launch", "regions": {"header": [{"block": "case_header"}]}}
     ]
   },
   "kpis": [
