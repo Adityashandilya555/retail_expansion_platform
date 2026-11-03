@@ -842,7 +842,9 @@ export interface components {
             blocks: string[];
             /** @description By field key. */
             fields: components["schemas"]["KeyChanges"];
-            /** @description By task id, across every flow. */
+            /** @description By `<flow>.<stage>`: its name, department, `after` and the order of its tasks. */
+            stages: components["schemas"]["KeyChanges"];
+            /** @description By task id, across every flow; moving a task to another stage changes it. */
             tasks: components["schemas"]["KeyChanges"];
             /** @description Null when unchanged. */
             theme: components["schemas"]["ValueChange"] | null;

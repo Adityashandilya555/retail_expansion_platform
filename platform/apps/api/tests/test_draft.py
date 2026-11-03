@@ -83,6 +83,7 @@ def live(doc: dict[str, Any]) -> dict[str, Any]:
 
 def test_no_difference_between_draft_and_live_is_an_empty_diff() -> None:
     assert drafts.diff(live(matrix_retail()), matrix_retail()).model_dump() == {
+        "stages": {"added": [], "removed": [], "changed": []},
         "tasks": {"added": [], "removed": [], "changed": []},
         "fields": {"added": [], "removed": [], "changed": []},
         "blocks": [],
@@ -117,9 +118,33 @@ def test_the_diff_names_changed_tasks_blocks_and_the_look() -> None:
     assert found.accent is not None and (found.accent.live, found.accent.draft) == ("slate", None)
 
 
+def test_a_task_moved_to_another_stage_is_changed() -> None:
+    draft = matrix_retail()
+    stages = draft["flows"][0]["stages"]
+    stages[0]["tasks"].append(stages[1]["tasks"].pop())  # bd_send_legal: bd_loi → bd_qualification
+    found = drafts.diff(live(matrix_retail()), draft)
+    assert found.tasks.model_dump() == {"added": [], "removed": [], "changed": ["bd_send_legal"]}
+    assert found.stages.changed == ["store_launch.bd_loi", "store_launch.bd_qualification"]
+
+
+def test_a_stage_whose_after_changed_is_changed() -> None:
+    draft = matrix_retail()
+    draft["flows"][0]["stages"][4]["after"] = ["legal"]  # design no longer waits for finance
+    found = drafts.diff(live(matrix_retail()), draft)
+    assert found.stages.model_dump() == {
+        "added": [],
+        "removed": [],
+        "changed": ["store_launch.design"],
+    }
+    assert found.model_dump(exclude={"stages"}) == drafts.diff(
+        live(matrix_retail()), matrix_retail()
+    ).model_dump(exclude={"stages"})
+
+
 def test_before_the_first_publish_everything_is_added() -> None:
     found = drafts.diff(None, matrix_retail())
     assert "bd_review_draft" in found.tasks.added and "site_name" in found.fields.added
+    assert "store_launch.bd_qualification" in found.stages.added
     assert found.theme is not None and found.theme.live is None
 
 
@@ -268,6 +293,7 @@ def test_the_diff_is_against_the_active_release(pilot: Clients) -> None:
         asyncio.run(add_field())
         one = api.get(f"{url}/diff", headers=auth).json()
     assert empty == {
+        "stages": {"added": [], "removed": [], "changed": []},
         "tasks": {"added": [], "removed": [], "changed": []},
         "fields": {"added": [], "removed": [], "changed": []},
         "blocks": [],

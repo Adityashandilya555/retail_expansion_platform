@@ -684,9 +684,13 @@
             "$ref": "#/components/schemas/KeyChanges",
             "description": "By field key."
           },
+          "stages": {
+            "$ref": "#/components/schemas/KeyChanges",
+            "description": "By `<flow>.<stage>`: its name, department, `after` and the order of its tasks."
+          },
           "tasks": {
             "$ref": "#/components/schemas/KeyChanges",
-            "description": "By task id, across every flow."
+            "description": "By task id, across every flow; moving a task to another stage changes it."
           },
           "theme": {
             "anyOf": [
@@ -701,6 +705,7 @@
           }
         },
         "required": [
+          "stages",
           "tasks",
           "fields",
           "blocks",

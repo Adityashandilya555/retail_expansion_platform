@@ -83,8 +83,10 @@ class DraftDiff(BaseModel):
 
     model_config = ConfigDict(use_attribute_docstrings=True)
 
+    stages: KeyChanges
+    """By `<flow>.<stage>`: its name, department, `after` and the order of its tasks."""
     tasks: KeyChanges
-    """By task id, across every flow."""
+    """By task id, across every flow; moving a task to another stage changes it."""
     fields: KeyChanges
     """By field key."""
     blocks: list[str]
@@ -136,15 +138,29 @@ def patched(doc: dict[str, Any], patch: Patch) -> tuple[dict[str, Any], Patch]:
 def _outline(doc: dict[str, Any] | None) -> dict[str, Any]:
     """What the diff compares, with defaults filled in, so an unset default equals a set one."""
     if doc is None:  # nothing published yet
-        return {"tasks": {}, "fields": {}, "blocks": {}, "theme": None, "accent": None}
+        return {
+            "stages": {},
+            "tasks": {},
+            "fields": {},
+            "blocks": {},
+            "theme": None,
+            "accent": None,
+        }
     wf = WorkflowV1.model_validate(upgrade(dict(doc)), context={"structural_only": True})
+    stages: dict[str, Any] = {}
+    tasks: dict[str, Any] = {}
+    for flow in wf.flows:
+        for stage in flow.stages:
+            where = f"{flow.key}.{stage.key}"
+            placed = list(stage_tasks(stage, ""))
+            # the stage without its tasks' bodies: their paths give their order and parallel groups
+            stages[where] = stage.model_dump(exclude={"tasks"})
+            stages[where]["tasks"] = {t.id: path for t, path, _ in placed}
+            for t, _, parallel in placed:
+                tasks[t.id] = {**t.model_dump(), "stage": where, "parallel": parallel}
     return {
-        "tasks": {
-            t.id: t.model_dump()
-            for flow in wf.flows
-            for stage in flow.stages
-            for t, _, _ in stage_tasks(stage, "")
-        },
+        "stages": stages,
+        "tasks": tasks,
         "fields": {k: f.model_dump() for k, f in wf.fields.items()},
         "blocks": {p.key: p.model_dump()["regions"] for p in wf.apps.pages},
         "theme": wf.apps.theme,
@@ -169,6 +185,7 @@ def diff(live: dict[str, Any] | None, draft: dict[str, Any]) -> DraftDiff:
     old, new = _outline(live), _outline(draft)
     blocks = _by_key(old["blocks"], new["blocks"])
     return DraftDiff(
+        stages=_by_key(old["stages"], new["stages"]),
         tasks=_by_key(old["tasks"], new["tasks"]),
         fields=_by_key(old["fields"], new["fields"]),
         blocks=sorted(blocks.added + blocks.removed + blocks.changed),
