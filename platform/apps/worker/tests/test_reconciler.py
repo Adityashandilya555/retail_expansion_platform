@@ -119,6 +119,36 @@ def test_one_clients_failure_doesnt_stop_the_others(monkeypatch: pytest.MonkeyPa
     assert FakeResolver.closed
 
 
+def test_a_pass_also_sends_each_clients_invites_once_mail_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_ready(conn: object) -> list[SimpleNamespace]:
+        return [SimpleNamespace(slug="pilot"), SimpleNamespace(slug="qsr")]
+
+    async def fake_reconcile(ctx: SimpleNamespace, older_than: float) -> Counter[str]:
+        return Counter()
+
+    class Mail:
+        closed = False
+
+        async def aclose(self) -> None:
+            Mail.closed = True
+
+    async def fake_send(ctx: SimpleNamespace, mail: Mail) -> Counter[str]:
+        return Counter(sent=2) if ctx.slug == "pilot" else Counter()
+
+    monkeypatch.setattr(reconcile, "PlatformRegistry", lambda: SimpleNamespace(engine=FakeEngine))
+    monkeypatch.setattr(reconcile, "Resolver", FakeResolver)
+    monkeypatch.setattr(reconcile, "ready_clients", fake_ready)
+    monkeypatch.setattr(reconcile.tasks, "reconcile", fake_reconcile)
+    monkeypatch.setattr(reconcile.invites, "client", Mail)
+    monkeypatch.setattr(reconcile.invites, "send", fake_send)
+
+    out = asyncio.run(reconcile.reconcile_all())
+    assert out == {"pilot": Counter(sent=2), "qsr": Counter()}
+    assert Mail.closed
+
+
 def test_an_unconfigured_reconciler_is_reported_once(
     ticks: list[float], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
