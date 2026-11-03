@@ -27,7 +27,8 @@ class FieldError(BaseModel):
     model_config = ConfigDict(use_attribute_docstrings=True)
 
     path: str
-    """JSON Pointer to the field, e.g. `/ca_amount`."""
+    """JSON Pointer to the field, e.g. `/ca_amount`; a draft's are `workflow.json` paths, e.g.
+    `flows[0].stages[1].after[0]`."""
     message: str
 
 
