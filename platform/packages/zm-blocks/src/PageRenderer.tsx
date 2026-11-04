@@ -1,7 +1,7 @@
 import { Alert, Code, Text } from "@mantine/core";
 import { ajv } from "@zm/forms";
 import { Component, useEffect, type ReactNode } from "react";
-import { blocks, layouts, newest, type AppUi, type BlockRef, type BlockRegistry, type LayoutManifest, type UiPage } from "./registry";
+import { blocks, layouts, type AppUi, type BlockRef, type BlockRegistry, type LayoutManifest, type UiPage } from "./registry";
 
 type Region = LayoutManifest["regions"][number];
 
@@ -44,14 +44,19 @@ class Boundary extends Component<{ name: string; children: ReactNode }, { proble
 }
 
 function Slot({ at, region, index, page, ui, registry }: { at: BlockRef; region: Region; index: number; page: UiPage; ui: AppUi; registry: BlockRegistry }) {
-  const entry = newest(registry[at.block] ?? {});
+  // A page names no block version: it draws the newest one that takes its props, so a page placed on
+  // an older version keeps drawing it (zm_schema.validate() accepts the same props).
+  // ponytail: a block fits a region if any version does; check per version if versions ever differ in regions
+  const versions = Object.values(registry[at.block] ?? {}).reverse(); // newest first
+  const [latest] = versions;
+  const entry = versions.find((v) => ajv.validate(v.manifest.props, at.props)); // Ajv caches by schema object
   let problem: string | null = null;
-  if (!entry) problem = "unknown block";
-  else if (!entry.manifest.regions.includes(region.key)) problem = `not allowed in region "${region.key}"`;
+  if (!latest) problem = "unknown block";
+  else if (!versions.some((v) => v.manifest.regions.includes(region.key))) problem = `not allowed in region "${region.key}"`;
   else if (region.max !== undefined && index >= region.max) problem = `region "${region.key}" takes at most ${region.max}`;
-  else {
-    const validate = ajv.compile(entry.manifest.props); // Ajv caches by schema object
-    if (!validate(at.props)) problem = ajv.errorsText(validate.errors, { dataVar: "props" });
+  else if (!entry) {
+    ajv.validate(latest.manifest.props, at.props);
+    problem = ajv.errorsText(ajv.errors, { dataVar: "props" });
   }
 
   useEffect(() => {

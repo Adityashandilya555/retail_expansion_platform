@@ -9,15 +9,17 @@ from zm_schema import catalogue
 ZM_BLOCKS = catalogue.CATALOGUE_FILE.parent
 
 
-def manifests(kind: str) -> dict[str, int]:
+def manifests(kind: str) -> set[tuple[str, int]]:
     found = (json.loads(p.read_text()) for p in ZM_BLOCKS.glob(f"{kind}/*/manifest.json"))
-    return {m["name"]: m["version"] for m in found}
+    return {(m["name"], m["version"]) for m in found}
 
 
 def test_the_catalogue_has_every_registered_layout_and_block() -> None:
     loaded = catalogue.load()
-    assert {n: m["version"] for n, m in loaded["layouts"].items()} == manifests("layouts")
-    assert {n: m["version"] for n, m in loaded["blocks"].items()} == manifests("blocks")
+    assert {(n, m["version"]) for n, m in loaded["layouts"].items()} == manifests("layouts")
+    # every version of every block, by version: {name: {"1": manifest}}
+    blocks = {(n, int(v)) for n, versions in loaded["blocks"].items() for v in versions}
+    assert blocks == manifests("blocks")
     assert {"standard", "case"} <= set(loaded["layouts"]) and "task_inbox" in loaded["blocks"]
 
 

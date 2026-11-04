@@ -265,13 +265,21 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
             if "max" in region and len(placed) > region["max"]:
                 err(rp, f"{on}: region '{key}' holds at most {region['max']}")
             for bi, ref in enumerate(placed):
-                bp, block = join(rp, bi), ui["blocks"].get(ref.block)
-                if block is None or ref.block not in region["allowed_blocks"]:
+                bp, versions = join(rp, bi), ui["blocks"].get(ref.block, {})
+                if not versions or ref.block not in region["allowed_blocks"]:
                     err(join(bp, "block"), f"{on}: region '{key}' doesn't take block '{ref.block}'")
                     continue
-                for e in Draft202012Validator(block["props"]).iter_errors(ref.props):
-                    at = join(bp, "props", *e.absolute_path)
-                    err(at, f"{on}, region '{key}': block '{ref.block}': {e.message}")
+                # A page names no block version: props any version takes pass (the shell draws the
+                # newest that takes them, PageRenderer's Slot); otherwise the newest one's errors.
+                newest_first = sorted(versions.values(), key=lambda m: m["version"], reverse=True)
+                found = [
+                    list(Draft202012Validator(m["props"]).iter_errors(ref.props))
+                    for m in newest_first
+                ]
+                if all(found):  # no version takes them
+                    for e in found[0]:
+                        at = join(bp, "props", *e.absolute_path)
+                        err(at, f"{on}, region '{key}': block '{ref.block}': {e.message}")
     for ni, nav in enumerate(doc.apps.nav):
         np_ = join("apps.nav", ni)
         if nav.page not in page_keys:

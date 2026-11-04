@@ -1,9 +1,12 @@
 """Pages against the UI packages (#37): `validate()` checks each page of `apps` against
 `packages/zm-blocks/catalogue.json` and names the page and the region."""
 
+import copy
 from typing import Any
 
-from zm_schema import validate
+import pytest
+
+from zm_schema import catalogue, validate
 
 
 def errors(doc: dict[str, Any], *pages: dict[str, Any]) -> list[str]:
@@ -80,4 +83,31 @@ def test_props_are_checked_against_the_blocks_manifest(minimal: dict[str, Any]) 
         " Additional properties are not allowed ('color' was unexpected)",
         "apps.pages[0].regions.main[0].props.scope: page 'home', region 'main': block"
         " 'task_inbox': 'all' is not one of ['mine', 'team']",
+    ]
+
+
+def test_props_of_any_registered_version_pass(
+    minimal: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # task_inbox v2 renames `scope` to `audience`: a page names no version, so one built on v1
+    # stays valid (the shell draws v1 for it); props neither version takes get v2's errors.
+    ui = copy.deepcopy(catalogue.load())
+    v1 = ui["blocks"]["task_inbox"]["1"]
+    props = {**v1["props"], "properties": {"audience": {"enum": ["me"]}}}
+    ui["blocks"]["task_inbox"]["2"] = {**v1, "version": 2, "props": props}
+    monkeypatch.setattr(catalogue, "load", lambda: ui)
+    home = {
+        "key": "home",
+        "layout": "standard",
+        "regions": {
+            "main": [
+                {"block": "task_inbox", "props": {"scope": "team"}},
+                {"block": "task_inbox", "props": {"audience": "me"}},
+                {"block": "task_inbox", "props": {"scope": "me"}},
+            ]
+        },
+    }
+    assert errors(minimal, home) == [
+        "apps.pages[0].regions.main[2].props: page 'home', region 'main': block 'task_inbox':"
+        " Additional properties are not allowed ('scope' was unexpected)",
     ]

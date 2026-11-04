@@ -4,7 +4,7 @@ For every starter template (`packages/templates/*/workflow.json`) and every synt
 (`platform/tests/compat/*.json`): validate and compile it. Validation checks each page against
 the UI packages as they are now (`packages/zm-blocks/catalogue.json`, #37): its layout exists and
 the page sets what it `requires`; each region is one of the layout's, holds no more than its
-`max` and only blocks it takes; each block's props pass its manifest's schema.
+`max` and only blocks it takes; each block's props pass the schema of one of its versions.
 
 Real client configs never enter this public repo; live releases are checked at deploy (S2-09).
 """

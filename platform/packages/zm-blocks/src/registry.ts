@@ -32,13 +32,11 @@ export type BlockManifest = {
 /** `props` have passed the manifest's schema. */
 export type BlockProps = { props: Record<string, unknown>; ui: AppUi; page: UiPage };
 export type BlockEntry = { manifest: BlockManifest; Block: ComponentType<BlockProps> };
-/** Block name → manifest version → block. The shell keeps every version a live release uses (D14). */
+/**
+ * Block name → manifest version → block. The shell keeps every version a live release uses (D14), and
+ * draws the newest one that takes a page's props (pages name no version).
+ */
 export type BlockRegistry = Record<string, Record<number, BlockEntry>>;
-
-/** The version the shell draws and catalogue.json lists. */
-// ponytail: the newest version until releases record which one they placed (blocks_used, D14)
-export const newest = (versions: Record<number, BlockEntry>): BlockEntry | undefined =>
-  versions[Math.max(...Object.keys(versions).map(Number))];
 
 /** A layout's `manifest.json`: its named regions, in drawing order. */
 export type LayoutManifest = {
