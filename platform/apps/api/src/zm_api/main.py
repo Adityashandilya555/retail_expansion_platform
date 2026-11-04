@@ -4,7 +4,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from zm_api import auth, cases_routes, clients, errors, logs, publish, settings, tasks_routes, ui
+from zm_api import (
+    auth,
+    cases_routes,
+    clients,
+    drafts,
+    errors,
+    logs,
+    publish,
+    settings,
+    tasks_routes,
+    ui,
+)
 from zm_api.context import PlatformRegistry, Resolver
 
 
@@ -28,6 +39,7 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         auth.owner_auth,
         auth.owner_routes,
         clients.routes,
+        drafts.routes,
         publish.routes,
         tasks_routes.routes,
         cases_routes.routes,
