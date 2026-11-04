@@ -190,12 +190,14 @@
       "pages": [
         {
           "key": "sites",
-          "layout": "case",
-          "flow": "site_launch",
+          "layout": "standard",
           "regions": {
             "main": [
               {
-                "block": "case_table"
+                "block": "case_table",
+                "props": {
+                  "flow": "site_launch"
+                }
               }
             ]
           }

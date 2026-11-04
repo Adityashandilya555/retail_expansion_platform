@@ -2,12 +2,12 @@
 
 import copy
 import json
-from pathlib import Path
 from typing import Any
 
 import pytest
 
 from zm_compiler import compat
+from zm_schema import catalogue
 
 TEMPLATES = compat.TEMPLATES_DIR
 
@@ -16,13 +16,12 @@ def template(key: str) -> dict[str, Any]:
     return json.loads((TEMPLATES / key / "workflow.json").read_text())
 
 
-def packages(**changes: Any) -> compat.Packages:
-    real = compat.Packages.load()
-    return compat.Packages(
-        layouts=changes.get("layouts", copy.deepcopy(real.layouts)),
-        blocks=changes.get("blocks", copy.deepcopy(real.blocks)),
-        planned=changes.get("planned", dict(real.planned)),
-    )
+@pytest.fixture
+def ui(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """A copy of catalogue.json (#37) that validation reads: break it as a PR would."""
+    broken = copy.deepcopy(catalogue.load())
+    monkeypatch.setattr(catalogue, "load", lambda: broken)
+    return broken
 
 
 def messages(problems: list[compat.Problem]) -> list[str]:
@@ -31,138 +30,38 @@ def messages(problems: list[compat.Problem]) -> list[str]:
 
 def test_everything_we_ship_passes_today(capsys: pytest.CaptureFixture[str]) -> None:
     assert compat.main(["--fixtures"]) == 0
-    out = capsys.readouterr().out
-    assert "4 configs compile and draw" in out
-    # every block the templates place is built (#30, #92): checked against its manifest, not counted
-    assert "planned in" not in out
+    assert "4 configs compile and draw" in capsys.readouterr().out
 
 
-def test_a_removed_layout_names_the_template_and_page() -> None:
-    real = packages()
-    del real.layouts["case"]
-    found = messages(
-        compat.check_document("template matrix-retail", template("matrix-retail"), real)
-    )
-    assert found == ["template matrix-retail · page site: layout 'case' has no manifest"]
-
-
-def test_a_removed_block_names_the_template_and_page() -> None:
-    real = packages()
-    del real.blocks["case_header"]  # its manifest gone, and not planned
-    found = messages(compat.check_document("template qsr", template("qsr"), real))
+def test_a_removed_layout_names_the_template_and_page(ui: dict[str, Any]) -> None:
+    del ui["layouts"]["case"]
+    found = messages(compat.check_document("template matrix-retail", template("matrix-retail")))
     assert found == [
-        "template qsr · page store: block 'case_header' (region header) has no manifest and"
-        " isn't planned"
+        "template matrix-retail · apps.pages[9].layout: page 'site': unknown layout 'case'"
     ]
 
 
-def test_an_unknown_region_and_a_full_region() -> None:
-    doc = template("qsr")
-    home = next(p for p in doc["apps"]["pages"] if p["key"] == "home")
-    home["regions"]["sidebar"] = [{"block": "task_inbox"}]
-    home["regions"]["hero"] = [{"block": "task_inbox"}, {"block": "case_table"}]
-    found = messages(compat.check_document("template qsr", doc, packages()))
-    assert "template qsr · page home: layout 'standard' has no region 'sidebar'" in found
-    assert "template qsr · page home: region 'hero' holds at most 1" in found
-
-
-def test_a_layout_requirement_and_allowed_blocks() -> None:
-    real = packages()
-    real.layouts["standard"]["requires"] = ["department"]
-    real.layouts["standard"]["regions"][1]["allowed_blocks"] = ["case_table"]
-    ui = {
-        "pages": [
-            {"key": "home", "layout": "standard", "regions": {"main": [{"block": "task_inbox"}]}}
-        ]
-    }
-    found = messages(compat.check_pages("fixture x", ui, real))
+def test_a_removed_block_names_the_template_and_page(ui: dict[str, Any]) -> None:
+    del ui["blocks"]["case_header"]
+    found = messages(compat.check_document("template qsr", template("qsr")))
     assert found == [
-        "fixture x · page home: layout 'standard' needs department",
-        "fixture x · page home: region 'main' doesn't take block 'task_inbox'",
+        "template qsr · apps.pages[2].regions.header[0].block: page 'store': unknown block"
+        " 'case_header'"
     ]
 
 
-def test_a_built_block_is_checked_against_its_manifest() -> None:
-    manifest = {
-        "name": "task_inbox",
-        "version": 1,
-        "description": "x",
-        "regions": ["main"],
-        "props": {
-            "type": "object",
-            "properties": {"scope": {"enum": ["mine", "team"]}},
-            "additionalProperties": False,
-        },
-    }
-    real = packages(blocks={"task_inbox": manifest})
-    ui = {
-        "pages": [
-            {
-                "key": "home",
-                "layout": "standard",
-                "regions": {
-                    "main": [{"block": "task_inbox", "props": {"scope": "everyone"}}],
-                    "aside": [{"block": "task_inbox"}],
-                },
-            }
-        ]
-    }
-    found = messages(compat.check_pages("template x", ui, real))
-    assert found == [
-        "template x · page home: block 'task_inbox' prop scope: 'everyone' is not one of"
-        " ['mine', 'team']",
-        "template x · page home: block 'task_inbox' can't go in region 'aside'",
-    ]
-
-
-def test_a_planned_block_with_a_manifest_is_stale() -> None:
-    real = packages(
-        blocks={"case_table": {"name": "case_table", "regions": ["main"]}},
-        planned={"case_table": "#92"},
-    )
-    assert messages(compat.check_packages(real)) == [
-        "planned.json · case_table: has a manifest now: remove it from planned.json"
-    ]
-
-
-def test_a_document_that_no_longer_compiles_fails() -> None:
+def test_a_document_that_no_longer_validates_fails() -> None:
     doc = template("qsr")
     doc["flows"][0]["stages"][0]["department"] = "nowhere"
-    found = messages(compat.check_document("fixture broken", doc, packages()))
-    assert len(found) == 1 and found[0].startswith("fixture broken · document: doesn't compile")
+    found = messages(compat.check_document("fixture broken", doc))
+    assert found == ["fixture broken · flows[0].stages[0].department: unknown department 'nowhere'"]
 
 
 def test_main_exits_1_and_says_what_failed(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ui: dict[str, Any], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    blocks = tmp_path / "zm-blocks"
-    (blocks / "layouts/standard").mkdir(parents=True)  # no `case` layout any more
-    real = compat.BLOCKS_DIR / "layouts/standard/manifest.json"
-    (blocks / "layouts/standard/manifest.json").write_text(real.read_text())
-    (blocks / "planned.json").write_text((compat.BLOCKS_DIR / "planned.json").read_text())
-    monkeypatch.setattr(compat, "BLOCKS_DIR", blocks)
+    del ui["layouts"]["case"]
     assert compat.main([]) == 1
     err = capsys.readouterr().err
-    assert "FAIL template matrix-retail · page site: layout 'case' has no manifest" in err
-
-
-def test_a_layout_dropped_from_the_registry_doesnt_count(tmp_path: Path) -> None:
-    root = tmp_path / "zm-blocks"
-    for name in ("standard", "case"):
-        (root / "layouts" / name).mkdir(parents=True)
-        src = compat.BLOCKS_DIR / "layouts" / name / "manifest.json"
-        (root / "layouts" / name / "manifest.json").write_text(src.read_text())
-    (root / "src").mkdir()
-    real = (compat.BLOCKS_DIR / "src/registry.ts").read_text()
-    (root / "src/registry.ts").write_text(real.replace("  case: {", "  // case: {"))
-    loaded = compat.Packages.load(root)
-    assert set(loaded.layouts) == {"standard"}
-    assert compat.registered(real, "layouts") == {"standard", "case"}
-    # blocks are keyed by version
-    assert compat.registered(real, "blocks") == {
-        "task_inbox",
-        "case_table",
-        "case_header",
-        "case_fields",
-        "case_tasks",
-    }
+    assert "FAIL template matrix-retail · apps.pages[9].layout: page 'site'" in err
+    assert "zm-compat: 2 problem(s) in 2 configs" in err

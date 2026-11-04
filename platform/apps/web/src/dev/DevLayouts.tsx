@@ -1,6 +1,7 @@
-// /dev/layouts (dev server only, never in production builds): the Sites list and a case page drawn
-// by the real blocks (#92) from the Sprint 1 demo's fixtures. No API: requests are answered from
-// fixtures, and submitting the DD checklist moves MX-0001 on, as the API would.
+// /dev/layouts (dev server only, never in production builds): each layout with each block it takes
+// (#37), drawn by the real blocks from the Sprint 1 demo's fixtures: the Sites list (`standard`) and
+// MX-0001's case page (`case`). No API: requests are answered from fixtures, and submitting the DD
+// checklist moves MX-0001 on, as the API would.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BlocksApi, PageRenderer, type UiPage } from "@zm/blocks";
 import { fixtureApi, sampleCase, sampleCases, sampleTask, sampleUi } from "@zm/blocks/test";
@@ -13,6 +14,7 @@ const sites: UiPage = {
   layout: "standard",
   regions: {
     main: [{ block: "case_table", props: { flow: "store_launch", columns: ["code", "site_name", "city", "stage", "status", "age", "open_tasks"] } }],
+    aside: [{ block: "task_inbox", props: { scope: "mine" } }],
   },
 };
 const site: UiPage = {
@@ -35,6 +37,7 @@ function demoApi() {
   );
   return fixtureApi({
     "GET /app/cases": () => sampleCases,
+    "GET /app/tasks": () => (mx1.tasks.length > 0 ? [sampleTask.task] : []),
     "GET /app/cases/MX-0001": () => mx1,
     ...others,
     "GET /app/tasks/t-dd": () => sampleTask,
@@ -67,7 +70,7 @@ export default function DevLayouts() {
           >
             <PageHeader
               title="/dev/layouts"
-              description="The Sites list and MX-0001's case page, drawn by the real blocks from fixtures (no API). Switch scheme and accent in the top bar."
+              description="Each layout with each block it takes: the Sites list with My work beside it, and MX-0001's case page, drawn by the real blocks from fixtures (no API). Switch scheme and accent in the top bar."
             />
             <MemoryRouter key={view} initialEntries={[VIEWS[view]]}>
               <Routes>
