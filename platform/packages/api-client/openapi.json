@@ -1920,12 +1920,18 @@
             "type": "string"
           },
           "memberships": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/Membership"
-            },
-            "title": "Memberships",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Membership"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memberships"
           },
           "name": {
             "maxLength": 200,

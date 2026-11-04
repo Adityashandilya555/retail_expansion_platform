@@ -1424,11 +1424,8 @@ export interface components {
         UserIn: {
             /** Email */
             email: string;
-            /**
-             * Memberships
-             * @default []
-             */
-            memberships: components["schemas"]["Membership"][];
+            /** Memberships */
+            memberships?: components["schemas"]["Membership"][] | null;
             /** Name */
             name: string;
         };

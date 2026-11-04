@@ -37,7 +37,7 @@ pytestmark = pytest.mark.integration
 TEMPLATE = Path(__file__).resolve().parents[3] / "packages/templates/qsr/workflow.json"
 BASE_URL = "https://app.people.test"
 TABLES = ("app.cases", "app.case_counters", "app.releases", "app.drafts")
-ADMIN, PRIYA = "admin@people.test", "priya@people.test"
+ADMIN, PRIYA, DEPUTY = "admin@people.test", "priya@people.test", "deputy@people.test"
 PASSWORD = "a-long-enough-password"
 
 
@@ -368,8 +368,24 @@ def test_an_expired_invite_is_404_until_the_admin_invites_the_person_again(world
         response = world.http.post("/app/admin/users", json=taken, headers=world.admin())
         assert response.status_code == 409, response.text
 
-    deputy = {"email": "deputy@people.test", "name": "Deputy"}
+    deputy = {"email": DEPUTY, "name": "Deputy"}
     owner_path = f"/owner/clients/{world.client_id}/client-admin"
     assert world.http.post(owner_path, json=deputy, headers=world.owner).status_code == 201
     by_admin = world.http.post("/app/admin/users", json=deputy, headers=world.admin())
     assert (by_admin.status_code, by_admin.json()["is_client_admin"]) == (201, True)  # no demotion
+    world.ids[DEPUTY] = by_admin.json()["id"]
+
+
+def test_the_owner_inviting_a_pending_admin_again_keeps_the_memberships_set_for_them(
+    world: World,
+) -> None:
+    legal = [{"department": "legal", "level": 1, "scope": "own"}]
+    path = f"/app/admin/users/{world.ids[DEPUTY]}"
+    set_legal = world.http.patch(path, json={"memberships": legal}, headers=world.admin())
+    assert set_legal.status_code == 200, set_legal.text
+    owner_path = f"/owner/clients/{world.client_id}/client-admin"
+    again = world.http.post(
+        owner_path, json={"email": DEPUTY, "name": "Deputy"}, headers=world.owner
+    )
+    assert again.status_code == 201, again.text
+    assert (again.json()["memberships"], again.json()["is_client_admin"]) == (legal, True)

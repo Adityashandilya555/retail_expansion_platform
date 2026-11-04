@@ -42,7 +42,8 @@ class InviteIn(BaseModel):
 
 
 class UserIn(InviteIn):
-    memberships: list[Membership] = []
+    memberships: list[Membership] | None = None
+    """Leave out to keep a pending invitee's memberships (none for someone new)."""
 
 
 class UserPatch(BaseModel):
@@ -125,8 +126,9 @@ async def _set_memberships(conn: AsyncConnection, user_id: UUID, ms: list[Member
 
 async def invite(ctx: ClientContext, body: UserIn, *, admin: bool = False) -> UserOut:
     """An `invited` person with their memberships and a one-time invite for the worker to email.
-    Someone invited who never accepted gets this name and these memberships (a client admin stays
-    one) and a new invite in place of the old, whose link stops working; anyone else is a 409."""
+    Someone invited who never accepted gets this name, these memberships if given (a client admin
+    stays one) and a new invite in place of the old, whose link stops working; anyone else is a
+    409."""
     raw = token_bytes.token_urlsafe(32)
     async with ctx.db.begin() as conn:
         user_id = (
@@ -145,7 +147,8 @@ async def invite(ctx: ClientContext, body: UserIn, *, admin: bool = False) -> Us
                 "Email taken",
                 errors=[FieldError(path="/email", message="Someone here already uses this email")],
             )
-        await _set_memberships(conn, user_id, body.memberships)
+        if body.memberships is not None:
+            await _set_memberships(conn, user_id, body.memberships)
         await conn.execute(text("delete from app.invites where user_id = :id"), {"id": user_id})
         await conn.execute(
             text(
