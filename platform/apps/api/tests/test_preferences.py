@@ -24,7 +24,16 @@ from zm_api.registry import Client
 from .conftest import bearer, token
 from .test_auth import INI, PILOT_DSN, PILOT_OPERATON, PLATFORM_URL, add_client, login
 
-RUN = uuid.uuid4().hex[:8]
+VAULT = PILOT_DSN.replace("postgresql://", "postgresql+asyncpg://")
+
+
+async def run_sql(dsn: str, sql: str, **params: str) -> None:
+    engine = create_async_engine(dsn)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(sql), params)
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture
@@ -58,25 +67,28 @@ def pilot(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[str, str, str]]:
     cfg = Config(str(INI))
     cfg.cmd_opts = argparse.Namespace(x=["db=platform"])
     command.upgrade(cfg, "head")
-    code, email, password = f"PREFS-{RUN}", f"prefs+{RUN}@pilot.demo", "pw-" + uuid.uuid4().hex
+    run = uuid.uuid4().hex[:8]
+    slug, code, email, password = (
+        f"prefs-{run}",
+        f"PREFS-{run}",
+        f"prefs+{run}@pilot.demo",
+        "pw-" + run,
+    )
 
     async def go() -> None:
-        await add_client(f"prefs-{RUN}", f"Prefs {RUN}", code, PILOT_DSN, PILOT_OPERATON)
-        vault = create_async_engine(PILOT_DSN.replace("postgresql://", "postgresql+asyncpg://"))
-        try:
-            async with vault.begin() as conn:
-                await conn.execute(
-                    text(
-                        "insert into app.users (email, name, password_hash, status)"
-                        " values (:e, 'Prefs User', :h, 'active')"
-                    ),
-                    {"e": email, "h": hash_password(password)},
-                )
-        finally:
-            await vault.dispose()
+        await add_client(slug, f"Prefs {run}", code, PILOT_DSN, PILOT_OPERATON)
+        await run_sql(
+            VAULT,
+            "insert into app.users (email, name, password_hash, status)"
+            " values (:e, 'Prefs User', :h, 'active')",
+            e=email,
+            h=hash_password(password),
+        )
 
     asyncio.run(go())
     yield code, email, password
+    asyncio.run(run_sql(VAULT, "delete from app.users where email = :e", e=email))
+    asyncio.run(run_sql(PLATFORM_URL, "delete from platform.clients where slug = :s", s=slug))
 
 
 @pytest.mark.integration
@@ -102,3 +114,15 @@ def test_dark_and_copper_follow_the_user_to_another_browser(pilot: tuple[str, st
         # the shell owns the accent list: an id it doesn't know is kept, and skipped there
         neon = api.put("/app/me/preferences", json={"accent": "neon"}, headers=other)
         assert neon.json() == {"color_scheme": "dark", "accent": "neon"}
+
+
+@pytest.mark.integration
+def test_someone_deactivated_after_signing_in_cant_save(pilot: tuple[str, str, str]) -> None:
+    code, email, password = pilot
+    with TestClient(create_app(), base_url="https://testserver") as api:
+        auth = bearer(login(api, code, email, password).json()["access_token"])
+        asyncio.run(
+            run_sql(VAULT, "update app.users set status = 'deactivated' where email = :e", e=email)
+        )
+        r = api.put("/app/me/preferences", json={"accent": "copper"}, headers=auth)
+        assert r.status_code == 401
