@@ -128,6 +128,12 @@ class Preferences(BaseModel):
     accent: str | None = Field(default=None, pattern=r"^[a-z]{2,20}$")
 
 
+class PreferencesIn(Preferences):
+    """The body of `PUT /app/me/preferences`: any other key is a 422, not silently dropped."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class Me(BaseModel):
     id: UUID
     email: str
@@ -399,7 +405,7 @@ async def me(ctx: ClientCtx, uid: UserId) -> Me:
 
 
 @app_routes.put("/me/preferences")
-async def set_preferences(body: Preferences, ctx: ClientCtx, uid: UserId) -> Preferences:
+async def set_preferences(body: PreferencesIn, ctx: ClientCtx, uid: UserId) -> Preferences:
     """Saves only the keys sent; the shell applies them after every sign-in, on any device."""
     async with ctx.db.begin() as conn:
         saved = (

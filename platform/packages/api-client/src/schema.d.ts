@@ -1048,6 +1048,16 @@ export interface components {
             color_scheme?: ("light" | "dark" | "auto") | null;
         };
         /**
+         * PreferencesIn
+         * @description The body of `PUT /app/me/preferences`: any other key is a 422, not silently dropped.
+         */
+        PreferencesIn: {
+            /** Accent */
+            accent?: string | null;
+            /** Color Scheme */
+            color_scheme?: ("light" | "dark" | "auto") | null;
+        };
+        /**
          * Problem
          * @description Problem details (RFC 9457), the body of every error response.
          */
@@ -1480,7 +1490,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Preferences"];
+                "application/json": components["schemas"]["PreferencesIn"];
             };
         };
         responses: {

@@ -1189,6 +1189,42 @@
         "title": "Preferences",
         "type": "object"
       },
+      "PreferencesIn": {
+        "additionalProperties": false,
+        "description": "The body of `PUT /app/me/preferences`: any other key is a 422, not silently dropped.",
+        "properties": {
+          "accent": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z]{2,20}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accent"
+          },
+          "color_scheme": {
+            "anyOf": [
+              {
+                "enum": [
+                  "light",
+                  "dark",
+                  "auto"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color Scheme"
+          }
+        },
+        "title": "PreferencesIn",
+        "type": "object"
+      },
       "Problem": {
         "description": "Problem details (RFC 9457), the body of every error response.",
         "properties": {
@@ -2133,7 +2169,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Preferences"
+                "$ref": "#/components/schemas/PreferencesIn"
               }
             }
           },

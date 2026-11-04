@@ -52,6 +52,7 @@ def api(rows: dict[str, Client]) -> TestClient:
         ({"accent": "x"}, "/accent"),
         ({"accent": "a" * 21}, "/accent"),
         ({"accent": "neon-2"}, "/accent"),
+        ({"accent": "copper", "density": "compact"}, "/density"),  # only colours (D19)
     ],
 )
 def test_a_bad_preference_is_422_on_its_field(api: TestClient, body: dict, path: str) -> None:
