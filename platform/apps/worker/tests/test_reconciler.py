@@ -93,7 +93,22 @@ class FakeResolver:
         FakeResolver.closed = True
 
 
-def test_one_clients_failure_doesnt_stop_the_others(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def resynced(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, float]]:
+    """Each client's people mirror retry (`users.resync`), instead of a database."""
+    seen: list[tuple[str, float]] = []
+
+    async def fake_resync(ctx: SimpleNamespace, older_than: float) -> Counter[str]:
+        seen.append((ctx.slug, older_than))
+        return Counter(mirrored=1) if ctx.slug == "qsr" else Counter()
+
+    monkeypatch.setattr(reconcile.users, "resync", fake_resync)
+    return seen
+
+
+def test_one_clients_failure_doesnt_stop_the_others(
+    monkeypatch: pytest.MonkeyPatch, resynced: list[tuple[str, float]]
+) -> None:
     rows = [
         SimpleNamespace(slug="broken"),
         SimpleNamespace(slug="pilot"),
@@ -114,9 +129,44 @@ def test_one_clients_failure_doesnt_stop_the_others(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(reconcile.tasks, "reconcile", fake_reconcile)
 
     out = asyncio.run(reconcile.reconcile_all(older_than=0))
-    assert out == {"broken": Counter(error=1), "pilot": Counter(committed=1), "qsr": Counter()}
-    assert seen == [("pilot", 0), ("qsr", 0)]
+    assert out == {
+        "broken": Counter(error=1),
+        "pilot": Counter(committed=1),
+        "qsr": Counter(mirrored=1),
+    }
+    assert seen == resynced == [("pilot", 0), ("qsr", 0)]
     assert FakeResolver.closed
+
+
+@pytest.mark.usefixtures("resynced")
+def test_a_pass_also_sends_each_clients_invites_once_mail_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_ready(conn: object) -> list[SimpleNamespace]:
+        return [SimpleNamespace(slug="pilot"), SimpleNamespace(slug="qsr")]
+
+    async def fake_reconcile(ctx: SimpleNamespace, older_than: float) -> Counter[str]:
+        return Counter()
+
+    class Mail:
+        closed = False
+
+        async def aclose(self) -> None:
+            Mail.closed = True
+
+    async def fake_send(ctx: SimpleNamespace, mail: Mail) -> Counter[str]:
+        return Counter(sent=2) if ctx.slug == "pilot" else Counter()
+
+    monkeypatch.setattr(reconcile, "PlatformRegistry", lambda: SimpleNamespace(engine=FakeEngine))
+    monkeypatch.setattr(reconcile, "Resolver", FakeResolver)
+    monkeypatch.setattr(reconcile, "ready_clients", fake_ready)
+    monkeypatch.setattr(reconcile.tasks, "reconcile", fake_reconcile)
+    monkeypatch.setattr(reconcile.invites, "client", Mail)
+    monkeypatch.setattr(reconcile.invites, "send", fake_send)
+
+    out = asyncio.run(reconcile.reconcile_all())
+    assert out == {"pilot": Counter(sent=2), "qsr": Counter(mirrored=1)}
+    assert Mail.closed
 
 
 def test_an_unconfigured_reconciler_is_reported_once(

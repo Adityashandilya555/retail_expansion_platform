@@ -648,6 +648,40 @@
         "title": "DecisionOut",
         "type": "object"
       },
+      "Department": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "description": "Department key; Operaton candidate groups are derived as `<key>__L<n>`.",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "levels": {
+            "description": "Contiguous from 1 (L1 = most junior).",
+            "items": {
+              "$ref": "#/components/schemas/Level"
+            },
+            "minItems": 1,
+            "title": "Levels",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "levels"
+        ],
+        "title": "Department",
+        "type": "object"
+      },
       "DraftDiff": {
         "description": "What publishing the draft would change; every list empty and both looks null = nothing.",
         "properties": {
@@ -840,6 +874,50 @@
         "title": "FormOut",
         "type": "object"
       },
+      "InviteAcceptIn": {
+        "properties": {
+          "password": {
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "Password",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ],
+        "title": "InviteAcceptIn",
+        "type": "object"
+      },
+      "InviteIn": {
+        "properties": {
+          "email": {
+            "maxLength": 320,
+            "pattern": "^[^@\\s]+@[^@\\s]+$",
+            "title": "Email",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "name"
+        ],
+        "title": "InviteIn",
+        "type": "object"
+      },
       "KeyChanges": {
         "properties": {
           "added": {
@@ -870,6 +948,28 @@
           "changed"
         ],
         "title": "KeyChanges",
+        "type": "object"
+      },
+      "Level": {
+        "additionalProperties": false,
+        "properties": {
+          "n": {
+            "minimum": 1.0,
+            "title": "N",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "n",
+          "name"
+        ],
+        "title": "Level",
         "type": "object"
       },
       "LoginIn": {
@@ -1886,6 +1986,130 @@
         "title": "UiStage",
         "type": "object"
       },
+      "UserIn": {
+        "properties": {
+          "email": {
+            "maxLength": 320,
+            "pattern": "^[^@\\s]+@[^@\\s]+$",
+            "title": "Email",
+            "type": "string"
+          },
+          "memberships": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Membership"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memberships"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "name"
+        ],
+        "title": "UserIn",
+        "type": "object"
+      },
+      "UserOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_client_admin": {
+            "title": "Is Client Admin",
+            "type": "boolean"
+          },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/Membership"
+            },
+            "title": "Memberships",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "invited",
+              "active",
+              "deactivated"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "name",
+          "status",
+          "is_client_admin",
+          "memberships",
+          "created_at"
+        ],
+        "title": "UserOut",
+        "type": "object"
+      },
+      "UserPatch": {
+        "properties": {
+          "memberships": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Membership"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memberships"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "deactivated"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "UserPatch",
+        "type": "object"
+      },
       "ValueChange": {
         "properties": {
           "draft": {
@@ -1971,6 +2195,193 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/app/admin/departments": {
+      "get": {
+        "description": "What memberships may name: the active release's departments and levels.",
+        "operationId": "list_departments_app_admin_departments_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Department"
+                  },
+                  "title": "Response List Departments App Admin Departments Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Departments",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/admin/users": {
+      "get": {
+        "operationId": "list_users_app_admin_users_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "invited",
+                    "active",
+                    "deactivated"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserOut"
+                  },
+                  "title": "Response List Users App Admin Users Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Users",
+        "tags": [
+          "app"
+        ]
+      },
+      "post": {
+        "operationId": "invite_user_app_admin_users_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Invite User",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/admin/users/{user_id}": {
+      "patch": {
+        "description": "New memberships and/or status, then the Operaton mirror. If Operaton fails (502) the change\nis kept, and the reconciler finishes the mirror (`users.resync`), as does sending it again.",
+        "operationId": "update_user_app_admin_users__user_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Update User",
+        "tags": [
+          "app"
+        ]
+      }
+    },
     "/app/cases": {
       "get": {
         "description": "Every case of the client (newest first, up to 500) with its stage states.",
@@ -2431,6 +2842,48 @@
         ]
       }
     },
+    "/auth/invite/accept": {
+      "post": {
+        "description": "An invited person (S2-23) sets their password and is signed in. The token\n(`<slug>.<random>`, `zm_api.people`) works once, for 7 days. The Operaton mirror runs inside\nthe transaction, so if it fails the invite still works.",
+        "operationId": "accept_invite_auth_invite_accept_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteAcceptIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Accept Invite",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/auth/login": {
       "post": {
         "operationId": "login_auth_login_post",
@@ -2811,6 +3264,60 @@
           }
         },
         "summary": "Get Client Detail",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/client-admin": {
+      "post": {
+        "description": "The client's admin, invited by email (they manage people, never the flow, forms or UI).",
+        "operationId": "invite_client_admin_owner_clients__client_id__client_admin_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Invite Client Admin",
         "tags": [
           "owner"
         ]

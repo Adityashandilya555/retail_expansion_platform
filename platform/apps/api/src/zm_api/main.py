@@ -11,6 +11,7 @@ from zm_api import (
     drafts,
     errors,
     logs,
+    people,
     publish,
     settings,
     tasks_routes,
@@ -44,6 +45,8 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         tasks_routes.routes,
         cases_routes.routes,
         ui.routes,
+        people.routes,
+        people.owner_routes,
     ):
         app.include_router(router)
     # Outermost last: CORS → RequestLog → CrashGuard → routes. CORS headers reach every response,
