@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { expectNoAxeViolations, renderWithZm } from "@zm/ui/test";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
-import { PageRenderer, defaultCasePage, layouts, type UiPage } from "./index";
+import { PageRenderer, defaultCasePage, layouts, type BlockEntry, type UiPage } from "./index";
 import { sampleUi, testBlocks } from "./test";
 
 const pageOf = (key: string) => sampleUi.pages.find((p) => p.key === key) as UiPage;
@@ -102,6 +102,36 @@ test("a block outside its regions, past a region's max, or crashing becomes a pl
     expect.stringContaining('case_header: not allowed in region "main"'),
     expect.stringContaining("boom: kaput"),
   ]);
+});
+
+test("a page names no block version: the newest version that takes its props draws", () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const tile = (version: number, prop: string): BlockEntry => ({
+    manifest: { name: "tile", version, description: "", regions: ["main"], props: { type: "object", additionalProperties: false, properties: { [prop]: { type: "string" } } } },
+    Block: () => <section aria-label={`tile v${version}`} />,
+  });
+  renderWithZm(
+    <MemoryRouter>
+      <PageRenderer
+        ui={sampleUi}
+        registry={{ ...testBlocks, tile: { 1: tile(1, "label"), 2: tile(2, "title") } }}
+        page={{
+          key: "p",
+          layout: "standard",
+          regions: {
+            main: [
+              { block: "tile", props: { label: "a" } },
+              { block: "tile", props: { title: "b" } },
+              { block: "tile", props: {} },
+              { block: "tile", props: { label: 1 } },
+            ],
+          },
+        }}
+      />
+    </MemoryRouter>,
+  );
+  expect(blockNames()).toEqual(["tile v1", "tile v2", "tile v2"]);
+  expect(screen.getByRole("alert").textContent).toContain("props must NOT have additional properties"); // v2's errors
 });
 
 test("an unknown layout is a placeholder", () => {

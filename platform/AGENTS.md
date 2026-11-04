@@ -82,7 +82,7 @@ platform/packages/compiler/   workflow.json → BPMN/DMN + form/UI specs → rel
 platform/packages/schema/     workflow.json JSON Schema v1 + Pydantic; TS types generated
 platform/packages/zm-ui/      Mantine theme + client presets, ZmProvider, appearance menu, AppFrame and extras (installed once; previews at /dev/ui)
 platform/packages/zm-forms/   form renderer on Mantine inputs + Ajv 2020
-platform/packages/zm-blocks/  layouts (`standard`, `case`) and blocks, each with manifest.json (name, description, allowed props, no styling) — what the agent can place (previews at /dev/layouts)
+platform/packages/zm-blocks/  layouts (`standard`, `case`) and blocks, each with manifest.json (name, description, allowed props, no styling) — what the agent can place (previews at /dev/layouts); catalogue.json, generated from the registry, is what validation and the API read
 platform/packages/templates/  starter workflow.json per template (data folder, not a code package): matrix-retail, qsr; `zm-api templates sync` → platform.templates
 platform/infra/operaton/      Dockerfile (official image or fork build), railway.json, health check
 platform/infra/supabase/      supabase CLI: platform/ migrations (control plane) and client/ migrations (app + operaton roles) applied by the worker
@@ -146,6 +146,15 @@ Sourcegraph is the first stop for any question about Operaton, the prototype or 
 - It exposes about 170 tools, so enable it in `/mcp` only for sessions that need it, and keep it off otherwise.
 - Node: supported versions are 22.19+, 24.11+ and 26+; we use **Node 26** (`brew upgrade node`). Odd versions such as 25 are unsupported: REA starts with an npm `EBADENGINE` warning (checked 2026-10-12).
 - Bump the pinned version deliberately in a PR (REA releases often); don't run `rea setup` here, because `.mcp.json` already registers the server.
+
+### Design tooling: Impeccable
+Impeccable (impeccable.style, `github.com/pbakaus/impeccable`, Apache-2.0) is a development-time design skill for our agents: use it to build, critique and audit the presets, components and layouts in `@zm/ui` and `@zm/blocks`. It is never loaded into the client app, and we vendor nothing from it.
+- **Install** as a Claude Code plugin. The repo's `.claude/settings.json` declares its marketplace pinned to a release tag (`extraKnownMarketplaces.impeccable.source.ref`). Start Claude Code at the repo root and trust the folder, then `/plugin` → Discover → Impeccable → "Install for you, in this repo only". If you added the `impeccable` marketplace yourself before, Claude Code keeps yours and it isn't pinned: remove it (`/plugin marketplace remove impeccable`) and reopen the repo. Without the repo's settings (e.g. started elsewhere), add it by hand at the same tag: `/plugin marketplace add pbakaus/impeccable#<ref>`.
+- **Never run `/impeccable init` here.** It writes product context into the PRODUCT.md it finds, which is `platform/docs/PRODUCT.md`, and an agent in auto or accept-edits mode would change our product spec without anyone seeing the edit.
+- **Context:** `platform/packages/zm-ui/DESIGN.md` is Impeccable's output. Regenerate it with `/impeccable document` and don't hand-write rules into it, since each run replaces the file. The rules that bind the code live here and in `platform/docs/PRODUCT.md` → "UI": colours only in `packages/zm-ui/src/theme.ts` (see Code conventions), and PRODUCT.md wins over DESIGN.md. Token values in DESIGN.md describe `theme.ts`; never copy one back into code.
+- **Hooks** (`/impeccable hooks on`) are optional per developer and off by default. Their `.impeccable/` config is gitignored.
+- **CI:** the Web job of `zm-platform.yml` runs the detector over `apps` and `packages`. It is the `impeccable` devDependency in `platform/package.json`, installed from the lockfile; run it locally with `pnpm exec impeccable detect apps packages` from `platform/`. Findings (exit 2) are advisory (#32): they show as warnings on the PR and in the run summary, never fail the job, and `impeccable.json` is uploaded as the `impeccable` artifact. A scan failure (exit 1) fails the job.
+- **Bump** the marketplace `ref` in `.claude/settings.json` and `impeccable` in `platform/package.json` together, in one PR, to the newest release that is at least 14 days old. The repo tags each release `skill-vX` (plugin) and `cli-vX` (npm package). Check LICENSE and NOTICE.md at the new tag first.
 
 ### Validating an issue: `/refine-issue`
 Run `/refine-issue <n>` before `/implement-issue <n>`, and again when a dependency merges with a different shape than its spec described.

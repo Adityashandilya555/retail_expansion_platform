@@ -32,7 +32,10 @@ export type BlockManifest = {
 /** `props` have passed the manifest's schema. */
 export type BlockProps = { props: Record<string, unknown>; ui: AppUi; page: UiPage };
 export type BlockEntry = { manifest: BlockManifest; Block: ComponentType<BlockProps> };
-/** Block name → manifest version → block. The shell keeps every version a live release uses (D14). */
+/**
+ * Block name → manifest version → block. The shell keeps every version a live release uses (D14), and
+ * draws the newest one that takes a page's props (pages name no version).
+ */
 export type BlockRegistry = Record<string, Record<number, BlockEntry>>;
 
 /** A layout's `manifest.json`: its named regions, in drawing order. */
@@ -42,7 +45,8 @@ export type LayoutManifest = {
   description: string;
   /** Page properties the layout needs, e.g. `flow` for `case`. */
   requires?: string[];
-  regions: { key: string; description: string; allowed_blocks?: string[]; max?: number }[];
+  /** A region takes the blocks whose manifest lists it (catalogue.json shows them as `allowed_blocks`). */
+  regions: { key: string; description: string; max?: number }[];
 };
 /** Only non-empty regions are passed. */
 export type LayoutProps = { regions: Partial<Record<string, ReactNode>> };

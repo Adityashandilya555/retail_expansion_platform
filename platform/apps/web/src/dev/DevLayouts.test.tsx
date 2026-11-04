@@ -3,14 +3,19 @@ import userEvent from "@testing-library/user-event";
 import { expect, test } from "vitest";
 import DevLayouts from "./DevLayouts";
 
-test("/dev/layouts draws the Sites list and MX-0001's case page from fixtures", async () => {
+test("/dev/layouts draws each layout with each block it takes, from fixtures", async () => {
   render(<DevLayouts />);
+  // standard: case_table in main, task_inbox in aside
   const sites = await screen.findByRole("table", { name: "Sites" });
   await within(sites).findByText("Indiranagar");
   expect(within(sites).getAllByRole("row")).toHaveLength(4); // the header and three sites
+  expect(screen.getByRole("heading", { name: "My work" })).toBeDefined();
+  await within(await screen.findByRole("table", { name: /MX-0001/ })).findByText("Fill DD checklist");
+  // case: case_header, then case_fields and case_tasks tabs
   const [nav] = screen.getAllByRole("button", { name: "MX-0001" });
   if (!nav) throw new Error("no MX-0001 nav item");
   await userEvent.setup().click(nav);
   expect(await screen.findByRole("heading", { level: 1, name: "Indiranagar" })).toBeDefined();
   expect(await screen.findByRole("group", { name: "Fill DD checklist" })).toBeDefined();
+  expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Tasks"]);
 });

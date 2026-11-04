@@ -10,6 +10,8 @@ COPY packages/compiler packages/compiler
 COPY packages/schema packages/schema
 # starter templates: `zm-api templates sync` and `zm-api drafts seed` read them (#18, #23)
 COPY packages/templates packages/templates
+# the UI packages' catalogue: validation checks pages against it, the agent lists it (#37)
+COPY packages/zm-blocks/catalogue.json packages/zm-blocks/catalogue.json
 # The pre-deploy (`zm-worker vault-migrate --ready`, .railway/railway.ts) brings every ready
 # client's vault to these migrations before this version takes traffic.
 COPY infra/supabase/client infra/supabase/client

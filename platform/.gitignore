@@ -18,3 +18,7 @@ coverage.xml
 
 # demo users with their passwords (scripts/demo_s1.py): never committed
 .demo-users.json
+
+# Impeccable (#32): the detector's local report, and its per-project hook config (/impeccable hooks)
+impeccable.json
+.impeccable/

@@ -7,6 +7,9 @@
 import re
 from collections.abc import Iterator
 
+from jsonschema import Draft202012Validator
+
+from zm_schema import catalogue
 from zm_schema.errors import Error, join
 from zm_schema.models import (
     DeptLevel,
@@ -232,7 +235,8 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
                     group_filled |= form_fields.get(t.form, set()) if t.form else set()
                 before |= group_filled
 
-    # ── apps ──
+    # ── apps: each page against the UI packages (catalogue.json, #37) ──
+    ui = catalogue.load()
     page_keys: set[str] = set()
     for pi, page in enumerate(doc.apps.pages):
         pp = join("apps.pages", pi)
@@ -241,13 +245,47 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
         page_keys.add(page.key)
         if page.department is not None and page.department not in levels:
             err(join(pp, "department"), f"unknown department '{page.department}'")
-        if page.layout == "case" and page.flow not in flow_keys:
-            err(
-                join(pp, "flow"),
-                "a page with layout 'case' must set flow to one of the document's flows",
-            )
-        elif page.flow is not None and page.flow not in flow_keys:
+        if page.flow is not None and page.flow not in flow_keys:
             err(join(pp, "flow"), f"unknown flow '{page.flow}'")
+        on = f"page '{page.key}'"
+        layout = ui["layouts"].get(page.layout)
+        if layout is None:
+            err(join(pp, "layout"), f"{on}: unknown layout '{page.layout}'")
+            continue
+        for need in layout.get("requires", []):
+            if getattr(page, need, None) is None:
+                err(join(pp, need), f"{on}: layout '{page.layout}' needs {need}")
+        regions = {r["key"]: r for r in layout["regions"]}
+        for key, placed in page.regions.items():
+            rp = join(pp, "regions", key)
+            region = regions.get(key)
+            if region is None:
+                err(rp, f"{on}: layout '{page.layout}' has no region '{key}'")
+                continue
+            if "max" in region and len(placed) > region["max"]:
+                err(rp, f"{on}: region '{key}' holds at most {region['max']}")
+            for bi, ref in enumerate(placed):
+                bp, versions = join(rp, bi), ui["blocks"].get(ref.block)
+                if not versions:
+                    err(join(bp, "block"), f"{on}: unknown block '{ref.block}'")
+                    continue
+                if ref.block not in region["allowed_blocks"]:
+                    err(
+                        join(bp, "block"),
+                        f"{on}: region '{key}' of layout '{page.layout}'"
+                        f" doesn't take block '{ref.block}'",
+                    )
+                    continue
+                # A page names no block version: props any version takes pass (the shell draws the
+                # newest that takes them, PageRenderer's Slot); otherwise the newest one's errors.
+                if any(
+                    Draft202012Validator(m["props"]).is_valid(ref.props) for m in versions.values()
+                ):
+                    continue
+                newest = max(versions.values(), key=lambda m: m["version"])
+                for e in Draft202012Validator(newest["props"]).iter_errors(ref.props):
+                    at = join(bp, "props", *e.absolute_path)
+                    err(at, f"{on}, region '{key}': block '{ref.block}': {e.message}")
     for ni, nav in enumerate(doc.apps.nav):
         np_ = join("apps.nav", ni)
         if nav.page not in page_keys:
