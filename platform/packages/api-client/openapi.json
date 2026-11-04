@@ -697,6 +697,9 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/Preferences"
           }
         },
         "required": [
@@ -705,7 +708,8 @@
           "name",
           "is_client_admin",
           "client",
-          "memberships"
+          "memberships",
+          "preferences"
         ],
         "title": "Me",
         "type": "object"
@@ -916,6 +920,41 @@
           "layout"
         ],
         "title": "Page",
+        "type": "object"
+      },
+      "Preferences": {
+        "description": "A user's appearance (#93, D19): only colours; null = no choice yet (scheme: auto, accent:\nthe client's, then the preset's). The shell skips accents it doesn't know, so the accent list\nlives only there.",
+        "properties": {
+          "accent": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z]{2,20}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accent"
+          },
+          "color_scheme": {
+            "anyOf": [
+              {
+                "enum": [
+                  "light",
+                  "dark",
+                  "auto"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color Scheme"
+          }
+        },
+        "title": "Preferences",
         "type": "object"
       },
       "Problem": {
@@ -1786,6 +1825,48 @@
           }
         },
         "summary": "Me",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/me/preferences": {
+      "put": {
+        "description": "Saves only the keys sent; the shell applies them after every sign-in, on any device.",
+        "operationId": "set_preferences_app_me_preferences_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Preferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preferences"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Set Preferences",
         "tags": [
           "app"
         ]
