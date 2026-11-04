@@ -411,6 +411,47 @@ def test_users_get_the_published_ui_for_their_departments(clients: Clients) -> N
     assert "legal" not in [n["page"] for n in bd["nav"]] + [p["key"] for p in bd["pages"]]
 
 
+def test_a_published_warm_look_reaches_sign_in_and_every_screen(clients: Clients) -> None:
+    """#34: the owner switches the draft to `warm`; once published, the sign-in look and
+    `GET /app/ui` (every screen of the shell) carry it. No frontend deploy is involved."""
+    uid = uuid.uuid4()
+    email = f"legal-{uid.hex[:8]}@pilot.test"
+    vault_sql(
+        "pilot",
+        "insert into app.users (id, email, name, status) values (%s, %s, 'Legal', 'active')",
+        uid,
+        email,
+    )
+    vault_sql("pilot", "insert into app.memberships values (%s, 'legal', 1, 'own')", uid)
+    asyncio.run(_seed(clients, "pilot"))
+
+    def bearer(claims: dict[str, str]) -> dict[str, str]:
+        jwt_ = jwt.encode({**claims, "exp": 4102444800}, JWT_SECRET, algorithm="HS256")
+        return {"Authorization": f"Bearer {jwt_}"}
+
+    owner = bearer({"sub": str(clients.owner), "kind": "owner"})
+    user = bearer({"sub": str(uid), "kind": "client", "client": clients.slugs["pilot"]})
+    client = f"/owner/clients/{clients.ids['pilot']}"
+    code = {"workspace_code": clients.slugs["pilot"].upper()}
+    try:
+        with TestClient(create_app()) as api:
+            v1 = api.post(f"{client}/publish", headers=owner)
+            themed = api.patch(f"{client}/draft/theme", headers=owner, json={"theme": "warm"})
+            draft_only = api.post("/auth/workspace", json=code).json()
+            v2 = api.post(f"{client}/publish", headers=owner)
+            sign_in = api.post("/auth/workspace", json=code).json()
+            ui = api.get("/app/ui", headers=user).json()
+    finally:
+        vault_sql("pilot", "delete from app.users where id = %s", uid)
+
+    assert [r.status_code for r in (v1, themed, v2)] == [200, 200, 200]
+    assert draft_only["theme"] == "quartz"  # the draft alone changes nothing live
+    assert v2.json()["version"] == 2
+    assert (sign_in["theme"], sign_in["accent"]) == ("warm", "slate")
+    assert ui["release"] == {"version": 2}
+    assert ui["client"] == {"name": "Pilot", "theme": "warm", "accent": "slate"}
+
+
 async def _seed(clients: Clients, name: str) -> None:
     async with Stack(clients) as stack:
         await seed_draft(await stack.ctx(name), "matrix-retail")
