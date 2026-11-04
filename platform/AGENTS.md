@@ -147,6 +147,14 @@ Sourcegraph is the first stop for any question about Operaton, the prototype or 
 - Node: supported versions are 22.19+, 24.11+ and 26+; we use **Node 26** (`brew upgrade node`). Odd versions such as 25 are unsupported: REA starts with an npm `EBADENGINE` warning (checked 2026-10-12).
 - Bump the pinned version deliberately in a PR (REA releases often); don't run `rea setup` here, because `.mcp.json` already registers the server.
 
+### Design tooling: Impeccable
+Impeccable (impeccable.style, `github.com/pbakaus/impeccable`, Apache-2.0) is a development-time design skill for our agents: use it to build, critique and audit the presets, components and layouts in `@zm/ui` and `@zm/blocks`. It is never loaded into the client app, and we vendor nothing from it.
+- **Install** as a Claude Code plugin, pinned to the tag `skill-v4.7.0` (released 2026-10-19): `/plugin marketplace add pbakaus/impeccable#skill-v4.7.0` → `/plugin` → Discover → Impeccable → "Install for you, in this repo only". The `#ref` pins the marketplace clone to that tag, and the plugin is installed from that clone.
+- **Context:** `platform/packages/zm-ui/DESIGN.md` (fill it with `/impeccable document`). Product rules stay in `platform/docs/PRODUCT.md`: Impeccable reads that file but must never write it.
+- **Hooks** (`/impeccable hooks on`) are optional per developer and off by default; don't commit the `.impeccable/` files they create.
+- **CI:** the Web job of `zm-platform.yml` runs the detector, npm `impeccable@4.7.0` (released with `cli-v4.7.0`), over `apps` and `packages` and uploads `impeccable.json`. Findings (exit 2) are advisory under D19 and don't fail the job; a scan failure (exit 1) does.
+- **Bump** the plugin tag and the npm version together in one PR, to the newest release that is at least 14 days old, after checking LICENSE and NOTICE.md at the new tag.
+
 ### Validating an issue: `/refine-issue`
 Run `/refine-issue <n>` before `/implement-issue <n>`, and again when a dependency merges with a different shape than its spec described.
 - It checks labels and size, product and convention fit, dependency drift, every Operaton reference (at `main` and `rev:v2.1.5`), repo facts and env vars, testable acceptance criteria, overlap with other issues, and time-sensitive vendor facts.
