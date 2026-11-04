@@ -117,6 +117,14 @@ jobs:
             platform/**/coverage/lcov.info
             platform/sonar-project.properties
           if-no-files-found: ignore
+      # #32: Impeccable design detector, pinned (platform/AGENTS.md → "Design tooling"). Advisory (D19):
+      # exit 2 (findings) passes, exit 1 (a target couldn't be scanned) fails the job.
+      - name: Impeccable detector (advisory)
+        run: npx --yes impeccable@4.7.0 detect apps packages --json > impeccable.json || [ $? -eq 2 ]
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: impeccable
+          path: platform/impeccable.json
 
   # Local stack smoke test: Supabase CLI Postgres (pilot vault) + docker compose, then pytest -m integration.
   zm-integration:
