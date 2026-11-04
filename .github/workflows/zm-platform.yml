@@ -117,14 +117,30 @@ jobs:
             platform/**/coverage/lcov.info
             platform/sonar-project.properties
           if-no-files-found: ignore
-      # #32: Impeccable design detector, pinned (platform/AGENTS.md → "Design tooling"). Advisory (D19):
-      # exit 2 (findings) passes, exit 1 (a target couldn't be scanned) fails the job.
+      # #32: Impeccable's design detector (platform/AGENTS.md → "Design tooling"), installed from the
+      # lockfile by `pnpm install` above. Findings (exit 2) are advisory: warnings on the PR and in
+      # the run summary, never a failed job. Exit 1 (a target couldn't be scanned) fails the job.
+      # It runs, and its report uploads, even after an earlier step failed.
       - name: Impeccable detector (advisory)
-        run: npx --yes impeccable@4.7.0 detect apps packages --json > impeccable.json || [ $? -eq 2 ]
+        if: ${{ !cancelled() }}
+        run: |
+          code=0
+          pnpm exec impeccable detect apps packages --json > impeccable.json || code=$?
+          if jq -e 'type == "array"' impeccable.json > /dev/null 2>&1; then
+            jq -r --arg root "$GITHUB_WORKSPACE/" '.[] | "::warning file=\(.file | ltrimstr($root)),line=\(.line),title=Impeccable \(.antipattern)::" + ("\(.name): \(.description)" | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"))' impeccable.json
+            status=$([ "$code" -eq 1 ] && echo "a target couldn't be scanned, see the log" || echo "advisory (#32)")
+            {
+              echo "### Impeccable: $(jq length impeccable.json) finding(s), $status"
+              jq -r --arg root "$GITHUB_WORKSPACE/" '.[] | "- `\(.file | ltrimstr($root)):\(.line)` \(.name)"' impeccable.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          [ "$code" -eq 0 ] || [ "$code" -eq 2 ]
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
         with:
           name: impeccable
           path: platform/impeccable.json
+          if-no-files-found: warn
 
   # Local stack smoke test: Supabase CLI Postgres (pilot vault) + docker compose, then pytest -m integration.
   zm-integration:
