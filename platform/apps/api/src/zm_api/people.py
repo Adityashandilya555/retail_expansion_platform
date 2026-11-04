@@ -8,7 +8,8 @@ sets their department levels and deactivates them. They can't change the flow, f
 - Memberships may only name departments and levels of the active release's org (else 422).
   Every change is mirrored into the client's Operaton at once (`users.sync_user`); requests read
   memberships from the database, so a new level applies on the person's next request.
-- Deactivating revokes the person's refresh tokens and drops their Operaton groups.
+- Deactivating revokes the person's refresh tokens and drops their Operaton groups. The client's
+  last active client admin can't be deactivated.
 """
 
 import secrets as token_bytes
@@ -221,6 +222,17 @@ async def update_user(
     if body.status == "deactivated" and user_id == me:
         raise Conflict("You can't deactivate yourself")
     async with ctx.db.begin() as conn:
+        if body.status == "deactivated":
+            # every active client admin, locked in one order before the person: of two admins
+            # deactivating each other at once, the second waits and then sees the first's change
+            admins = await conn.execute(
+                text(
+                    "select id from app.users where is_client_admin and status = 'active'"
+                    " order by id for update"
+                )
+            )
+            if not set(admins.scalars()) - {user_id}:
+                raise Conflict("The client must keep an active client admin")
         found = await conn.execute(
             text("select 1 from app.users where id = :id for update"), {"id": user_id}
         )

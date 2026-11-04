@@ -10,13 +10,16 @@ import argparse
 import asyncio
 import json
 import re
+import time
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import httpx
+import psycopg
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -29,7 +32,7 @@ from zm_api.users import create_owner
 from zm_worker import invites
 
 from .conftest import bearer, token
-from .test_publish import INI, engine_client, platform_sql, register, vault_sql
+from .test_publish import INI, VAULTS, engine_client, platform_sql, register, vault_sql
 from .test_tasks import Stack, env_vars
 
 pytestmark = pytest.mark.integration
@@ -389,3 +392,40 @@ def test_the_owner_inviting_a_pending_admin_again_keeps_the_memberships_set_for_
     )
     assert again.status_code == 201, again.text
     assert (again.json()["memberships"], again.json()["is_client_admin"]) == (legal, True)
+
+
+def test_two_admins_deactivating_each_other_at_once_leave_one_admin(world: World) -> None:
+    world.send_invites()
+    accepted = world.accept(DEPUTY)
+    assert accepted.status_code == 200, accepted.text
+    world.access[DEPUTY] = bearer(accepted.json()["access_token"])
+    pairs = [(ADMIN, DEPUTY), (DEPUTY, ADMIN)]
+    pilot = f"postgresql://postgres:postgres@localhost:{VAULTS['pilot']}/postgres"
+    # both rows held, so both requests get past the admin check before either changes anything
+    with ThreadPoolExecutor(2) as pool, psycopg.connect(pilot) as hold:
+        hold.execute("select 1 from app.users where email in (%s, %s) for update", (ADMIN, DEPUTY))
+        calls = [
+            pool.submit(
+                world.http.patch,
+                f"/app/admin/users/{world.ids[other]}",
+                json={"status": "deactivated"},
+                headers=world.access[me],
+            )
+            for me, other in pairs
+        ]
+        waiting = "select count(*) from pg_stat_activity where wait_event_type = 'Lock'"
+        for _ in range(200):
+            if vault_sql("pilot", waiting)[0][0] >= 2:
+                break
+            time.sleep(0.05)
+        hold.rollback()
+        statuses = sorted(c.result().status_code for c in calls)
+    assert statuses == [200, 409]
+    active = vault_sql(
+        "pilot",
+        "select email from app.users where is_client_admin and status = 'active'"
+        " and email in (%s, %s)",
+        ADMIN,
+        DEPUTY,
+    )
+    assert len(active) == 1
