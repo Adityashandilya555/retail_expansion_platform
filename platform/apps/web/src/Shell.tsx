@@ -60,6 +60,7 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
   const section = useParams()["*"]?.split("/")[0] || undefined;
 
   if (me.data === null) return <Navigate to="/" replace />;
+  const userId = me.data?.id;
   const look = ui.data?.client ?? workspace ?? undefined;
   let body;
   if (me.isError) {
@@ -118,7 +119,11 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
     );
   }
   return (
-    <ZmProvider client={look} userId={me.data?.id} onAppearanceChange={savePreferences}>
+    <ZmProvider
+      client={look}
+      userId={userId}
+      onAppearanceChange={userId ? (change) => void savePreferences(userId, change) : undefined}
+    >
       {body}
     </ZmProvider>
   );

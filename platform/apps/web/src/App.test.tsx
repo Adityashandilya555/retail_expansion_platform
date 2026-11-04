@@ -376,7 +376,56 @@ test("a pick the server refuses still applies here, and says it wasn't saved", a
   renderAt("/app");
   await screen.findByRole("region", { name: "task_inbox" });
   await pick("Accent: Plum");
-  expect(await screen.findByText(/couldn't be saved/)).toBeDefined();
+  expect(await screen.findByText(/couldn't save your appearance to your account yet/)).toBeDefined();
+  expect(primary()).toBe("plum");
+});
+
+const UNSYNCED = `zm:appearance-unsynced:${ME.id}`;
+const refocus = () => window.dispatchEvent(new Event("visibilitychange")); // TanStack refetches /app/me
+
+test("a pick that couldn't be saved survives the next /app/me, and a later retry saves it", async () => {
+  const server = { color_scheme: null, accent: "copper" }; // saved from another device
+  let up = false;
+  const sent: unknown[] = [];
+  signedInApi(sampleUi, {
+    "GET /app/me": () => json({ ...ME, preferences: server }),
+    "PUT /app/me/preferences": async (r) => {
+      const body = (await r.json()) as object;
+      sent.push(body);
+      if (!up) return problem(503, "Down");
+      Object.assign(server, body);
+      return json(server);
+    },
+  });
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  await pick("Accent: Plum");
+  await screen.findByText(/couldn't save your appearance/);
+
+  refocus(); // still down: the server's copper must not replace plum here
+  await vi.waitFor(() => expect(sent).toHaveLength(2));
+  expect(localStorage.getItem(accentStorageKey(ME.id))).toBe("plum");
+  expect(localStorage.getItem(UNSYNCED)).toBe("accent");
+
+  up = true;
+  refocus();
+  await vi.waitFor(() => expect(localStorage.getItem(UNSYNCED)).toBeNull());
+  expect(sent).toEqual([{ accent: "plum" }, { accent: "plum" }, { accent: "plum" }]);
+  expect(server.accent).toBe("plum");
+});
+
+test("a choice this browser kept from before #93 is uploaded when the server has none", async () => {
+  localStorage.setItem(accentStorageKey(ME.id), "plum");
+  const sent: unknown[] = [];
+  signedInApi(sampleUi, {
+    "PUT /app/me/preferences": async (r) => {
+      sent.push(await r.json());
+      return json({ color_scheme: null, accent: "plum" });
+    },
+  });
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  await vi.waitFor(() => expect(sent).toEqual([{ accent: "plum" }])); // no scheme: none was picked here
   expect(primary()).toBe("plum");
 });
 
