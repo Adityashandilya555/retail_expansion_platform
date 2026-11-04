@@ -479,3 +479,32 @@ test("an expired invite link says so", async () => {
   await userEvent.setup().type(await screen.findByLabelText(/New password/), "a-long-enough-password{Enter}");
   expect(await screen.findByText(/invalid or has expired/)).toBeDefined();
 });
+
+test("an accept failure blames the password only when the API refused the password", async () => {
+  let refused = false;
+  api({
+    "POST /auth/invite/accept": () =>
+      refused
+        ? json(
+            {
+              type: "about:blank",
+              title: "Unprocessable Content",
+              status: 422,
+              detail: "Some values are not valid",
+              request_id: "r",
+              errors: [{ path: "/password", message: "String should have at least 12 characters" }],
+            },
+            422,
+          )
+        : problem(502, "The process engine could not handle the request"),
+  });
+  renderAt("/invite/pilot-local.abc123");
+  const user = userEvent.setup();
+  await user.type(await screen.findByLabelText(/New password/), "a-long-enough-password{Enter}");
+  expect(await screen.findByText(/Try again, or ask your administrator/)).toBeDefined();
+  expect(screen.queryByText(/Choose a password/)).toBeNull();
+
+  refused = true;
+  await user.click(screen.getByRole("button", { name: "Set password" }));
+  expect(await screen.findByText("Choose a password of at least 12 characters.")).toBeDefined();
+});
