@@ -1,5 +1,6 @@
 // /dev/ui (dev server only, never in production builds): every @zm/ui extra, @zm/forms on real compiled forms
-// and a sample of Mantine inputs, with a preset switcher; the top bar's appearance menu switches scheme and accent.
+// and a sample of Mantine inputs, with the live preset cards as the preset switcher; the top bar's appearance menu
+// switches scheme and accent.
 import {
   Alert,
   Badge,
@@ -27,7 +28,7 @@ import {
   notifyError,
   Num,
   PageHeader,
-  PRESETS,
+  PresetPicker,
   SignInForm,
   StageTracker,
   StatusPill,
@@ -57,19 +58,13 @@ export default function DevUi() {
       <AppFrame clientName="Matrix Retail (preview)" nav={nav} activeKey="sites" user={{ name: "Priya Rao", email: "priya@example.com" }}>
         <PageHeader
           title="/dev/ui"
-          description="Every @zm/ui extra and a sample of Mantine inputs. Switch scheme and accent in the top bar."
-          actions={
-            <Select
-              aria-label="Preset"
-              data={Object.values(PRESETS).map((p) => ({ value: p.key, label: p.label }))}
-              value={preset}
-              onChange={(v) => setPreset(v ?? "quartz")}
-              allowDeselect={false}
-              w={160}
-            />
-          }
+          description="Every @zm/ui extra and a sample of Mantine inputs. Pick the preset below; switch scheme and accent in the top bar."
         />
         <Stack gap="lg">
+          <Section title="Presets (the owner console's picker)">
+            <PresetPicker label="Preset for this page" value={preset} onChange={setPreset} />
+          </Section>
+
           <Section title="Status pills">
             <Group gap="xs">
               <StatusPill tone="done" />

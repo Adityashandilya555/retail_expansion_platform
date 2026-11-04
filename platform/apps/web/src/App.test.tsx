@@ -2,7 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { blocks, type AppUi, type UiPage } from "@zm/blocks";
 import { sampleUi, testBlocks } from "@zm/blocks/test";
-import { accentStorageKey, schemeStorageKey } from "@zm/ui";
+import { accentStorageKey, PRESETS, schemeStorageKey } from "@zm/ui";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { ClientApp } from "./App";
@@ -306,6 +306,45 @@ test("the shell wears the client's accent (teal) unless the user picked another"
   renderAt("/app");
   await screen.findByRole("region", { name: "task_inbox" });
   expect(primary()).toBe("copper");
+});
+
+// --- the client's theme preset (#34) ------------------------------------------------------------
+
+/** A CSS variable Mantine set on :root for the current look. */
+const rootVar = (name: string) =>
+  [...document.querySelectorAll("style")]
+    .map((s) => s.textContent)
+    .join("")
+    .match(new RegExp(`${name}: ([^;]+);`))?.[1];
+/** The look on screen: the preset (by its first neutral and heading weight) and the accent. */
+const look = () => [rootVar("--mantine-color-gray-0"), rootVar("--mantine-heading-font-weight"), primary()];
+const WARM = [PRESETS.warm?.overrides.gray?.[0], PRESETS.warm?.overrides.headingsFontWeight, "copper"];
+
+test("a published warm look dresses the sign-in page and the shell, with no frontend deploy", async () => {
+  const warm = { theme: "warm", accent: null };
+  api({
+    "POST /auth/workspace": () => json({ ...WORKSPACE, ...warm }),
+    "POST /auth/login": () => json(TOKEN),
+    "GET /app/me": () => json(ME),
+    "GET /app/ui": () => json({ ...sampleUi, client: { name: "Matrix Retail", ...warm } }),
+  });
+  renderAt("/");
+  const user = userEvent.setup();
+  await user.keyboard("PILOT{Enter}");
+  await screen.findByRole("heading", { level: 1, name: "Matrix Retail" });
+  expect(look()).toEqual(WARM); // the sign-in page, from /auth/workspace
+
+  await user.type(screen.getByLabelText(/Email/), "legal.l1@pilot.demo");
+  await user.type(screen.getByLabelText(/Password/), "s3cret{Enter}");
+  await screen.findByRole("region", { name: "task_inbox" });
+  expect(look()).toEqual(WARM); // every screen of the shell, from /app/ui
+});
+
+test("a user's own accent still wins over the warm preset and the client's default (#93)", async () => {
+  signedInApi({ ...sampleUi, client: { name: "Matrix Retail", theme: "warm", accent: "teal" } }, saved({ color_scheme: null, accent: "plum" }));
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  expect(look()).toEqual([...WARM.slice(0, 2), "plum"]);
 });
 
 test("before the first publish the shell says so, and the user can still sign out", async () => {
