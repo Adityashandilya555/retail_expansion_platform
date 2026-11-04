@@ -278,15 +278,14 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
                     continue
                 # A page names no block version: props any version takes pass (the shell draws the
                 # newest that takes them, PageRenderer's Slot); otherwise the newest one's errors.
-                newest_first = sorted(versions.values(), key=lambda m: m["version"], reverse=True)
-                found = [
-                    list(Draft202012Validator(m["props"]).iter_errors(ref.props))
-                    for m in newest_first
-                ]
-                if all(found):  # no version takes them
-                    for e in found[0]:
-                        at = join(bp, "props", *e.absolute_path)
-                        err(at, f"{on}, region '{key}': block '{ref.block}': {e.message}")
+                if any(
+                    Draft202012Validator(m["props"]).is_valid(ref.props) for m in versions.values()
+                ):
+                    continue
+                newest = max(versions.values(), key=lambda m: m["version"])
+                for e in Draft202012Validator(newest["props"]).iter_errors(ref.props):
+                    at = join(bp, "props", *e.absolute_path)
+                    err(at, f"{on}, region '{key}': block '{ref.block}': {e.message}")
     for ni, nav in enumerate(doc.apps.nav):
         np_ = join("apps.nav", ni)
         if nav.page not in page_keys:
