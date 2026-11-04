@@ -84,6 +84,17 @@ def test_terminal_outcomes_and_routes_in_stage(minimal: dict[str, Any]) -> None:
     assert [e.path for e in validate(minimal)] == ["flows[0].stages[0].tasks[0].route[0].to"]
 
 
+def test_two_outcomes_with_one_id_fail_at_the_second(minimal: dict[str, Any]) -> None:
+    # both would compile to the same XOR condition, so the second could never be taken
+    minimal["flows"][0]["stages"][0]["tasks"][0]["outcomes"] = [
+        {"id": "done", "label": "Done", "to": "@end"},
+        {"id": "done", "label": "Close", "to": "@close"},
+    ]
+    assert [(e.path, e.message) for e in validate(minimal)] == [
+        ("flows[0].stages[0].tasks[0].outcomes[1].id", "duplicate outcome id 'done'")
+    ]
+
+
 def test_rule_and_section_levels_are_checked(minimal: dict[str, Any]) -> None:
     t = minimal["flows"][0]["stages"][0]["tasks"][0]
     t["skip_if"] = {"initiator_at_least": {"department": "bd", "level": 5}}

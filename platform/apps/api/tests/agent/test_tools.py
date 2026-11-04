@@ -428,6 +428,18 @@ def test_a_bad_argument_comes_back_with_its_path(held: SimpleNamespace) -> None:
     ]
 
 
+def test_set_outcomes_refuses_one_id_twice(held: SimpleNamespace) -> None:
+    # both would compile to the same XOR condition, so the second could never be taken
+    outcomes = [
+        {"id": "ready", "label": "Ready", "to": None, "comment_required": None},
+        {"id": "ready", "label": "Not ready", "to": "nso_comms", "comment_required": True},
+    ]
+    result = call(held, "set_outcomes", {"task_id": "nso_launch_ready", "outcomes": outcomes})
+    assert result["ok"] is False
+    assert [e["message"] for e in result["errors"]] == ["duplicate outcome id 'ready'"]
+    assert held.doc == matrix_retail() and held.log == []
+
+
 def test_update_field_never_changes_a_key(held: SimpleNamespace) -> None:
     renamed = call(held, "update_field", {**ARGS["update_field"], "new_key": "site_title"})
     created = call(held, "update_field", {**ARGS["update_field"], "key": "site_title"})

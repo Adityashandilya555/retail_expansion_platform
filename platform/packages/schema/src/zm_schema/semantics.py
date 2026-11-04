@@ -173,6 +173,13 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
                 filled = check_form(t.form, join(tp, "form"))
                 filled_by_stage.setdefault(stage.key, set()).update(filled)
 
+                # an id is the outcome's XOR condition: a repeat could never be taken
+                outcome_ids: set[str] = set()
+                for oi, o in enumerate(t.outcomes):
+                    if o.id in outcome_ids:
+                        err(join(tp, "outcomes", oi, "id"), f"duplicate outcome id '{o.id}'")
+                    outcome_ids.add(o.id)
+
                 targets = [
                     (o.to, join(tp, "outcomes", oi, "to")) for oi, o in enumerate(t.outcomes)
                 ]
