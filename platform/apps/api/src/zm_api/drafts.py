@@ -1,15 +1,21 @@
 """A client's draft and its change log (#33, S2-03): every edit is a logged JSON patch with undo.
 
 `apply_change` is how a draft is edited (the agent's tools, #36, and the theme picker): it applies
-an RFC 6902 patch to a copy, validates the result with `zm_schema.validate` (S1-07, which runs the
-versioning hook first), and writes the draft and its `app.draft_changes` row in one transaction
-holding the draft's row lock, so changes apply one at a time. A change that doesn't apply or
-breaks validation writes nothing and comes back as a 422 listing every problem.
+an RFC 6902 patch to a copy, validates the result with `zm_schema.validate` (S1-07, including the
+`schema_version` check of D14), and writes the draft and its `app.draft_changes` row in one
+transaction holding the draft's row lock, so changes apply one at a time. A change that doesn't
+apply or breaks validation writes nothing and comes back as a 422 listing every problem. S2-25's
+field-versioning rules (#35) aren't checked yet: they go in `_change`, which holds the vault
+connection and can read the active release there, so no caller changes.
 
 `undo` applies the inverse of the newest change not yet undone, as a new row pointing at it
-(`undoes`), so the log only grows; 0005's trigger refuses updates and deletes. `diff_vs_live`
-compares the draft with the active release. Owners reach all of it under
-`/owner/clients/{id}/draft`.
+(`undoes`), so the log only grows: 0005's trigger refuses updates and deletes, and zm_api has no
+grant for them. Each row keeps the sha256 of the draft it left. Undo refuses (409) when the draft
+no longer matches the change it would undo, i.e. something wrote it outside the log since
+(`zm-api seed-draft`, SQL), because the inverse was made for another document. It restores that
+exact earlier state without validating it again, so a state today's rules reject stays reachable;
+`/validate` and publish report it. `diff_vs_live` compares the draft with the active release.
+Owners reach all of it under `/owner/clients/{id}/draft`.
 """
 
 import json
@@ -49,8 +55,6 @@ class ChangeOut(BaseModel):
     """What made the change: an agent tool's name, `set_theme` or `undo`."""
     patch: Patch
     """The RFC 6902 operations applied to the draft."""
-    inverse: Patch
-    """The operations that turn the draft back (what undo applies)."""
     summary: str
     undoes: int | None
     """On an undo's row, the change it undid."""
@@ -119,19 +123,26 @@ def inverse(before: dict[str, Any], after: dict[str, Any]) -> Patch:
     return [{"op": "replace", "path": "", "value": before}]
 
 
-def patched(doc: dict[str, Any], patch: Patch) -> tuple[dict[str, Any], Patch]:
-    """`doc` with `patch` applied, and its inverse; `doc` itself is left alone. A patch that
-    doesn't apply, or leaves an invalid draft, is a 422 with every problem."""
+def _invalid(errors: list[Error]) -> UnprocessableContent:
+    return UnprocessableContent("The change would make the draft invalid", errors=_errors(errors))
+
+
+def _apply(doc: dict[str, Any], patch: Patch) -> dict[str, Any]:
+    """`doc` with `patch` applied; `doc` itself is left alone. A patch that doesn't apply is a
+    422, malformed ones too (jsonpatch raises TypeError for e.g. `"from": 3`)."""
     try:
-        after = jsonpatch.apply_patch(doc, patch)
-    except (jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as e:
-        errors = [Error("$", f"the patch doesn't apply: {e}")]
-    else:
-        errors = validate(after)
+        return jsonpatch.apply_patch(doc, patch)
+    except (jsonpatch.JsonPatchException, jsonpointer.JsonPointerException, TypeError) as e:
+        raise _invalid([Error("$", f"the patch doesn't apply: {e}")]) from None
+
+
+def patched(doc: dict[str, Any], patch: Patch) -> tuple[dict[str, Any], Patch]:
+    """`doc` with `patch` applied, and its inverse. A patch that doesn't apply, or leaves an
+    invalid draft, is a 422 with every problem."""
+    after = _apply(doc, patch)
+    errors = validate(after)
     if errors:
-        raise UnprocessableContent(
-            "The change would make the draft invalid", errors=_errors(errors)
-        )
+        raise _invalid(errors)
     return after, inverse(doc, after)
 
 
@@ -197,8 +208,12 @@ def diff(live: dict[str, Any] | None, draft: dict[str, Any]) -> DraftDiff:
 # --- the client's vault ----------------------------------------------------------------------
 
 _CHANGE = (
-    "id, at, author_owner_id, conversation_id, change_request_id, tool, patch, inverse, summary,"
-    " undoes"
+    "id, at, author_owner_id, conversation_id, change_request_id, tool, patch, summary, undoes"
+)
+# The stored draft's sha256 over jsonb's own text form, which is the same for the same document.
+_DRAFT_SHA = (
+    "(select encode(sha256(convert_to(workflow::text, 'UTF8')), 'hex')"
+    " from app.drafts where id = 1)"
 )
 
 
@@ -224,13 +239,24 @@ async def _log(conn: AsyncConnection, after: dict[str, Any], change: dict[str, A
     result = await conn.execute(
         text(
             "insert into app.draft_changes (author_owner_id, conversation_id, change_request_id,"
-            " tool, patch, inverse, summary, undoes) values (:author_owner_id, :conversation_id,"
-            " :change_request_id, :tool, cast(:patch as jsonb), cast(:inverse as jsonb), :summary,"
-            f" :undoes) returning {_CHANGE}"
+            " tool, patch, inverse, summary, undoes, after_sha256) values (:author_owner_id,"
+            " :conversation_id, :change_request_id, :tool, cast(:patch as jsonb),"
+            f" cast(:inverse as jsonb), :summary, :undoes, {_DRAFT_SHA}) returning {_CHANGE}"
         ),
         params,
     )
     return ChangeOut(**result.mappings().one())
+
+
+async def _change(
+    conn: AsyncConnection, doc: dict[str, Any], change: dict[str, Any]
+) -> ChangeOut | None:
+    """Validate and log one change to `doc`, the draft as locked by the caller; None when the
+    patch changes nothing (nothing is logged)."""
+    after, undo_patch = patched(doc, change["patch"])
+    if _canonical(after) == _canonical(doc):
+        return None
+    return await _log(conn, after, {**change, "inverse": undo_patch})
 
 
 async def apply_change(
@@ -245,31 +271,29 @@ async def apply_change(
     """Apply and log one change; None when the patch changes nothing (nothing is logged)."""
     async with ctx.db.begin() as conn:
         doc = await _draft(conn, lock=True)
-        after, undo_patch = patched(doc, patch)
-        if _canonical(after) == _canonical(doc):
-            return None
-        return await _log(
+        return await _change(
             conn,
-            after,
+            doc,
             {
                 "author_owner_id": author,
                 "conversation_id": conversation_id,
                 "change_request_id": change_request_id,
                 "tool": tool,
                 "patch": patch,
-                "inverse": undo_patch,
                 "summary": summary,
             },
         )
 
 
 async def undo(ctx: ClientContext, author: UUID) -> ChangeOut:
-    """Undo the newest change not yet undone (undos themselves aren't undone); 409 if none."""
+    """Undo the newest change not yet undone (undos themselves aren't undone). 409 if there is
+    none, or if the draft was written outside the log since that change."""
     async with ctx.db.begin() as conn:
         doc = await _draft(conn, lock=True)
         result = await conn.execute(
             text(
-                "select id, inverse, summary from app.draft_changes c where undoes is null"
+                f"select id, inverse, summary, after_sha256 = {_DRAFT_SHA} as current"
+                " from app.draft_changes c where undoes is null"
                 " and not exists (select from app.draft_changes u where u.undoes = c.id)"
                 " order by id desc limit 1"
             )
@@ -277,7 +301,12 @@ async def undo(ctx: ClientContext, author: UUID) -> ChangeOut:
         last = result.mappings().one_or_none()
         if last is None:
             raise Conflict("Nothing to undo")
-        after, undo_patch = patched(doc, last["inverse"])
+        if not last["current"]:
+            raise Conflict(
+                "The draft was changed outside the change log after this change (reseeded or"
+                " edited directly), so it can't be undone"
+            )
+        after = _apply(doc, last["inverse"])  # exactly the earlier state: not validated again
         return await _log(
             conn,
             after,
@@ -285,7 +314,7 @@ async def undo(ctx: ClientContext, author: UUID) -> ChangeOut:
                 "author_owner_id": author,
                 "tool": "undo",
                 "patch": last["inverse"],
-                "inverse": undo_patch,
+                "inverse": inverse(doc, after),
                 "summary": f"Undo: {last['summary']}",
                 "undoes": last["id"],
             },
@@ -394,10 +423,12 @@ async def get_validation(ctx: OwnedClient) -> list[FieldError]:
 async def set_theme(body: ThemeIn, ctx: OwnedClient, owner: OwnerCtx) -> DraftOut:
     """The client's theme preset and default accent (D19); only the keys sent change."""
     look = body.model_dump(exclude_unset=True)
-    async with ctx.db.connect() as conn:
-        before = await _draft(conn)
-    after = {**before, "apps": {**before.get("apps", {}), **look}}
     summary = "; ".join(f"{k.title()}: {v or 'preset default'}" for k, v in look.items())
-    patch = jsonpatch.make_patch(before, after).patch
-    await apply_change(ctx, owner.owner_id, "set_theme", patch, summary)
+    async with ctx.db.begin() as conn:
+        # the patch is built from the locked draft (`apps` may be missing), never a stale copy
+        before = await _draft(conn, lock=True)
+        after = {**before, "apps": {**before.get("apps", {}), **look}}
+        patch = jsonpatch.make_patch(before, after).patch
+        change = {"author_owner_id": owner.owner_id, "tool": "set_theme", "patch": patch}
+        await _change(conn, before, {**change, "summary": summary})
     return await _draft_out(ctx)

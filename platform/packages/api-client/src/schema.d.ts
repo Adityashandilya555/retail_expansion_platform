@@ -701,13 +701,6 @@ export interface components {
             /** Id */
             id: number;
             /**
-             * Inverse
-             * @description The operations that turn the draft back (what undo applies).
-             */
-            inverse: {
-                [key: string]: unknown;
-            }[];
-            /**
              * Patch
              * @description The RFC 6902 operations applied to the draft.
              */

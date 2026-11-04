@@ -13,7 +13,7 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
-from zm_api import drafts
+from zm_api import drafts, releases
 from zm_api.context import Resolver
 from zm_api.errors import UnprocessableContent
 from zm_api.main import create_app
@@ -21,6 +21,7 @@ from zm_api.registry import Client
 from zm_schema import migrate
 
 from .conftest import bearer, token
+from .test_auth import PILOT_DSN
 from .test_publish import JWT_SECRET, Clients, Stack, clients, vault_sql  # noqa: F401
 from .test_publish_unit import FakePlatform, FakeRegistry, matrix_retail
 
@@ -61,9 +62,16 @@ def test_a_patch_that_breaks_validation_is_422_with_paths() -> None:
     assert doc == matrix_retail()
 
 
-def test_a_patch_that_doesnt_apply_is_422() -> None:
+@pytest.mark.parametrize(
+    "patch",
+    [
+        [{"op": "remove", "path": "/fields/no_such_field"}],
+        [{"op": "move", "from": 3, "path": "/apps"}],  # a TypeError inside jsonpatch, not a 500
+    ],
+)
+def test_a_patch_that_doesnt_apply_is_422(patch: list[dict[str, Any]]) -> None:
     with pytest.raises(UnprocessableContent) as e:
-        drafts.patched(matrix_retail(), [{"op": "remove", "path": "/fields/no_such_field"}])
+        drafts.patched(matrix_retail(), patch)
     assert [x.path for x in e.value.errors or []] == ["$"]
 
 
@@ -238,6 +246,7 @@ def test_three_changes_and_two_undos_leave_change_one_and_five_rows(pilot: Clien
     ]
     assert [c["undoes"] for c in log[:2]] == [log[3]["id"], log[2]["id"]]
     assert log[2]["conversation_id"] is not None and log[0]["conversation_id"] is None
+    assert "inverse" not in log[0]  # undo's business; a whole-document inverse would be large
 
 
 @pytest.mark.integration
@@ -314,5 +323,122 @@ def test_the_change_log_refuses_updates_and_deletes(pilot: Clients) -> None:
         "delete from app.draft_changes",
     ):
         with pytest.raises(psycopg.errors.RaiseException, match="insert-only"):
-            vault_sql("pilot", statement)
+            vault_sql("pilot", statement)  # the superuser: the trigger
+        with (
+            psycopg.connect(PILOT_DSN) as conn,
+            pytest.raises(psycopg.errors.InsufficientPrivilege),
+        ):
+            conn.execute(statement)  # zm_api, the API's role: no grant
     assert vault_sql("pilot", "select summary from app.draft_changes") == [("Theme: warm",)]
+
+
+def change(c: Clients, *patches: list[dict[str, Any]]) -> None:
+    """Apply `patches` at the same time (each its own connection), logged as 'change <n>'."""
+
+    async def go() -> None:
+        async with Stack(c) as stack:
+            ctx = await stack.ctx("pilot")
+            await asyncio.gather(
+                *(
+                    drafts.apply_change(ctx, c.owner, "test", p, f"change {CHANGES.index(p) + 1}")
+                    for p in patches
+                )
+            )
+
+    asyncio.run(go())
+
+
+@pytest.mark.integration
+def test_undo_walks_back_through_changes_made_after_an_undo(pilot: Clients) -> None:
+    api, auth, url = owner_api(pilot)
+    with api:
+        change(pilot, CHANGES[0])
+        change(pilot, CHANGES[1])
+        assert api.post(f"{url}/undo", headers=auth).status_code == 200  # change 2
+        change(pilot, CHANGES[2])
+        undone = [api.post(f"{url}/undo", headers=auth).json() for _ in range(2)]  # 3, then 1
+        nothing = api.post(f"{url}/undo", headers=auth)
+        log = api.get(f"{url}/changes", headers=auth).json()
+    assert canonical(undone[-1]["workflow"]) == canonical(matrix_retail())
+    assert nothing.status_code == 409
+    assert [c["summary"] for c in log] == [
+        "Undo: change 1",
+        "Undo: change 3",
+        "change 3",
+        "Undo: change 2",
+        "change 2",
+        "change 1",
+    ]
+
+
+@pytest.mark.integration
+def test_two_changes_at_once_both_land_one_after_the_other(pilot: Clients) -> None:
+    change(pilot, CHANGES[0], CHANGES[1])
+    api, auth, url = owner_api(pilot)
+    with api:
+        draft = api.get(url, headers=auth).json()["workflow"]
+        for _ in range(2):
+            assert api.post(f"{url}/undo", headers=auth).status_code == 200
+        back = api.get(url, headers=auth).json()["workflow"]
+    assert draft["fields"]["site_name"]["label"] == "Site name (as on the lease)"
+    assert "gst_no" in draft["fields"]
+    assert canonical(back) == canonical(
+        matrix_retail()
+    )  # each inverse fit the draft it was made on
+
+
+@pytest.mark.integration
+def test_undo_refuses_to_cross_a_draft_write_that_skipped_the_log(pilot: Clients) -> None:
+    async def reseed() -> None:
+        async with Stack(pilot) as stack:
+            await releases.seed_draft(await stack.ctx("pilot"), "matrix-retail")
+
+    api, auth, url = owner_api(pilot)
+    with api:
+        change(pilot, CHANGES[0])
+        asyncio.run(reseed())  # `zm-api seed-draft`: writes no change row
+        refused = api.post(f"{url}/undo", headers=auth)
+        change(pilot, CHANGES[1])  # a logged change after the reseed can still be undone
+        later = api.post(f"{url}/undo", headers=auth)
+        behind = api.post(f"{url}/undo", headers=auth)  # change 1 is still behind the reseed
+    assert refused.status_code == 409 and "outside the change log" in refused.json()["detail"]
+    assert later.status_code == 200
+    assert canonical(later.json()["workflow"]) == canonical(matrix_retail())
+    assert behind.status_code == 409
+
+
+@pytest.mark.integration
+def test_undo_refuses_after_a_direct_sql_edit(pilot: Clients) -> None:
+    change(pilot, CHANGES[0])
+    vault_sql(
+        "pilot", "update app.drafts set workflow = jsonb_set(workflow, '{apps,accent}', '\"plum\"')"
+    )
+    api, auth, url = owner_api(pilot)
+    with api:
+        refused = api.post(f"{url}/undo", headers=auth)
+        draft = api.get(url, headers=auth).json()["workflow"]
+    assert refused.status_code == 409
+    assert draft["apps"]["accent"] == "plum"  # left as the edit made it
+
+
+@pytest.mark.integration
+def test_undo_reaches_a_state_todays_rules_reject(
+    pilot: Clients, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    change(pilot, CHANGES[0])
+    monkeypatch.setattr(drafts, "validate", lambda doc: [drafts.Error("$", "stricter rules now")])
+    api, auth, url = owner_api(pilot)
+    with api:
+        undone = api.post(f"{url}/undo", headers=auth)
+    assert undone.status_code == 200
+    assert canonical(undone.json()["workflow"]) == canonical(matrix_retail())
+
+
+@pytest.mark.integration
+def test_the_theme_picker_works_on_a_draft_without_apps(pilot: Clients) -> None:
+    vault_sql("pilot", "update app.drafts set workflow = workflow - 'apps'")  # `apps` is optional
+    api, auth, url = owner_api(pilot)
+    with api:
+        response = api.patch(f"{url}/theme", headers=auth, json={"theme": "warm"})
+    assert response.status_code == 200
+    assert response.json()["workflow"]["apps"] == {"theme": "warm"}

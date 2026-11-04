@@ -330,15 +330,6 @@
             "title": "Id",
             "type": "integer"
           },
-          "inverse": {
-            "description": "The operations that turn the draft back (what undo applies).",
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Inverse",
-            "type": "array"
-          },
           "patch": {
             "description": "The RFC 6902 operations applied to the draft.",
             "items": {
@@ -378,7 +369,6 @@
           "change_request_id",
           "tool",
           "patch",
-          "inverse",
           "summary",
           "undoes"
         ],
