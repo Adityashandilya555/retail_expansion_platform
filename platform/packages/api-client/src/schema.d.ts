@@ -330,6 +330,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/owner/clients/{client_id}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Draft
+         * @description The client's draft `workflow.json`.
+         */
+        get: operations["get_draft_owner_clients__client_id__draft_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/clients/{client_id}/draft/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Changes
+         * @description The change log, newest first.
+         */
+        get: operations["list_changes_owner_clients__client_id__draft_changes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/clients/{client_id}/draft/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Diff
+         * @description The draft against the active release (everything is added before the first publish).
+         */
+        get: operations["get_diff_owner_clients__client_id__draft_diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/clients/{client_id}/draft/theme": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set Theme
+         * @description The client's theme preset and default accent (D19); only the keys sent change.
+         */
+        patch: operations["set_theme_owner_clients__client_id__draft_theme_patch"];
+        trace?: never;
+    };
+    "/owner/clients/{client_id}/draft/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo Change
+         * @description Undo the newest change not yet undone; 409 when there is none.
+         */
+        post: operations["undo_change_owner_clients__client_id__draft_undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/clients/{client_id}/draft/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Validation
+         * @description Every problem in the draft; empty when it is valid.
+         */
+        get: operations["get_validation_owner_clients__client_id__draft_validate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/owner/clients/{client_id}/provisioning/retry": {
         parameters: {
             query?: never;
@@ -562,6 +682,44 @@ export interface components {
              */
             title: string;
         };
+        /** ChangeOut */
+        ChangeOut: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Author Owner Id
+             * Format: uuid
+             */
+            author_owner_id: string;
+            /** Change Request Id */
+            change_request_id: string | null;
+            /** Conversation Id */
+            conversation_id: string | null;
+            /** Id */
+            id: number;
+            /**
+             * Patch
+             * @description The RFC 6902 operations applied to the draft.
+             */
+            patch: {
+                [key: string]: unknown;
+            }[];
+            /** Summary */
+            summary: string;
+            /**
+             * Tool
+             * @description What made the change: an agent tool's name, `set_theme` or `undo`.
+             */
+            tool: string;
+            /**
+             * Undoes
+             * @description On an undo's row, the change it undid.
+             */
+            undoes: number | null;
+        };
         /** ClientDetail */
         ClientDetail: {
             /**
@@ -663,13 +821,56 @@ export interface components {
             /** Task Name */
             task_name: string;
         };
+        /**
+         * DraftDiff
+         * @description What publishing the draft would change; every list empty and both looks null = nothing.
+         */
+        DraftDiff: {
+            /** @description Null when unchanged. */
+            accent: components["schemas"]["ValueChange"] | null;
+            /**
+             * Blocks
+             * @description Keys of pages whose blocks changed, added and removed pages included.
+             */
+            blocks: string[];
+            /** @description By field key. */
+            fields: components["schemas"]["KeyChanges"];
+            /** @description By `<flow>.<stage>`: its name, department, `after` and the order of its tasks. */
+            stages: components["schemas"]["KeyChanges"];
+            /** @description By task id, across every flow; moving a task to another stage changes it. */
+            tasks: components["schemas"]["KeyChanges"];
+            /** @description Null when unchanged. */
+            theme: components["schemas"]["ValueChange"] | null;
+        };
+        /** DraftOut */
+        DraftOut: {
+            /**
+             * Base Version
+             * @description The release this draft was published as; null until publish records it.
+             */
+            base_version: number | null;
+            /** Template Key */
+            template_key: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Updated By */
+            updated_by: string | null;
+            /** Workflow */
+            workflow: {
+                [key: string]: unknown;
+            };
+        };
         /** FieldError */
         FieldError: {
             /** Message */
             message: string;
             /**
              * Path
-             * @description JSON Pointer to the field, e.g. `/ca_amount`.
+             * @description JSON Pointer to the field, e.g. `/ca_amount`; a draft's are `workflow.json` paths, e.g.
+             *     `flows[0].stages[1].after[0]`.
              */
             path: string;
         };
@@ -697,6 +898,15 @@ export interface components {
             schema: {
                 [key: string]: unknown;
             };
+        };
+        /** KeyChanges */
+        KeyChanges: {
+            /** Added */
+            added: string[];
+            /** Changed */
+            changed: string[];
+            /** Removed */
+            removed: string[];
         };
         /** LoginIn */
         LoginIn: {
@@ -1000,6 +1210,19 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** ThemeIn */
+        ThemeIn: {
+            /**
+             * Accent
+             * @description The client's default accent; null = the preset's own.
+             */
+            accent?: string | null;
+            /**
+             * Theme
+             * @description Theme preset key (D19), checked as the draft's `apps.theme`.
+             */
+            theme?: string | null;
+        };
         /** TokenOut */
         TokenOut: {
             /** Access Token */
@@ -1059,6 +1282,13 @@ export interface components {
             key: string;
             /** Name */
             name: string;
+        };
+        /** ValueChange */
+        ValueChange: {
+            /** Draft */
+            draft: string | null;
+            /** Live */
+            live: string | null;
         };
         /** WorkspaceIn */
         WorkspaceIn: {
@@ -1660,6 +1890,198 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClientDetail"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_draft_owner_clients__client_id__draft_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_changes_owner_clients__client_id__draft_changes_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeOut"][];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_diff_owner_clients__client_id__draft_diff_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftDiff"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    set_theme_owner_clients__client_id__draft_theme_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThemeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    undo_change_owner_clients__client_id__draft_undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_validation_owner_clients__client_id__draft_validate_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldError"][];
                 };
             };
             /** @description Problem details (RFC 9457) */
