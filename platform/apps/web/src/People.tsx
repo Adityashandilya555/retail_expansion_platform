@@ -13,7 +13,7 @@ type Membership = components["schemas"]["Membership"];
 type Department = components["schemas"]["Department"];
 type Filter = UserOut["status"] | "all";
 /** JSON Pointer → message, from the API's 409 or 422 (`/email`, `/memberships/0`, …). */
-type Errors = Record<string, string>;
+export type Errors = Record<string, string>;
 
 const STATUS: Record<UserOut["status"], [StatusTone, string]> = {
   invited: ["queued", "Invited"],
@@ -27,14 +27,14 @@ const FILTERS = [
   { value: "deactivated", label: "Deactivated" },
 ];
 
-async function must<T>(call: Promise<{ data?: T; error?: Problem }>): Promise<T> {
+export async function must<T>(call: Promise<{ data?: T; error?: Problem }>): Promise<T> {
   const { data, error } = await call;
   if (data === undefined) throw new Error(error?.detail ?? "Request failed");
   return data;
 }
 
 /** Sends a change: null once saved, else the per-field errors (empty when it notified instead). */
-async function save(call: Promise<{ data?: unknown; error?: Problem }>): Promise<Errors | null> {
+export async function save(call: Promise<{ data?: unknown; error?: Problem }>): Promise<Errors | null> {
   try {
     const { data, error } = await call;
     if (data !== undefined) return null;

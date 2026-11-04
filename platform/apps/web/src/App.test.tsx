@@ -458,6 +458,108 @@ test("resending an invite POSTs the invited person's email, name and memberships
   expect(await bodies(seen, "POST")).toEqual([{ email: PRIYA.email, name: "Priya", memberships: PRIYA.memberships }]);
 });
 
+// --- change requests (S2-24a) ---------------------------------------------------------------------
+
+const TARGETS = {
+  forms: [
+    {
+      id: "start",
+      title: "Site",
+      fields: [
+        { key: "city", label: "City", type: "text" },
+        { key: "store_model", label: "Store model", type: "select" },
+      ],
+    },
+    { id: "bd_upload_loi", title: "Upload LOI", fields: [{ key: "loi_file", label: "LOI", type: "document" }] },
+  ],
+  field_types: ["text", "number", "select", "document"],
+};
+const STATE_AND_DISTRICT = {
+  kind: "add_field",
+  form: "start",
+  fields: [
+    { label: "State", type: "text", options: [] },
+    { label: "District", type: "text", options: [] },
+  ],
+};
+const REQUESTED = { note: null, review_note: null, shipped_in_version: null, created_at: "2026-11-02T09:00:00Z", updated_at: "2026-11-02T09:00:00Z" };
+const REQUESTS = [
+  { ...REQUESTED, id: "c2", payload: STATE_AND_DISTRICT, status: "submitted" },
+  { ...REQUESTED, id: "c1", payload: { kind: "rename_field_label", field: "city", label: "Town" }, status: "rejected", review_note: "Reports group by City" },
+];
+
+/** A client admin with the change-request API; returns the change-request calls it saw. */
+function changesApi(routes: Record<string, Handler> = {}): Request[] {
+  return adminApi({
+    "GET /app/admin/change-requests": () => json(REQUESTS),
+    "GET /app/admin/change-requests/targets": () => json(TARGETS),
+    ...routes,
+  });
+}
+
+async function openRequestForm() {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Request a change" }));
+  return { user, dialog: within(await screen.findByRole("dialog", { name: "Request a change" })) };
+}
+
+test("a client admin's Change requests page lists each request with its status and review note", async () => {
+  changesApi();
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  await userEvent.setup().click(nav().getByRole("button", { name: "Change requests" }));
+  const table = await screen.findByRole("table", { name: "Change requests" });
+  expect(await within(table).findByText("Site: add State (text), District (text)")).toBeDefined();
+  expect(within(table).getByText("Rename City to Town")).toBeDefined();
+  expect(within(table).getByText("Rejected")).toBeDefined();
+  expect(within(table).getByText("Reports group by City")).toBeDefined();
+
+  cleanup();
+  forget();
+  signedInApi(sampleUi);
+  renderAt("/app/admin/change-requests");
+  expect(await screen.findByRole("heading", { name: "Page not found" })).toBeDefined();
+  expect(nav().queryByRole("button", { name: "Change requests" })).toBeNull();
+});
+
+test("asking for State and District on the site form POSTs one add_field request with both", async () => {
+  const seen = changesApi({ "POST /app/admin/change-requests": () => json(REQUESTS[0], 201) });
+  renderAt("/app/admin/change-requests");
+  const { user, dialog } = await openRequestForm();
+  await user.selectOptions(dialog.getByLabelText(/^Form/), "start");
+  await user.type(dialog.getByLabelText(/^Field 1/), "State");
+  await user.click(dialog.getByRole("button", { name: "Add another field" }));
+  await user.type(dialog.getByLabelText(/^Field 2/), "District");
+  await user.type(dialog.getByLabelText(/^Note/), "For the GST registration");
+  await user.click(dialog.getByRole("button", { name: "Send request" }));
+  await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Request a change" })).toBeNull());
+  expect(await bodies(seen, "POST")).toEqual([{ payload: STATE_AND_DISTRICT, note: "For the GST registration" }]);
+});
+
+test("renaming City sends its field key; a target the release lacks shows under the selector", async () => {
+  const refused = {
+    type: "about:blank",
+    title: "Unprocessable Content",
+    status: 422,
+    detail: "The request names something the published release doesn't have",
+    request_id: "r",
+    errors: [{ path: "/payload/field", message: "city isn't a field in the published release" }],
+  };
+  const seen = changesApi({ "POST /app/admin/change-requests": () => json(refused, 422) });
+  renderAt("/app/admin/change-requests");
+  const { user, dialog } = await openRequestForm();
+  await user.selectOptions(dialog.getByLabelText(/^What do you need/), "add_select_option");
+  const choices = (dialog.getByLabelText(/^Field/) as HTMLSelectElement).options;
+  expect([...choices].map((o) => o.value)).toEqual(["", "store_model"]); // only lists take choices
+
+  await user.selectOptions(dialog.getByLabelText(/^What do you need/), "rename_field_label");
+  await user.selectOptions(dialog.getByLabelText(/^Field/), "city");
+  await user.type(dialog.getByLabelText(/^New name/), "Town");
+  await user.click(dialog.getByRole("button", { name: "Send request" }));
+  expect(await dialog.findByText("city isn't a field in the published release")).toBeDefined();
+  expect(await bodies(seen, "POST")).toEqual([{ payload: { kind: "rename_field_label", field: "city", label: "Town" }, note: null }]);
+});
+
 test("/invite/:token sets the password and opens the app", async () => {
   const sent: unknown[] = [];
   api({
