@@ -1,9 +1,22 @@
-// Clients, their provisioning and publishing (#29). Provisioning itself is the worker's
+// Clients, their provisioning, look and publishing (#29, #34). Provisioning itself is the worker's
 // (#24, #25): the API queues the steps, and the client page polls them every 5 s.
 import { Button, Code, Group, Modal, NativeSelect, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
-import { DataTable, Notice, notifyError, notifyInfo, PageHeader, StatusPill, type StatusTone } from "@zm/ui";
+import {
+  AccentSwatches,
+  accentLabel,
+  DataTable,
+  isAccent,
+  Notice,
+  notifyError,
+  notifyInfo,
+  PageHeader,
+  PresetPicker,
+  resolvePreset,
+  StatusPill,
+  type StatusTone,
+} from "@zm/ui";
 import { useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
 import { api } from "./session";
@@ -11,6 +24,7 @@ import { api } from "./session";
 type ClientOut = components["schemas"]["ClientOut"];
 type StepOut = components["schemas"]["StepOut"];
 type ReleaseOut = components["schemas"]["ReleaseOut"];
+type ThemeIn = components["schemas"]["ThemeIn"];
 
 const CLIENT_STATUS: Record<ClientOut["status"], [StatusTone, string]> = {
   new: ["queued", "New"],
@@ -169,6 +183,62 @@ export function NewClient() {
   );
 }
 
+// --- the client's look (#34): its draft's theme preset and default accent (D19) ------------------
+
+function Look({ clientId }: { clientId: string }) {
+  const queries = useQueryClient();
+  const path = { params: { path: { client_id: clientId } } };
+  const draft = useQuery({ queryKey: ["draft", clientId], queryFn: () => must(api.GET("/owner/clients/{client_id}/draft", path)) });
+  if (draft.isPending) return null;
+  if (!draft.data) {
+    return (
+      <Notice tone="error" title="Couldn't load the client's look.">
+        <Button mt="sm" variant="default" onClick={() => void draft.refetch()}>
+          Retry
+        </Button>
+      </Notice>
+    );
+  }
+  const apps = (draft.data.workflow.apps ?? {}) as ThemeIn;
+  const preset = resolvePreset(apps.theme);
+  const accent = isAccent(apps.accent) ? apps.accent : null;
+
+  async function save(body: ThemeIn) {
+    try {
+      queries.setQueryData(["draft", clientId], await must(api.PATCH("/owner/clients/{client_id}/draft/theme", { ...path, body })));
+    } catch (e) {
+      notifyError(e instanceof Error && e.message !== "Request failed" ? e.message : "Couldn't save the look.");
+    }
+  }
+
+  return (
+    <Stack gap="sm">
+      <Title order={2} size="h3">
+        Look
+      </Title>
+      <Text size="sm" c="dimmed">
+        Saved to the draft. The sign-in page and every screen change once you publish; people can still pick their own accent.
+      </Text>
+      <PresetPicker label="Theme preset" value={preset.key} onChange={(theme) => void save({ theme })} accent={accent} />
+      <Text size="sm" fw={500}>
+        Default accent
+      </Text>
+      <Group gap="md">
+        <AccentSwatches value={accent ?? preset.defaultAccent} onChange={(picked) => void save({ accent: picked })} />
+        {accent ? (
+          <Button variant="subtle" size="compact-sm" onClick={() => void save({ accent: null })}>
+            Use the preset's default
+          </Button>
+        ) : (
+          <Text size="sm" c="dimmed">
+            {accentLabel(preset.defaultAccent)}, the preset's default
+          </Text>
+        )}
+      </Group>
+    </Stack>
+  );
+}
+
 // --- `/clients/:id` ---------------------------------------------------------------------------
 
 export function ClientPage() {
@@ -269,6 +339,8 @@ export function ClientPage() {
           ]}
         />
       </Stack>
+
+      {c.status === "ready" && <Look clientId={id} />}
 
       {c.status === "ready" && (
         <Stack gap="sm">

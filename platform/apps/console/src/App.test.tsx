@@ -31,9 +31,14 @@ function api(routes: Record<string, Handler>): string[] {
   return calls;
 }
 
-/** An owner signed in with the refresh cookie, plus `routes`. */
+/** An owner signed in with the refresh cookie, a quartz draft for the client, plus `routes`. */
 const signedInApi = (routes: Record<string, Handler>) =>
-  api({ "POST /owner/auth/refresh": () => json(TOKEN), "GET /owner/me": () => json(OWNER), ...routes });
+  api({
+    "POST /owner/auth/refresh": () => json(TOKEN),
+    "GET /owner/me": () => json(OWNER),
+    [`GET /owner/clients/${ID}/draft`]: () => json(draft({ theme: "quartz" })),
+    ...routes,
+  });
 
 const renderAt = (path: string) =>
   render(
@@ -91,6 +96,9 @@ function detail(over: Partial<ClientDetail> = {}): ClientDetail {
     ...over,
   };
 }
+
+/** The client's draft with `apps` (the rest of workflow.json doesn't matter here). */
+const draft = (apps: object) => ({ workflow: { schema_version: 1, apps }, template_key: "matrix-retail", base_version: null, updated_at: AT, updated_by: null });
 
 // --- sign-in (#22) ----------------------------------------------------------------------------
 
@@ -325,6 +333,7 @@ test("the form and the client page pass axe", async () => {
   unmount();
   renderAt(`/clients/${ID}`);
   await screen.findByRole("table", { name: "Releases" });
+  await screen.findByRole("radiogroup", { name: "Theme preset" }); // the Look panel too
   await expectNoAxeViolations();
 });
 
@@ -369,4 +378,63 @@ test("publishing an unchanged draft says so, not as an error", async () => {
   expect(await screen.findByText("Nothing changed since v1.")).toBeDefined();
   expect(screen.getByText("No new release")).toBeDefined();
   expect(screen.queryByText("Couldn't continue")).toBeNull();
+});
+
+// --- the client's look (#34) ------------------------------------------------------------------
+
+const ready = () => json(detail({ status: "ready", steps: steps(allDone) }));
+const presetGroup = () => within(screen.getByRole("radiogroup", { name: "Theme preset" }));
+const checkedPreset = () => presetGroup().getAllByRole("radio", { checked: true }).map((r) => r.querySelector("p")?.textContent);
+const pressedAccent = () => screen.getAllByRole("button", { pressed: true, name: /^Accent: / }).map((b) => b.getAttribute("aria-label"));
+/** The live preview inside a preset's card: Mantine's own CSS variables for that preset. */
+const preview = (label: string, variable: string) =>
+  presetGroup().getByRole("radio", { name: new RegExp(`^${label}`) }).querySelector<HTMLElement>(".mantine-Paper-root")?.style.getPropertyValue(variable);
+
+test("the Look panel saves the preset and default accent to the draft; nothing is live until publish", async () => {
+  let apps: object = { theme: "quartz" };
+  const sent: unknown[] = [];
+  const calls = signedInApi({
+    [`GET /owner/clients/${ID}`]: ready,
+    [`GET /owner/clients/${ID}/draft`]: () => json(draft(apps)),
+    [`PATCH /owner/clients/${ID}/draft/theme`]: async (r) => {
+      const body = (await r.json()) as object;
+      sent.push(body);
+      apps = { ...apps, ...body };
+      return json(draft(apps));
+    },
+  });
+  renderAt(`/clients/${ID}`);
+  await screen.findByRole("radiogroup", { name: "Theme preset" });
+  expect(screen.getByText(/once you publish/)).toBeDefined();
+  expect(checkedPreset()).toEqual(["Quartz"]);
+  expect(pressedAccent()).toEqual(["Accent: Slate"]); // quartz's own default
+  // each card is drawn live in its preset's tokens, with that preset's default accent
+  expect(preview("Quartz", "--mantine-heading-font-weight")).toBe("650");
+  expect(preview("Warm", "--mantine-heading-font-weight")).toBe("600");
+  expect(preview("Quartz", "--mantine-primary-color-filled")).toContain("slate");
+  expect(preview("Warm", "--mantine-primary-color-filled")).toContain("copper");
+
+  const user = userEvent.setup();
+  await user.click(presetGroup().getByRole("radio", { name: /^Warm/ }));
+  await waitFor(() => expect(checkedPreset()).toEqual(["Warm"]));
+  expect(pressedAccent()).toEqual(["Accent: Copper"]);
+
+  await user.click(screen.getByRole("button", { name: "Accent: Plum" }));
+  await waitFor(() => expect(pressedAccent()).toEqual(["Accent: Plum"]));
+  expect(preview("Quartz", "--mantine-primary-color-filled")).toContain("plum"); // the client's accent on every card
+  await user.click(screen.getByRole("button", { name: "Use the preset's default" }));
+  await waitFor(() => expect(pressedAccent()).toEqual(["Accent: Copper"]));
+
+  expect(sent).toEqual([{ theme: "warm" }, { accent: "plum" }, { accent: null }]);
+  expect(calls).not.toContain(`POST /owner/clients/${ID}/publish`);
+});
+
+test("a look the API refuses stays unsaved and says why", async () => {
+  const refused = { type: "about:blank", title: "x", status: 422, detail: "The change would make the draft invalid", request_id: "r", errors: [] };
+  signedInApi({ [`GET /owner/clients/${ID}`]: ready, [`PATCH /owner/clients/${ID}/draft/theme`]: () => json(refused, 422) });
+  renderAt(`/clients/${ID}`);
+  await screen.findByRole("radiogroup", { name: "Theme preset" });
+  await userEvent.setup().click(presetGroup().getByRole("radio", { name: /^Warm/ }));
+  expect(await screen.findByText("The change would make the draft invalid")).toBeDefined();
+  expect(checkedPreset()).toEqual(["Quartz"]);
 });
