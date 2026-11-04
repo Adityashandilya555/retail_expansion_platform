@@ -84,7 +84,9 @@ def apply_ready(clients: list[tuple[str, bytes | None]]) -> dict[str, list[str]]
     Clients registered by provision-local keep no admin password in the registry and are skipped
     (scripts/dev-up.sh migrates them). One client failing (its vault down, secrets that don't
     open) doesn't stop the others; then this raises, so the deploy stops and the running API
-    stays."""
+    stays. Like provisioning, `apply` also sets the `zm_engine` and `zm_api` passwords to the
+    registry's, so every API deploy reverts a role password changed only in the vault: rotate
+    them through the registry."""
     from zm_api import secrets as sealed
     from zm_worker.provision.supabase import _dsn
 
