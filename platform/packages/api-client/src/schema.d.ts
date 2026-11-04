@@ -58,7 +58,7 @@ export interface paths {
         /**
          * Update User
          * @description New memberships and/or status, then the Operaton mirror. If Operaton fails (502) the change
-         *     is kept; sending the same request again finishes the mirror.
+         *     is kept, and the reconciler finishes the mirror (`users.resync`), as does sending it again.
          */
         patch: operations["update_user_app_admin_users__user_id__patch"];
         trace?: never;

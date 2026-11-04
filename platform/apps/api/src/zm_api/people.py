@@ -6,8 +6,9 @@ sets their department levels and deactivates them. They can't change the flow, f
   `CLIENT_APP_BASE_URL/invite/<token>` (`zm_worker.invites`). `POST /auth/invite/accept`
   (`zm_api.auth`) sets the password and makes the person `active`.
 - Memberships may only name departments and levels of the active release's org (else 422).
-  Every change is mirrored into the client's Operaton at once (`users.sync_user`); requests read
-  memberships from the database, so a new level applies on the person's next request.
+  Every change is mirrored into the client's Operaton at once (`users.sync_user`), and retried by
+  the reconciler if that fails; requests read memberships from the database, so a new level
+  applies on the person's next request.
 - Deactivating revokes the person's refresh tokens and drops their Operaton groups. The client's
   last active client admin can't be deactivated.
 """
@@ -218,7 +219,7 @@ async def update_user(
     user_id: UUID, body: UserPatch, ctx: ClientCtx, me: Annotated[UUID, Depends(client_admin)]
 ) -> UserOut:
     """New memberships and/or status, then the Operaton mirror. If Operaton fails (502) the change
-    is kept; sending the same request again finishes the mirror."""
+    is kept, and the reconciler finishes the mirror (`users.resync`), as does sending it again."""
     if body.status == "deactivated" and user_id == me:
         raise Conflict("You can't deactivate yourself")
     async with ctx.db.begin() as conn:
@@ -234,7 +235,8 @@ async def update_user(
             if not set(admins.scalars()) - {user_id}:
                 raise Conflict("The client must keep an active client admin")
         found = await conn.execute(
-            text("select 1 from app.users where id = :id for update"), {"id": user_id}
+            text("update app.users set unsynced_since = now() where id = :id returning 1"),
+            {"id": user_id},
         )
         if found.first() is None:
             raise NotFound("No such person")

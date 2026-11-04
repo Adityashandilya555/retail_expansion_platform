@@ -12,6 +12,7 @@ import json
 import re
 import time
 import uuid
+from collections import Counter
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -25,7 +26,9 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 
+from zm_api import users
 from zm_api.main import create_app
+from zm_api.operaton import OperatonError
 from zm_api.publish import publish
 from zm_api.releases import cache_clear
 from zm_api.users import create_owner
@@ -392,6 +395,31 @@ def test_the_owner_inviting_a_pending_admin_again_keeps_the_memberships_set_for_
     )
     assert again.status_code == 201, again.text
     assert (again.json()["memberships"], again.json()["is_client_admin"]) == (legal, True)
+
+
+def test_a_failed_operaton_mirror_is_retried_by_the_reconciler(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def engine_down(*_: object, **__: object) -> None:
+        raise OperatonError("user", None, None)
+
+    path = f"/app/admin/users/{world.ids[PRIYA]}"
+    l1 = {"memberships": [{"department": "legal", "level": 1, "scope": "own"}]}
+    with monkeypatch.context() as mp:
+        mp.setattr(users, "mirror", engine_down)
+        assert world.http.patch(path, json=l1, headers=world.admin()).status_code == 502
+    assert world.groups(PRIYA) == {"legal__L2"}  # the change is kept; Operaton is behind
+    behind = "select unsynced_since is not null from app.users where email = %s"
+    assert vault_sql("pilot", behind, PRIYA) == [(True,)]
+
+    async def reconcile() -> Counter[str]:
+        async with Stack() as stack:
+            return await users.resync(await stack.ctx(world.slug), older_than=0)
+
+    assert asyncio.run(reconcile()) == Counter(mirrored=1)
+    assert world.groups(PRIYA) == {"legal__L1"}
+    assert vault_sql("pilot", behind, PRIYA) == [(False,)]
+    assert asyncio.run(reconcile()) == Counter()  # caught up
 
 
 def test_two_admins_deactivating_each_other_at_once_leave_one_admin(world: World) -> None:

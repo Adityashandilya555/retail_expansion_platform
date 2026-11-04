@@ -2255,7 +2255,7 @@
     },
     "/app/admin/users/{user_id}": {
       "patch": {
-        "description": "New memberships and/or status, then the Operaton mirror. If Operaton fails (502) the change\nis kept; sending the same request again finishes the mirror.",
+        "description": "New memberships and/or status, then the Operaton mirror. If Operaton fails (502) the change\nis kept, and the reconciler finishes the mirror (`users.resync`), as does sending it again.",
         "operationId": "update_user_app_admin_users__user_id__patch",
         "parameters": [
           {
