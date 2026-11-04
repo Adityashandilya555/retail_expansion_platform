@@ -125,6 +125,11 @@ PLATFORM_DATABASE_URL=… uv run zm-api templates sync   # validate + upsert int
 ```
 `matrix-retail/demo-users.json` lists the demo accounts (emails only; passwords are generated at seed time).
 
+## Draft and change log (#33)
+Every edit of a client's draft goes through `zm_api.drafts.apply_change(ctx, author, tool, patch, summary, conversation_id?, change_request_id?)`. It applies an RFC 6902 patch to a copy, checks the result with `zm_schema.validate`, and writes the draft and an `app.draft_changes` row (patch, inverse, author, sha256 of the draft it left) in one transaction. An invalid change writes nothing and comes back as a 422 with `workflow.json` paths. `app.draft_changes` is insert-only: a trigger refuses updates and deletes, and `zm_api` has no grant for them. Undo applies the inverse of the newest change not yet undone, as a new row, and restores that exact earlier state without validating it again. It answers 409 when the draft was written outside the log since that change (`zm-api seed-draft`, SQL), because the inverse was made for another document.
+
+Owner endpoints under `/owner/clients/{id}/draft`: `GET` (the draft), `GET /changes` (newest first, without the inverses), `POST /undo`, `GET /diff` (stages, tasks, fields, blocks, theme and accent against the active release), `GET /validate`, and `PATCH /theme {theme?, accent?}`.
+
 ## Publish
 A client's draft `workflow.json` (`app.drafts` in its vault) becomes a release on its own Operaton (#23):
 ```bash

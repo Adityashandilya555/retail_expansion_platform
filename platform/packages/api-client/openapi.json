@@ -290,6 +290,91 @@
         "title": "CaseRow",
         "type": "object"
       },
+      "ChangeOut": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "author_owner_id": {
+            "format": "uuid",
+            "title": "Author Owner Id",
+            "type": "string"
+          },
+          "change_request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Request Id"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "patch": {
+            "description": "The RFC 6902 operations applied to the draft.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Patch",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tool": {
+            "description": "What made the change: an agent tool's name, `set_theme` or `undo`.",
+            "title": "Tool",
+            "type": "string"
+          },
+          "undoes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "On an undo's row, the change it undid.",
+            "title": "Undoes"
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "author_owner_id",
+          "conversation_id",
+          "change_request_id",
+          "tool",
+          "patch",
+          "summary",
+          "undoes"
+        ],
+        "title": "ChangeOut",
+        "type": "object"
+      },
       "ClientDetail": {
         "properties": {
           "created_at": {
@@ -597,6 +682,121 @@
         "title": "Department",
         "type": "object"
       },
+      "DraftDiff": {
+        "description": "What publishing the draft would change; every list empty and both looks null = nothing.",
+        "properties": {
+          "accent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValueChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when unchanged."
+          },
+          "blocks": {
+            "description": "Keys of pages whose blocks changed, added and removed pages included.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "fields": {
+            "$ref": "#/components/schemas/KeyChanges",
+            "description": "By field key."
+          },
+          "stages": {
+            "$ref": "#/components/schemas/KeyChanges",
+            "description": "By `<flow>.<stage>`: its name, department, `after` and the order of its tasks."
+          },
+          "tasks": {
+            "$ref": "#/components/schemas/KeyChanges",
+            "description": "By task id, across every flow; moving a task to another stage changes it."
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValueChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when unchanged."
+          }
+        },
+        "required": [
+          "stages",
+          "tasks",
+          "fields",
+          "blocks",
+          "theme",
+          "accent"
+        ],
+        "title": "DraftDiff",
+        "type": "object"
+      },
+      "DraftOut": {
+        "properties": {
+          "base_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The release this draft was published as; null until publish records it.",
+            "title": "Base Version"
+          },
+          "template_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Key"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          },
+          "workflow": {
+            "additionalProperties": true,
+            "title": "Workflow",
+            "type": "object"
+          }
+        },
+        "required": [
+          "workflow",
+          "template_key",
+          "base_version",
+          "updated_at",
+          "updated_by"
+        ],
+        "title": "DraftOut",
+        "type": "object"
+      },
       "FieldError": {
         "properties": {
           "message": {
@@ -604,7 +804,7 @@
             "type": "string"
           },
           "path": {
-            "description": "JSON Pointer to the field, e.g. `/ca_amount`.",
+            "description": "JSON Pointer to the field, e.g. `/ca_amount`; a draft's are `workflow.json` paths, e.g.\n`flows[0].stages[1].after[0]`.",
             "title": "Path",
             "type": "string"
           }
@@ -716,6 +916,38 @@
           "name"
         ],
         "title": "InviteIn",
+        "type": "object"
+      },
+      "KeyChanges": {
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "changed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed",
+            "type": "array"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "added",
+          "removed",
+          "changed"
+        ],
+        "title": "KeyChanges",
         "type": "object"
       },
       "Level": {
@@ -1490,6 +1722,37 @@
         "title": "TemplateOut",
         "type": "object"
       },
+      "ThemeIn": {
+        "additionalProperties": false,
+        "properties": {
+          "accent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The client's default accent; null = the preset's own.",
+            "title": "Accent"
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Theme preset key (D19), checked as the draft's `apps.theme`.",
+            "title": "Theme"
+          }
+        },
+        "title": "ThemeIn",
+        "type": "object"
+      },
       "TokenOut": {
         "properties": {
           "access_token": {
@@ -1764,6 +2027,38 @@
           }
         },
         "title": "UserPatch",
+        "type": "object"
+      },
+      "ValueChange": {
+        "properties": {
+          "draft": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft"
+          },
+          "live": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live"
+          }
+        },
+        "required": [
+          "live",
+          "draft"
+        ],
+        "title": "ValueChange",
         "type": "object"
       },
       "WorkspaceIn": {
@@ -2900,6 +3195,300 @@
           }
         },
         "summary": "Invite Client Admin",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/draft": {
+      "get": {
+        "description": "The client's draft `workflow.json`.",
+        "operationId": "get_draft_owner_clients__client_id__draft_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Get Draft",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/draft/changes": {
+      "get": {
+        "description": "The change log, newest first.",
+        "operationId": "list_changes_owner_clients__client_id__draft_changes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ChangeOut"
+                  },
+                  "title": "Response List Changes Owner Clients  Client Id  Draft Changes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Changes",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/draft/diff": {
+      "get": {
+        "description": "The draft against the active release (everything is added before the first publish).",
+        "operationId": "get_diff_owner_clients__client_id__draft_diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftDiff"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Get Diff",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/draft/theme": {
+      "patch": {
+        "description": "The client's theme preset and default accent (D19); only the keys sent change.",
+        "operationId": "set_theme_owner_clients__client_id__draft_theme_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThemeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Set Theme",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/draft/undo": {
+      "post": {
+        "description": "Undo the newest change not yet undone; 409 when there is none.",
+        "operationId": "undo_change_owner_clients__client_id__draft_undo_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Undo Change",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/draft/validate": {
+      "get": {
+        "description": "Every problem in the draft; empty when it is valid.",
+        "operationId": "get_validation_owner_clients__client_id__draft_validate_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FieldError"
+                  },
+                  "title": "Response Get Validation Owner Clients  Client Id  Draft Validate Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Get Validation",
         "tags": [
           "owner"
         ]
