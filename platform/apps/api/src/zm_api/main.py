@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from zm_api import (
     auth,
     cases_routes,
+    change_requests,
     clients,
     drafts,
     errors,
@@ -47,6 +48,7 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         ui.routes,
         people.routes,
         people.owner_routes,
+        change_requests.routes,
     ):
         app.include_router(router)
     # Outermost last: CORS → RequestLog → CrashGuard → routes. CORS headers reach every response,

@@ -65,6 +65,16 @@ class AppUi(BaseModel):
     flows: list[UiFlow]
 
 
+def form_fields(wf: WorkflowV1, form: str) -> list[UiField]:
+    """A form's fields in form order."""
+    return [
+        UiField(key=c.field, label=wf.fields[c.field].label, type=wf.fields[c.field].type)
+        for section in wf.forms[form].sections
+        for row in section.rows
+        for c in row
+    ]
+
+
 def visible_ui(client_name: str, release: ReleaseRow, departments: set[str]) -> AppUi:
     apps = Apps.model_validate(release.ui)
     wf = WorkflowV1.model_validate(release.workflow, context={"structural_only": True})
@@ -77,12 +87,7 @@ def visible_ui(client_name: str, release: ReleaseRow, departments: set[str]) -> 
             case_label=f.case_label,
             case_code=f.case_code.pattern,
             stages=[UiStage(key=s.key, name=s.name, department=s.department) for s in f.stages],
-            start_fields=[
-                UiField(key=c.field, label=wf.fields[c.field].label, type=wf.fields[c.field].type)
-                for section in wf.forms[f.start.form].sections
-                for row in section.rows
-                for c in row
-            ],
+            start_fields=form_fields(wf, f.start.form),
         )
         for f in wf.flows
     ]
