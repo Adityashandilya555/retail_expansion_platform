@@ -130,6 +130,11 @@ Every edit of a client's draft goes through `zm_api.drafts.apply_change(ctx, aut
 
 Owner endpoints under `/owner/clients/{id}/draft`: `GET` (the draft), `GET /changes` (newest first, without the inverses), `POST /undo`, `GET /diff` (stages, tasks, fields, blocks, theme and accent against the active release), `GET /validate`, and `PATCH /theme {theme?, accent?}`.
 
+## Agent tools (#36)
+`zm_api.agent.tools` holds the agent's tools v1 (blueprint §10). Read: `get_overview`, `get_task`, `get_form`, `list_field_types` (zm_schema's types, each flagged with whether @zm/forms draws it), `list_templates`, `load_template` (only while the draft is still an unchanged template). Org: `add_department`, `update_department`, `set_levels`. Flow: `add_stage`, `set_after`, `add_task`, `update_task`, `move_task`, `remove_task`, `set_outcomes`, `set_approval_chain`, `add_document_slot`. Forms: `add_field`, `update_field` (never the key or type), `remove_field` (sets the field's `hidden`), `arrange_form`. Checks: `validate_draft`, `diff_vs_live`.
+
+`definitions()` gives them as strict Messages API tools: no extra properties, every property required, optional ones nullable, and no client parameter. `call(ctx, author, name, args, conversation_id?)` runs one for the console's client: an edit builds its RFC 6902 patch from the locked draft (`apply_change` also takes a function of the draft) and is logged under the tool's name, with undo. It answers `{ok, summary, errors?}`, plus `data` for a read; `summary` is the change chip. There is no HTTP route: the agent loop (#38) calls them.
+
 ## Publish
 A client's draft `workflow.json` (`app.drafts` in its vault) becomes a release on its own Operaton (#23):
 ```bash

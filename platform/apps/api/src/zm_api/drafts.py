@@ -19,6 +19,7 @@ Owners reach all of it under `/owner/clients/{id}/draft`.
 """
 
 import json
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime
 from typing import Annotated, Any
@@ -263,12 +264,14 @@ async def apply_change(
     ctx: ClientContext,
     author: UUID,
     tool: str,
-    patch: Patch,
+    patch: Patch | Callable[[dict[str, Any]], Patch],
     summary: str,
     conversation_id: UUID | None = None,
     change_request_id: UUID | None = None,
 ) -> ChangeOut | None:
-    """Apply and log one change; None when the patch changes nothing (nothing is logged)."""
+    """Apply and log one change; None when the patch changes nothing (nothing is logged). A patch
+    that points into lists (the agent's tools, #36) is a function of the draft, built from the
+    locked one, so a change landing just before can't shift what it points at."""
     async with ctx.db.begin() as conn:
         doc = await _draft(conn, lock=True)
         return await _change(
@@ -279,7 +282,7 @@ async def apply_change(
                 "conversation_id": conversation_id,
                 "change_request_id": change_request_id,
                 "tool": tool,
-                "patch": patch,
+                "patch": patch(doc) if callable(patch) else patch,
                 "summary": summary,
             },
         )
