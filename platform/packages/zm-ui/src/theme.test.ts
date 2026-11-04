@@ -1,14 +1,22 @@
-import { DEFAULT_THEME, defaultCssVariablesResolver, mergeMantineTheme } from "@mantine/core";
 import { describe, expect, test, vi } from "vitest";
-import { ACCENTS, PRESETS, type Accent, createZmTheme, isAccent, resolveAccent, resolvePreset } from "./theme";
+import {
+  ACCENTS,
+  PRESETS,
+  type Accent,
+  type Preset,
+  type PresetOverrides,
+  createZmTheme,
+  isAccent,
+  presetCssVariables,
+  resolveAccent,
+  resolvePreset,
+} from "./theme";
 
 type Scheme = "light" | "dark";
 
 /** Mantine's own CSS variables for a preset × accent × scheme, with var() references resolved. */
 function cssVariables(presetKey: string, accent: Accent, scheme: Scheme) {
-  const theme = mergeMantineTheme(DEFAULT_THEME, createZmTheme({ preset: resolvePreset(presetKey), accent }));
-  const { variables, light, dark } = defaultCssVariablesResolver(theme);
-  const vars: Record<string, string> = { ...variables, ...(scheme === "light" ? light : dark) };
+  const vars: Record<string, string> = presetCssVariables(resolvePreset(presetKey), accent, scheme);
   const resolve = (value: string, depth = 0): string => {
     const ref = /^var\((--[\w-]+)\)$/.exec(value.trim());
     if (!ref) return value.trim();
@@ -63,9 +71,53 @@ describe("palettes", () => {
     expect(theme.primaryColor).toBe(accent);
   });
 
-  test("the slate accent is the default and quartz is a registered preset", () => {
+  test("the slate accent is the default; quartz and warm (copper) are registered presets", () => {
     expect(ACCENTS[0]).toBe("slate");
     expect(PRESETS.quartz?.defaultAccent).toBe("slate");
+    expect(PRESETS.warm?.defaultAccent).toBe("copper");
+    expect(Object.values(PRESETS).map((p) => p.key)).toEqual(Object.keys(PRESETS));
+  });
+});
+
+// D19: a preset changes the neutrals (Mantine's gray, and dark for the dark scheme), the radius and
+// the heading weight; its default accent is `defaultAccent`. Nothing else: no fonts, components or layout.
+const OVERRIDE_KEYS = ["gray", "dark", "radius", "headingsFontWeight"] satisfies (keyof PresetOverrides)[];
+const THEME_PATHS = /^(colors\.(gray|dark)\.\d|radius\.md|headings\.fontWeight)$/;
+
+function leaves(value: unknown, path = ""): [string, unknown][] {
+  if (value === null || typeof value !== "object") return [[path, value]];
+  return Object.entries(value).flatMap(([k, v]) => leaves(v, path ? `${path}.${k}` : k));
+}
+
+/** The theme paths `preset`'s overrides move, against the same preset without them. */
+function moved(preset: Preset): string[] {
+  const bare = new Map(leaves(createZmTheme({ preset: { ...preset, overrides: {} }, accent: preset.defaultAccent })));
+  const themed = new Map(leaves(createZmTheme({ preset, accent: preset.defaultAccent })));
+  return [...new Set([...bare.keys(), ...themed.keys()])].filter((p) => bare.get(p) !== themed.get(p));
+}
+
+/** What `preset` changes beyond what a preset may: unknown override keys and theme paths it moves. */
+function strayOverrides(preset: Preset): string[] {
+  return [
+    ...Object.keys(preset.overrides).filter((k) => !(OVERRIDE_KEYS as string[]).includes(k)),
+    ...moved(preset).filter((p) => !THEME_PATHS.test(p)),
+  ];
+}
+
+describe("presets change only neutrals, radius and heading weight", () => {
+  test.each(Object.values(PRESETS))("$key", (preset) => {
+    expect(strayOverrides(preset)).toEqual([]);
+  });
+
+  test("warm changes each of them", () => {
+    const paths = moved(PRESETS.warm as Preset).map((p) => p.replace(/\.\d$/, ""));
+    expect(new Set(paths)).toEqual(new Set(["colors.gray", "colors.dark", "radius.md", "headings.fontWeight"]));
+  });
+
+  test("an override outside that list fails the check, and the type refuses it", () => {
+    // @ts-expect-error fontFamily is not a preset override
+    const font: PresetOverrides = { fontFamily: "Comic Sans MS" };
+    expect(strayOverrides({ ...(PRESETS.quartz as Preset), overrides: font })).toEqual(["fontFamily"]);
   });
 });
 

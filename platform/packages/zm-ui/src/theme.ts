@@ -1,6 +1,13 @@
 // The one Z-Matrix look (D19 / ADR-001): Mantine theme, curated accents and client presets.
 // This is the only file in packages/*/src allowed to hold colour literals (no-hex.test.ts).
-import { createTheme, type MantineColorsTuple, type MantineThemeOverride } from "@mantine/core";
+import {
+  DEFAULT_THEME,
+  createTheme,
+  defaultCssVariablesResolver,
+  mergeMantineTheme,
+  type MantineColorsTuple,
+  type MantineThemeOverride,
+} from "@mantine/core";
 
 /** Meaning → palette for states that aren't the accent. Components take these through @zm/ui
  * (StatusPill, StageTracker, Notice, …); colour never carries meaning alone. */
@@ -24,10 +31,13 @@ const PALETTES: Record<Accent, MantineColorsTuple> = {
   pink: ["#fff1f5", "#fddfe8", "#fac2d5", "#f2a3bf", "#ea87ac", "#cf608c", "#b03a6e", "#992b5d", "#821d4c", "#6a103c"],
 };
 
-/** What a client preset may change: never components or layout, only these (D19). */
+/** What a client preset may change: never components or layout, only these (D19). The neutrals
+ * are Mantine's `gray` (light scheme) and `dark` (dark scheme) palettes; theme.test.ts enforces it. */
 export type PresetOverrides = {
   gray?: MantineColorsTuple;
-  defaultRadius?: "xs" | "sm" | "md" | "lg" | "xl";
+  dark?: MantineColorsTuple;
+  /** The `md` radius: every component's default, and what `radius="md"` asks for. */
+  radius?: string;
   headingsFontWeight?: string;
 };
 
@@ -41,7 +51,8 @@ export type Preset = {
 
 export const DEFAULT_PRESET = "quartz";
 
-/** Pre-built looks a client can choose in the owner console. Additive only (D14); #34 adds `warm`. */
+/** Pre-built looks a client can choose in the owner console. Additive only (D14): a released key is
+ * never removed or renamed. Each has its intent in packages/zm-ui/presets/<key>/DESIGN.md. */
 export const PRESETS: Record<string, Preset> = {
   quartz: {
     key: "quartz",
@@ -49,6 +60,20 @@ export const PRESETS: Record<string, Preset> = {
     description: "Cool slate neutrals and 10 px corners: the Z-Matrix default.",
     defaultAccent: "slate",
     overrides: {},
+  },
+  warm: {
+    key: "warm",
+    label: "Warm",
+    description: "Stone neutrals, a copper accent and softer 14 px corners.",
+    defaultAccent: "copper",
+    overrides: {
+      // Mantine's gray and dark ramps re-hued to stone (OKLCH hue 70°, chroma ≤ 0.014) at the same
+      // lightness per shade, so text and borders keep quartz's contrast.
+      gray: ["#fbf8f6", "#f5f2ef", "#efebe6", "#e6e1db", "#d9d2cb", "#bab3ab", "#938c84", "#544e47", "#3d3833", "#28241f"],
+      dark: ["#cdc8c2", "#bcb7b1", "#86817c", "#6d6863", "#45413e", "#3e3a37", "#312d2a", "#272320", "#221e1b", "#161411"],
+      radius: "14px",
+      headingsFontWeight: "600",
+    },
   },
 };
 
@@ -72,24 +97,31 @@ export function resolveAccent(options: { user?: string | null; client?: string |
 }
 
 export function createZmTheme({ preset, accent }: { preset: Preset; accent: Accent }): MantineThemeOverride {
-  const { gray, defaultRadius, headingsFontWeight } = preset.overrides;
+  const { gray, dark, radius, headingsFontWeight } = preset.overrides;
   return createTheme({
     primaryColor: accent,
     primaryShade: { light: 6, dark: 8 },
     autoContrast: true,
-    colors: { ...PALETTES, ...(gray ? { gray } : {}) },
+    colors: { ...PALETTES, ...(gray && { gray }), ...(dark && { dark }) },
     fontFamily: "'Inter Variable', system-ui, sans-serif",
     fontFamilyMonospace: "'JetBrains Mono Variable', ui-monospace, monospace",
     headings: {
       fontFamily: "'Plus Jakarta Sans Variable', 'Inter Variable', system-ui, sans-serif",
       fontWeight: headingsFontWeight ?? "650",
     },
-    radius: { md: "10px" },
-    defaultRadius: defaultRadius ?? "md",
+    radius: { md: radius ?? "10px" },
+    defaultRadius: "md",
     cursorType: "pointer",
     components: {
       Table: { defaultProps: { verticalSpacing: "xs", highlightOnHover: true } },
       Badge: { defaultProps: { radius: "sm" } },
     },
   });
+}
+
+/** Mantine's CSS variables for a preset × accent × scheme, as ZmProvider would set them on :root.
+ * Scoped to an element, they draw Mantine components in that look (PresetPicker's live previews). */
+export function presetCssVariables(preset: Preset, accent: Accent, scheme: "light" | "dark"): Record<string, string> {
+  const { variables, light, dark } = defaultCssVariablesResolver(mergeMantineTheme(DEFAULT_THEME, createZmTheme({ preset, accent })));
+  return { ...variables, ...(scheme === "light" ? light : dark) };
 }

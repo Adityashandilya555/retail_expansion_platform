@@ -1,12 +1,13 @@
 // @zm/ui: the one Z-Matrix look on Mantine (D19 / ADR-001). Apps and blocks import Mantine directly
 // for everything else; this package holds the theme, the provider and the extras Mantine lacks.
 export { AppFrame, type NavItem } from "./AppFrame";
-export { AppearanceMenu } from "./AppearanceMenu";
+export { AccentSwatches, AppearanceMenu, accentLabel } from "./AppearanceMenu";
 export { AuthCard, SignInForm, notifyError, notifyInfo } from "./SignIn";
 export { DataTable, type Column } from "./DataTable";
 export { Notice } from "./Notice";
 export { Num, formatNum } from "./Num";
 export { PageHeader } from "./PageHeader";
+export { PresetPicker } from "./PresetPicker";
 export { StageTracker, type Stage, type StageState } from "./StageTracker";
 export { StatusPill, type StatusTone } from "./StatusPill";
 export {
@@ -16,6 +17,7 @@ export {
   TONE_COLORS,
   createZmTheme,
   isAccent,
+  presetCssVariables,
   resolveAccent,
   resolvePreset,
   type Accent,
