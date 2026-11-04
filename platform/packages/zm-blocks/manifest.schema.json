@@ -58,24 +58,24 @@
           "properties": {
             "type": { "const": "object" },
             "additionalProperties": { "const": false },
-            "properties": {
-              "type": "object",
-              "properties": {
-                "color": false,
-                "colour": false,
-                "background": false,
-                "style": false,
-                "styles": false,
-                "className": false,
-                "classNames": false,
-                "css": false,
-                "sx": false,
-                "theme": false
-              }
-            }
-          }
+            "properties": { "type": "object" }
+          },
+          "$ref": "#/$defs/no_styling"
         }
       }
+    },
+    "no_styling": {
+      "description": "Walks a props schema at every depth (nested objects, array items, anyOf, …): no `properties` declares a styling prop, e.g. color, textColor, bg_colour, background, style, header_style, className, class_name, css, sx, theme.",
+      "properties": {
+        "properties": {
+          "patternProperties": {
+            "^(.*[cC]olou?rs?|.*[bB]ackground.*|.*[sS]tyles?|class|.*[cC]lass_?[nN]ames?|.*[cC]ss|sx|.*[tT]heme)$": false
+          },
+          "additionalProperties": { "$ref": "#/$defs/no_styling" }
+        }
+      },
+      "additionalProperties": { "$ref": "#/$defs/no_styling" },
+      "items": { "$ref": "#/$defs/no_styling" }
     }
   }
 }

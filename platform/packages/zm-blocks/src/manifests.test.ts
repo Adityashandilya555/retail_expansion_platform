@@ -59,7 +59,7 @@ test("every registered manifest follows the rules", () => {
     for (const { manifest } of Object.values(versions)) expect(problems(manifest), manifest.name).toEqual([]);
 });
 
-test("a manifest with a styling prop, an invalid schema, no version or an unknown region fails", () => {
+test("a manifest with a styling prop at any depth, an invalid schema, no version or an unknown region fails", () => {
   const bad: BlockManifest = {
     name: "bad",
     version: 0,
@@ -70,10 +70,35 @@ test("a manifest with a styling prop, an invalid schema, no version or an unknow
   expect(problems(bad)).toEqual([
     "manifest/version must be >= 1",
     "manifest/description must NOT have fewer than 1 characters",
-    "manifest/props must have required property 'additionalProperties'",
     "manifest/props/properties/color boolean schema is false",
+    "manifest/props must have required property 'additionalProperties'",
     'no layout has region "sidebar"',
     expect.stringContaining("props is not valid JSON Schema"),
+  ]);
+  const deep: BlockManifest = {
+    name: "deep",
+    version: 1,
+    description: "x",
+    regions: ["main"],
+    props: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        textColor: { type: "string" },
+        filter: { type: "object", properties: { className: { type: "string" }, header_style: { type: "string" }, label: { type: "string" } } },
+        rows: { type: "array", items: { anyOf: [{ type: "object", properties: { bg_colour: { type: "string" }, sx: {} } }] } },
+        darkTheme: { type: "boolean" },
+      },
+    },
+  };
+  // styling props at any depth, in any spelling; `label` is fine
+  expect(problems(deep)).toEqual([
+    "manifest/props/properties/filter/properties/className boolean schema is false",
+    "manifest/props/properties/filter/properties/header_style boolean schema is false",
+    "manifest/props/properties/rows/items/anyOf/0/properties/bg_colour boolean schema is false",
+    "manifest/props/properties/rows/items/anyOf/0/properties/sx boolean schema is false",
+    "manifest/props/properties/textColor boolean schema is false",
+    "manifest/props/properties/darkTheme boolean schema is false",
   ]);
   const layout = { name: "x", version: 1, description: "x", regions: [{ key: "main", description: "x", allowed_blocks: [] }] };
   expect(validLayout(layout)).toBe(false); // allowed_blocks is derived in catalogue.json, never written
