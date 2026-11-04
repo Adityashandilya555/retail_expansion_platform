@@ -11,6 +11,7 @@ import os
 from collections import Counter
 
 import httpx
+from cryptography.fernet import InvalidToken
 from sqlalchemy import text
 
 from zm_api import secrets
@@ -52,7 +53,12 @@ async def send(ctx: ClientContext, mail: httpx.AsyncClient) -> Counter[str]:
     who = ctx.client
     out: Counter[str] = Counter()
     for row in rows:
-        token = secrets.unseal(row.sealed)["token"]
+        try:
+            token = secrets.unseal(row.sealed)["token"]
+        except InvalidToken:  # sealed under an older SECRETS_ENCRYPTION_KEY: invite them again
+            log.warning("invite token can't be unsealed (%s)", row.id, extra={"client": who.slug})
+            out["unsent"] += 1
+            continue
         body = {
             "from": os.environ["EMAIL_FROM"],
             "to": [row.email],
