@@ -2,7 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { blocks, type AppUi, type UiPage } from "@zm/blocks";
 import { sampleUi, testBlocks } from "@zm/blocks/test";
-import { accentStorageKey } from "@zm/ui";
+import { accentStorageKey, schemeStorageKey } from "@zm/ui";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { ClientApp } from "./App";
@@ -23,6 +23,7 @@ const ME = {
   is_client_admin: false,
   client: { slug: "pilot-local", name: "Matrix Retail" },
   memberships: [{ department: "legal", level: 1, scope: "own" }],
+  preferences: { color_scheme: null, accent: null },
 };
 
 /** Stubs the API by "METHOD /path"; returns the calls it saw. */
@@ -329,4 +330,111 @@ test("a failing GET /app/ui shows an error with Retry", async () => {
   fail = false;
   await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("region", { name: "task_inbox" })).toBeDefined();
+});
+
+// --- appearance follows the user (#93) ------------------------------------------------------------
+
+const scheme = () => document.documentElement.getAttribute("data-mantine-color-scheme");
+const saved = (preferences: object) => ({ "GET /app/me": () => json({ ...ME, preferences }) });
+
+test("dark + copper picked in another browser apply here, over this browser's older choice", async () => {
+  localStorage.setItem(schemeStorageKey(ME.id), "light");
+  localStorage.setItem(accentStorageKey(ME.id), "plum");
+  signedInApi(sampleUi, saved({ color_scheme: "dark", accent: "copper" }));
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  expect([scheme(), primary()]).toEqual(["dark", "copper"]);
+  // and the next load's pre-paint script starts from them
+  expect(localStorage.getItem(schemeStorageKey(ME.id))).toBe("dark");
+  expect(localStorage.getItem(accentStorageKey(ME.id))).toBe("copper");
+});
+
+/** One pick per render: jsdom has no layout, so the popover hides itself after the first. */
+async function pick(name: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Appearance" }));
+  await user.click(await screen.findByRole("button", { name }));
+}
+
+test("a pick in the appearance menu is saved to the server", async () => {
+  const sent: unknown[] = [];
+  signedInApi(sampleUi, {
+    "PUT /app/me/preferences": async (r) => {
+      sent.push(await r.json());
+      return json({ color_scheme: null, accent: "copper" });
+    },
+  });
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  await pick("Accent: Copper");
+  await vi.waitFor(() => expect(sent).toEqual([{ accent: "copper" }]));
+  expect(primary()).toBe("copper");
+});
+
+test("a pick the server refuses still applies here, and says it wasn't saved", async () => {
+  signedInApi(sampleUi, { "PUT /app/me/preferences": () => problem(500, "Boom") });
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  await pick("Accent: Plum");
+  expect(await screen.findByText(/couldn't save your appearance to your account yet/)).toBeDefined();
+  expect(primary()).toBe("plum");
+});
+
+const UNSYNCED = `zm:appearance-unsynced:${ME.id}`;
+const refocus = () => window.dispatchEvent(new Event("visibilitychange")); // TanStack refetches /app/me
+
+test("a pick that couldn't be saved survives the next /app/me, and a later retry saves it", async () => {
+  const server = { color_scheme: null, accent: "copper" }; // saved from another device
+  let up = false;
+  const sent: unknown[] = [];
+  signedInApi(sampleUi, {
+    "GET /app/me": () => json({ ...ME, preferences: server }),
+    "PUT /app/me/preferences": async (r) => {
+      const body = (await r.json()) as object;
+      sent.push(body);
+      if (!up) return problem(503, "Down");
+      Object.assign(server, body);
+      return json(server);
+    },
+  });
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  await pick("Accent: Plum");
+  await screen.findByText(/couldn't save your appearance/);
+
+  refocus(); // still down: the server's copper must not replace plum here
+  await vi.waitFor(() => expect(sent).toHaveLength(2));
+  expect(localStorage.getItem(accentStorageKey(ME.id))).toBe("plum");
+  expect(localStorage.getItem(UNSYNCED)).toBe("accent");
+
+  up = true;
+  refocus();
+  await vi.waitFor(() => expect(localStorage.getItem(UNSYNCED)).toBeNull());
+  expect(sent).toEqual([{ accent: "plum" }, { accent: "plum" }, { accent: "plum" }]);
+  expect(server.accent).toBe("plum");
+});
+
+test("a choice this browser kept from before #93 is uploaded when the server has none", async () => {
+  localStorage.setItem(accentStorageKey(ME.id), "plum");
+  const sent: unknown[] = [];
+  signedInApi(sampleUi, {
+    "PUT /app/me/preferences": async (r) => {
+      sent.push(await r.json());
+      return json({ color_scheme: null, accent: "plum" });
+    },
+  });
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  await vi.waitFor(() => expect(sent).toEqual([{ accent: "plum" }])); // no scheme: none was picked here
+  expect(primary()).toBe("plum");
+});
+
+test("a saved accent this shell doesn't know (neon) falls back to the client's, with a warning", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  signedInApi(sampleUi, saved({ color_scheme: null, accent: "neon" })); // the client's accent is teal
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  expect(primary()).toBe("teal");
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('unknown accent "neon"'));
+  warn.mockRestore();
 });

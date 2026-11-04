@@ -6,6 +6,7 @@ import { BlocksApi, PageRenderer, defaultCasePage } from "@zm/blocks";
 import { AppFrame, ZmProvider } from "@zm/ui";
 import { LogOut } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router";
+import { applyPreferences, savePreferences } from "./preferences";
 import { api, currentUser, loadUi, signOut, type AppUi, type Workspace } from "./session";
 
 function NotFound() {
@@ -54,11 +55,12 @@ function Screen({ label }: { label: string }) {
 export function Shell({ workspace }: { workspace: Workspace | null }) {
   const navigate = useNavigate();
   const queries = useQueryClient();
-  const me = useQuery({ queryKey: ["me"], queryFn: currentUser });
+  const me = useQuery({ queryKey: ["me"], queryFn: () => currentUser().then(applyPreferences) });
   const ui = useQuery({ queryKey: ["ui"], queryFn: loadUi, enabled: Boolean(me.data) });
   const section = useParams()["*"]?.split("/")[0] || undefined;
 
   if (me.data === null) return <Navigate to="/" replace />;
+  const userId = me.data?.id;
   const look = ui.data?.client ?? workspace ?? undefined;
   let body;
   if (me.isError) {
@@ -117,7 +119,11 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
     );
   }
   return (
-    <ZmProvider client={look} userId={me.data?.id}>
+    <ZmProvider
+      client={look}
+      userId={userId}
+      onAppearanceChange={userId ? (change) => void savePreferences(userId, change) : undefined}
+    >
       {body}
     </ZmProvider>
   );

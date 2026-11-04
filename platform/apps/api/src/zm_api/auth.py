@@ -119,6 +119,21 @@ class ClientInfo(BaseModel):
     name: str
 
 
+class Preferences(BaseModel):
+    """A user's appearance (#93, D19): only colours; null = no choice yet (scheme: auto, accent:
+    the client's, then the preset's). The shell skips accents it doesn't know, so the accent list
+    lives only there."""
+
+    color_scheme: Literal["light", "dark", "auto"] | None = None
+    accent: str | None = Field(default=None, pattern=r"^[a-z]{2,20}$")
+
+
+class PreferencesIn(Preferences):
+    """The body of `PUT /app/me/preferences`: any other key is a 422, not silently dropped."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class Me(BaseModel):
     id: UUID
     email: str
@@ -126,6 +141,7 @@ class Me(BaseModel):
     is_client_admin: bool
     client: ClientInfo
     memberships: list[Membership]
+    preferences: Preferences
 
 
 class OwnerMe(BaseModel):
@@ -358,7 +374,7 @@ async def me(ctx: ClientCtx, uid: UserId) -> Me:
             (
                 await conn.execute(
                     text(
-                        "select id, email, name, status, is_client_admin"
+                        "select id, email, name, status, is_client_admin, preferences"
                         " from app.users where id = :id"
                     ),
                     {"id": uid},
@@ -384,7 +400,26 @@ async def me(ctx: ClientCtx, uid: UserId) -> Me:
         is_client_admin=user["is_client_admin"],
         client=ClientInfo(slug=ctx.client.slug, name=ctx.client.name),
         memberships=memberships,
+        preferences=Preferences.model_validate(user["preferences"]),
     )
+
+
+@app_routes.put("/me/preferences")
+async def set_preferences(body: PreferencesIn, ctx: ClientCtx, uid: UserId) -> Preferences:
+    """Saves only the keys sent; the shell applies them after every sign-in, on any device."""
+    async with ctx.db.begin() as conn:
+        saved = (
+            await conn.execute(
+                text(
+                    "update app.users set preferences = preferences || cast(:p as jsonb)"
+                    " where id = :id and status = 'active' returning preferences"
+                ),
+                {"p": body.model_dump_json(exclude_unset=True), "id": uid},
+            )
+        ).scalar_one_or_none()
+    if saved is None:
+        raise Unauthorized()
+    return Preferences.model_validate(saved)
 
 
 # --- platform owners: /owner/auth/*, /owner/me ----------------------------------------------------

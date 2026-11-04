@@ -60,6 +60,20 @@ test("unknown preset and accent from the server fall back with a warning", () =>
   warn.mockRestore();
 });
 
+test("the menu reports each pick, so the client app can save it for other devices (#93)", async () => {
+  const user = userEvent.setup();
+  const onAppearanceChange = vi.fn();
+  render(
+    <ZmProvider env="test" userId="user-a" onAppearanceChange={onAppearanceChange}>
+      <AppearanceMenu />
+    </ZmProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Appearance" }));
+  await user.click(screen.getByRole("radio", { name: "Dark" }));
+  await user.click(screen.getByRole("button", { name: "Accent: Copper" }));
+  expect(onAppearanceChange.mock.calls).toEqual([[{ color_scheme: "dark" }], [{ accent: "copper" }]]);
+});
+
 test("the appearance menu works from the keyboard and passes axe", async () => {
   const user = userEvent.setup();
   renderApp();

@@ -68,6 +68,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/app/me/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Preferences
+         * @description Saves only the keys sent; the shell applies them after every sign-in, on any device.
+         */
+        put: operations["set_preferences_app_me_preferences_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/app/tasks": {
         parameters: {
             query?: never;
@@ -933,6 +953,7 @@ export interface components {
             memberships: components["schemas"]["Membership"][];
             /** Name */
             name: string;
+            preferences: components["schemas"]["Preferences"];
         };
         /** Membership */
         Membership: {
@@ -1013,6 +1034,28 @@ export interface components {
             regions: {
                 [key: string]: components["schemas"]["BlockRef"][];
             };
+        };
+        /**
+         * Preferences
+         * @description A user's appearance (#93, D19): only colours; null = no choice yet (scheme: auto, accent:
+         *     the client's, then the preset's). The shell skips accents it doesn't know, so the accent list
+         *     lives only there.
+         */
+        Preferences: {
+            /** Accent */
+            accent?: string | null;
+            /** Color Scheme */
+            color_scheme?: ("light" | "dark" | "auto") | null;
+        };
+        /**
+         * PreferencesIn
+         * @description The body of `PUT /app/me/preferences`: any other key is a 422, not silently dropped.
+         */
+        PreferencesIn: {
+            /** Accent */
+            accent?: string | null;
+            /** Color Scheme */
+            color_scheme?: ("light" | "dark" | "auto") | null;
         };
         /**
          * Problem
@@ -1425,6 +1468,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    set_preferences_app_me_preferences_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferencesIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Preferences"];
                 };
             };
             /** @description Problem details (RFC 9457) */

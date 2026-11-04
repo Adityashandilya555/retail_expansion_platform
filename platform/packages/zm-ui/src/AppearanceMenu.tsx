@@ -26,7 +26,7 @@ const title = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 /** The only appearance choice users have (D19): colour scheme and accent. */
 export function AppearanceMenu() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
-  const { accent, setAccent } = useAppearance();
+  const { accent, setAccent, onAppearanceChange } = useAppearance();
   const theme = useMantineTheme();
 
   return (
@@ -46,7 +46,11 @@ export function AppearanceMenu() {
             fullWidth
             size="xs"
             value={colorScheme}
-            onChange={(value) => setColorScheme(value as MantineColorScheme)}
+            onChange={(value) => {
+              const scheme = value as MantineColorScheme;
+              setColorScheme(scheme);
+              onAppearanceChange?.({ color_scheme: scheme });
+            }}
             data={SCHEMES}
           />
           <Text size="sm" fw={600}>
@@ -62,7 +66,10 @@ export function AppearanceMenu() {
                 size={26}
                 aria-label={`Accent: ${title(option)}`}
                 aria-pressed={option === accent}
-                onClick={() => setAccent(option)}
+                onClick={() => {
+                  setAccent(option);
+                  onAppearanceChange?.({ accent: option });
+                }}
               >
                 {option === accent && <CheckIcon size={12} color="var(--mantine-color-white)" />}
               </ColorSwatch>

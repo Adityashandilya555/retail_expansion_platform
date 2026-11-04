@@ -81,10 +81,21 @@ def run(stop: threading.Event, interval: float) -> None:
 
 
 def migrate(argv: list[str]) -> None:
-    """`zm-worker vault-migrate --dsn …`: apply the client vault migrations by hand (local dev)."""
+    """`zm-worker vault-migrate --dsn …`: apply the client vault migrations by hand (local dev).
+    `--ready`: every ready cloud client's vault, from the registry (the API's pre-deploy)."""
     parser = argparse.ArgumentParser(prog="zm-worker vault-migrate")
-    parser.add_argument("--dsn", required=True, help="client database URL")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--dsn", help="client database URL")
+    target.add_argument("--ready", action="store_true", help="every ready cloud client")
     args = parser.parse_args(argv)
+    if args.ready:
+        missing = [v for v in RECONCILE_ENV if not os.environ.get(v)]
+        if missing:
+            parser.error(f"set {', '.join(missing)}")
+        clients = vault_migrate.ready_clients(os.environ["PLATFORM_DATABASE_URL"])
+        done = vault_migrate.apply_ready(clients)
+        log.info("vaults migrated: %s", {s: a or "up to date" for s, a in done.items()} or "none")
+        return
     env = {role: f"{role.upper()}_DB_PASSWORD" for role in vault_migrate.ROLES}
     missing = [var for var in env.values() if not os.environ.get(var)]
     if missing:
@@ -185,7 +196,8 @@ def main(argv: list[str] | None = None) -> None:
     if args:
         sys.exit(
             f"unknown command {args[0]!r}; usage: zm-worker"
-            " [vault-migrate --dsn URL | provision-local SLUG --dsn URL --operaton-url URL"
+            " [vault-migrate --dsn URL | vault-migrate --ready"
+            " | provision-local SLUG --dsn URL --operaton-url URL"
             " | reconcile | deprovision SLUG --yes]"
         )
     stop = threading.Event()
