@@ -6,11 +6,12 @@ import { testBlocks } from "./test";
 
 // Manifest rules (#30, #37): every manifest passes the meta-schema (a version, a description, region
 // rules, props as an object schema that rejects unknown props, no styling props), its props compile
-// as JSON Schema, a block names only regions some layout has, and the registry and the manifest
-// files match one to one.
+// as JSON Schema, a block names only regions some layout has, no two layouts share a region key, and
+// the registry and the manifest files match one to one.
 const validBlock = ajv.compile({ ...meta, $ref: "#/$defs/block" });
 const validLayout = ajv.compile({ ...meta, $ref: "#/$defs/layout" });
-const REGIONS = new Set(Object.values(layouts).flatMap((l) => l.manifest.regions.map((r) => r.key)));
+const REGION_KEYS = Object.values(layouts).flatMap((l) => l.manifest.regions.map((r) => r.key));
+const REGIONS = new Set(REGION_KEYS);
 
 type Named = { name: string; version: number };
 const blockFiles = import.meta.glob<Named>("../blocks/*/manifest.json", { eager: true, import: "default" });
@@ -44,6 +45,12 @@ test("the registry and the manifest files match one to one", () => {
   expect(Object.entries(layouts).map(([name, { manifest }]) => [name, manifest.name, manifest.version]).sort()).toEqual(files(layoutFiles));
   // a block registered without its own manifest file (the stand-in kpi_tile) fails it
   expect(registeredBlocks(testBlocks)).not.toEqual(files(blockFiles));
+});
+
+test("no two layouts share a region key", () => {
+  // A block lists the region keys it fits, so a key two layouts shared would take the same blocks in
+  // both. A new layout picks keys of its own, or block manifests move to `<layout>.<region>`.
+  expect(REGION_KEYS).toEqual([...REGIONS]);
 });
 
 test("every registered manifest follows the rules", () => {

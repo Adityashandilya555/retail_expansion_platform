@@ -45,7 +45,7 @@
         "version": { "$ref": "#/$defs/version" },
         "description": { "$ref": "#/$defs/description" },
         "regions": {
-          "description": "The layout regions this block fits.",
+          "description": "The region keys this block fits. No two layouts share a key (src/manifests.test.ts), so a key names one layout's region.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
