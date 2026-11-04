@@ -8,8 +8,6 @@ import { accentStorageKey, appearanceScope, isAccent, notifyError, schemeStorage
 import { api, type Me } from "./session";
 
 const KEYS = ["color_scheme", "accent"] as const;
-const storageKey = (userId: string, key: keyof AppearanceChange) =>
-  (key === "accent" ? accentStorageKey : schemeStorageKey)(userId);
 const unsyncedKey = (userId: string) => `zm:appearance-unsynced:${appearanceScope(userId)}`;
 const unsynced = (userId: string) => localStorage.getItem(unsyncedKey(userId))?.split(",") ?? [];
 
@@ -32,7 +30,8 @@ export function applyPreferences(me: Me | null): Me | null {
     const upload: AppearanceChange = {};
     for (const key of KEYS) {
       const saved = me.preferences[key];
-      if (saved && !pending.includes(key)) localStorage.setItem(storageKey(me.id, key), saved);
+      const storageKey = key === "accent" ? accentStorageKey(me.id) : schemeStorageKey(me.id);
+      if (saved && !pending.includes(key)) localStorage.setItem(storageKey, saved);
       else if (here[key]) Object.assign(upload, { [key]: here[key] });
     }
     if (Object.keys(upload).length) void put(me.id, upload);
