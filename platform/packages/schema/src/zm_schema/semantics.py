@@ -265,9 +265,16 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
             if "max" in region and len(placed) > region["max"]:
                 err(rp, f"{on}: region '{key}' holds at most {region['max']}")
             for bi, ref in enumerate(placed):
-                bp, versions = join(rp, bi), ui["blocks"].get(ref.block, {})
-                if not versions or ref.block not in region["allowed_blocks"]:
-                    err(join(bp, "block"), f"{on}: region '{key}' doesn't take block '{ref.block}'")
+                bp, versions = join(rp, bi), ui["blocks"].get(ref.block)
+                if not versions:
+                    err(join(bp, "block"), f"{on}: unknown block '{ref.block}'")
+                    continue
+                if ref.block not in region["allowed_blocks"]:
+                    err(
+                        join(bp, "block"),
+                        f"{on}: region '{key}' of layout '{page.layout}'"
+                        f" doesn't take block '{ref.block}'",
+                    )
                     continue
                 # A page names no block version: props any version takes pass (the shell draws the
                 # newest that takes them, PageRenderer's Slot); otherwise the newest one's errors.

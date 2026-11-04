@@ -46,15 +46,14 @@ def test_a_block_its_region_doesnt_take_and_a_full_region(minimal: dict[str, Any
         },
     }
     assert errors(minimal, home) == [
-        "apps.pages[0].regions.main[0].block: page 'home': region 'main' doesn't take block"
-        " 'case_header'",
-        "apps.pages[0].regions.main[1].block: page 'home': region 'main' doesn't take block"
-        " 'kpi_tile'",
+        "apps.pages[0].regions.main[0].block: page 'home': region 'main' of layout 'standard'"
+        " doesn't take block 'case_header'",
+        "apps.pages[0].regions.main[1].block: page 'home': unknown block 'kpi_tile'",
         "apps.pages[0].regions.hero: page 'home': region 'hero' holds at most 1",
-        "apps.pages[0].regions.hero[0].block: page 'home': region 'hero' doesn't take block"
-        " 'task_inbox'",
-        "apps.pages[0].regions.hero[1].block: page 'home': region 'hero' doesn't take block"
-        " 'task_inbox'",
+        "apps.pages[0].regions.hero[0].block: page 'home': region 'hero' of layout 'standard'"
+        " doesn't take block 'task_inbox'",
+        "apps.pages[0].regions.hero[1].block: page 'home': region 'hero' of layout 'standard'"
+        " doesn't take block 'task_inbox'",
     ]
 
 

@@ -45,8 +45,8 @@ def test_a_removed_block_names_the_template_and_page(ui: dict[str, Any]) -> None
     del ui["blocks"]["case_header"]
     found = messages(compat.check_document("template qsr", template("qsr")))
     assert found == [
-        "template qsr · apps.pages[2].regions.header[0].block: page 'store': region 'header'"
-        " doesn't take block 'case_header'"
+        "template qsr · apps.pages[2].regions.header[0].block: page 'store': unknown block"
+        " 'case_header'"
     ]
 
 
