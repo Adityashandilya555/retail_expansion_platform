@@ -2,8 +2,9 @@
 
 The API seals each invite's one-time token into `app.invites.sealed` (`zm_api.people`). This sends
 `CLIENT_APP_BASE_URL/invite/<token>` from `EMAIL_FROM`, then forgets the token (`sealed` null, so
-only its hash is left). Until RESEND_API_KEY, EMAIL_FROM and CLIENT_APP_BASE_URL are all set the
-invites wait; a failed send is tried again on the next pass. Tokens never reach the log.
+only its hash is left), as it does an expired invite's. Until RESEND_API_KEY, EMAIL_FROM and
+CLIENT_APP_BASE_URL are all set the invites wait; a failed send is tried again on the next pass.
+Tokens never reach the log.
 """
 
 import logging
@@ -39,7 +40,13 @@ def client() -> httpx.AsyncClient | None:
 
 async def send(ctx: ClientContext, mail: httpx.AsyncClient) -> Counter[str]:
     """Email every unsent, unexpired invite of a still-invited person: counts `sent`, `unsent`."""
-    async with ctx.db.connect() as conn:
+    async with ctx.db.begin() as conn:
+        await conn.execute(
+            text(
+                "update app.invites set sealed = null"
+                " where sealed is not null and expires_at <= now()"
+            )
+        )
         rows = (
             await conn.execute(
                 text(

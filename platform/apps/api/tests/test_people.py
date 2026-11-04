@@ -332,16 +332,22 @@ def test_an_expired_invite_is_404_until_the_admin_invites_the_person_again(world
     assert first.status_code == 201
     world.send_invites()
     old = world.token_for(late["email"])
+    never_sent = {"email": "never-sent@people.test", "name": "Never Sent"}
+    created = world.http.post("/app/admin/users", json=never_sent, headers=world.admin())
+    assert created.status_code == 201
+    of_people = " where user_id in (select id from app.users where email in (%s, %s))"
+    emails = late["email"], never_sent["email"]
     vault_sql(
         "pilot",
-        "update app.invites set expires_at = now() - interval '1 minute' where user_id ="
-        " (select id from app.users where email = %s)",
-        late["email"],
+        "update app.invites set expires_at = now() - interval '1 minute'" + of_people,
+        *emails,
     )
     assert world.accept(late["email"]).status_code == 404
     bad = {"token": f"{world.slug}.nope", "password": PASSWORD}
     assert world.http.post("/auth/invite/accept", json=bad).status_code == 404
     assert world.send_invites() == {}  # the worker skips expired invites
+    sealed = vault_sql("pilot", "select sealed from app.invites" + of_people, *emails)
+    assert sealed == [(None,), (None,)]  # and forgets their tokens, even the one never sent
 
     legal = [{"department": "legal", "level": 1, "scope": "own"}]
     again = {**late, "name": "Late, Again", "memberships": legal}
