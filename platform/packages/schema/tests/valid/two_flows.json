@@ -55,6 +55,6 @@
   },
   "apps": {
     "nav": [{"page": "sites", "label": "Sites", "visible_to": ["*"]}],
-    "pages": [{"key": "sites", "layout": "case", "flow": "site_launch", "regions": {"main": [{"block": "case_table"}]}}]
+    "pages": [{"key": "sites", "layout": "standard", "regions": {"main": [{"block": "case_table", "props": {"flow": "site_launch"}}]}}]
   }
 }

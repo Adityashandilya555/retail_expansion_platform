@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a layout's and a block's manifest.json may say (#37). The agent reads them (through catalogue.json) to place and configure blocks; the look is never in a manifest, it is the client's theme preset and accent (D19).",
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "version": { "type": "integer", "minimum": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "description", "regions"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "version": { "$ref": "#/$defs/version" },
+        "description": { "$ref": "#/$defs/description" },
+        "requires": {
+          "description": "Page properties a page with this layout must set, e.g. `flow` for `case`.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["flow", "department"] }
+        },
+        "regions": {
+          "description": "In drawing order. Which blocks a region takes comes from the blocks' `regions` (catalogue.json lists it as `allowed_blocks`).",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "description"],
+            "properties": {
+              "key": { "$ref": "#/$defs/name" },
+              "description": { "$ref": "#/$defs/description" },
+              "max": { "description": "At most this many blocks.", "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "description", "regions", "props"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "version": { "$ref": "#/$defs/version" },
+        "description": { "$ref": "#/$defs/description" },
+        "regions": {
+          "description": "The region keys this block fits. No two layouts share a key (src/manifests.test.ts), so a key names one layout's region.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "props": {
+          "description": "A JSON Schema for the block's props: an object that rejects unknown props and has no styling props.",
+          "type": "object",
+          "required": ["type", "additionalProperties", "properties"],
+          "properties": {
+            "type": { "const": "object" },
+            "additionalProperties": { "const": false },
+            "properties": { "type": "object" }
+          },
+          "$ref": "#/$defs/no_styling"
+        }
+      }
+    },
+    "no_styling": {
+      "description": "Walks a props schema at every depth (nested objects, array items, anyOf, …): no `properties` declares a styling prop, e.g. color, textColor, bg_colour, background, style, header_style, className, class_name, css, sx, theme.",
+      "properties": {
+        "properties": {
+          "patternProperties": {
+            "^(.*[cC]olou?rs?|.*[bB]ackground.*|.*[sS]tyles?|class|.*[cC]lass_?[nN]ames?|.*[cC]ss|sx|.*[tT]heme)$": false
+          },
+          "additionalProperties": { "$ref": "#/$defs/no_styling" }
+        }
+      },
+      "additionalProperties": { "$ref": "#/$defs/no_styling" },
+      "items": { "$ref": "#/$defs/no_styling" }
+    }
+  }
+}

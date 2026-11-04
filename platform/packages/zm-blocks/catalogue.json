@@ -1,0 +1,214 @@
+{
+  "layouts": {
+    "case": {
+      "name": "case",
+      "version": 1,
+      "description": "One case of a flow (e.g. a site), at /app/cases/:code: a header, then one tab per non-empty region among overview, tasks, activity and documents. The open tab is kept in the URL (?tab=).",
+      "requires": [
+        "flow"
+      ],
+      "regions": [
+        {
+          "key": "header",
+          "description": "Above the tabs: the case's code, title, status and stage tracker.",
+          "allowed_blocks": [
+            "case_header"
+          ]
+        },
+        {
+          "key": "overview",
+          "description": "Overview tab: the case's details.",
+          "allowed_blocks": [
+            "case_fields"
+          ]
+        },
+        {
+          "key": "tasks",
+          "description": "Tasks tab: the case's open tasks and decision history.",
+          "allowed_blocks": [
+            "case_tasks"
+          ]
+        },
+        {
+          "key": "activity",
+          "description": "Activity tab: what happened on the case.",
+          "allowed_blocks": []
+        },
+        {
+          "key": "documents",
+          "description": "Documents tab: the case's files.",
+          "allowed_blocks": []
+        }
+      ]
+    },
+    "standard": {
+      "name": "standard",
+      "version": 1,
+      "description": "A department or overview page: an optional hero across the top, then the main column, with an aside column beside it when the aside has content (12 columns, or 8/4).",
+      "regions": [
+        {
+          "key": "hero",
+          "description": "Across the top of the page, e.g. a KPI strip.",
+          "max": 1,
+          "allowed_blocks": []
+        },
+        {
+          "key": "main",
+          "description": "The main column: inboxes, case tables.",
+          "allowed_blocks": [
+            "case_table",
+            "task_inbox"
+          ]
+        },
+        {
+          "key": "aside",
+          "description": "A narrow column beside main; main takes the full width when it's empty.",
+          "allowed_blocks": [
+            "task_inbox"
+          ]
+        }
+      ]
+    }
+  },
+  "blocks": {
+    "case_fields": {
+      "1": {
+        "name": "case_fields",
+        "version": 1,
+        "description": "A case's start-form values, read-only, by section, as the user's level may see them. `sections` keeps only those section keys.",
+        "regions": [
+          "overview"
+        ],
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sections": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "case_header": {
+      "1": {
+        "name": "case_header",
+        "version": 1,
+        "description": "The top of a case page: the code, the title (the start field `title_field`, else the case's own title), its status, the start fields in `fields`, and the full stage tracker with a text label for every stage.",
+        "regions": [
+          "header"
+        ],
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "title_field": {
+              "type": "string"
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "case_table": {
+      "1": {
+        "name": "case_table",
+        "version": 1,
+        "description": "The cases of a flow, e.g. the Sites list: search, stage filter chips kept in the URL, status, days in the current stage and a mini stage tracker. `columns` picks from code, title, the flow's start field keys, stage, status, age, open_tasks and my_tasks; `stages` keeps only cases currently in those stages. A row opens the case page.",
+        "regions": [
+          "main"
+        ],
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "flow": {
+              "type": "string"
+            },
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "stages": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "case_tasks": {
+      "1": {
+        "name": "case_tasks",
+        "version": 1,
+        "description": "The open tasks on a case the user can act on, each opening its form inline (`?task=<id>` opens one directly), and the case's decision history: task, who, outcome, comment, when.",
+        "regions": [
+          "tasks"
+        ],
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    },
+    "task_inbox": {
+      "1": {
+        "name": "task_inbox",
+        "version": 1,
+        "description": "Open tasks for the current user (mine) or their department (team), grouped by case. Each row opens the task on its case page.",
+        "regions": [
+          "main",
+          "aside"
+        ],
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "scope": {
+              "enum": [
+                "mine",
+                "team"
+              ],
+              "default": "mine"
+            },
+            "flow": {
+              "type": "string"
+            },
+            "group_by": {
+              "enum": [
+                "case",
+                "none"
+              ],
+              "default": "case"
+            },
+            "columns": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "case",
+                  "task",
+                  "stage",
+                  "created",
+                  "assignee"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

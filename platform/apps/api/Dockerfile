@@ -10,13 +10,20 @@ COPY packages/compiler packages/compiler
 COPY packages/schema packages/schema
 # starter templates: `zm-api templates sync` and `zm-api drafts seed` read them (#18, #23)
 COPY packages/templates packages/templates
+# the UI packages' catalogue: validation checks pages against it, the agent lists it (#37)
+COPY packages/zm-blocks/catalogue.json packages/zm-blocks/catalogue.json
+# The pre-deploy (`zm-worker vault-migrate --ready`, .railway/railway.ts) brings every ready
+# client's vault to these migrations before this version takes traffic.
+COPY infra/supabase/client infra/supabase/client
 # Wheels only (--no-build): no setup/build-backend code runs. Our own code is not installed;
-# it runs from source via PYTHONPATH.
-RUN uv sync --frozen --no-dev --no-build --no-install-workspace --package zm-api
+# it runs from source via PYTHONPATH. zm-worker's dependencies are zm-api's plus psycopg, which
+# that pre-deploy uses.
+RUN uv sync --frozen --no-dev --no-build --no-install-workspace --package zm-worker
 RUN useradd --system --no-create-home zm
 USER zm
-# The API imports the workspace packages it publishes with (#23): compiler and schema.
-ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app/apps/api/src:/app/packages/compiler/src:/app/packages/schema/src"
+# The API imports the workspace packages it publishes with (#23): compiler and schema; the
+# pre-deploy runs zm_worker.
+ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app/apps/api/src:/app/apps/worker/src:/app/packages/compiler/src:/app/packages/schema/src"
 EXPOSE 8000
 # Railway injects $PORT; compose and local runs use 8000.
 # --no-access-log: zm_api.logs writes the one JSON line per request (#21).

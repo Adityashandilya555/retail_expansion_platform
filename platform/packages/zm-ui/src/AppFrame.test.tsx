@@ -54,6 +54,17 @@ test("the sidebar collapses, keeps counts as an accessible label, and remembers 
   expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeDefined();
 });
 
+test("a phone's first visit starts on the rail, so a 375 px page doesn't scroll sideways", () => {
+  const wide = window.matchMedia;
+  window.matchMedia = (query: string) => ({ ...wide(query), matches: query.includes("max-width") });
+  try {
+    frame();
+  } finally {
+    window.matchMedia = wide;
+  }
+  expect(screen.getByRole("button", { name: "Expand sidebar" }).getAttribute("aria-expanded")).toBe("false");
+});
+
 test.each(["light", "dark"] as const)("passes axe in %s", async (scheme) => {
   renderWithZm(
     <AppFrame clientName="Matrix Retail" nav={nav} activeKey="home" user={{ name: "Priya Rao" }}>

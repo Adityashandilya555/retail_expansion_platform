@@ -1,6 +1,7 @@
 import hashlib
 import logging
 from pathlib import Path
+from typing import Any
 
 import psycopg
 from psycopg import sql
@@ -65,4 +66,45 @@ def apply(dsn: str, secrets: dict[str, str], migrations_dir: Path = MIGRATIONS_D
                     sql.Identifier(role), sql.Literal(hashed.decode())
                 )
             )
+    return applied
+
+
+def ready_clients(platform_dsn: str) -> list[tuple[str, bytes | None]]:
+    """(slug, sealed secrets) of every ready client in the registry."""
+    with psycopg.connect(libpq(platform_dsn), autocommit=True) as conn:
+        rows = conn.execute(
+            "select slug, secrets from platform.clients where status = 'ready' order by slug"
+        ).fetchall()
+    return [(slug, bytes(box) if box else None) for slug, box in rows]
+
+
+def apply_ready(clients: list[tuple[str, bytes | None]]) -> dict[str, list[str]]:
+    """Bring every ready cloud client's vault up to date. The API runs this before each deploy
+    (`.railway/railway.ts`), so no API version serves a vault without the migrations it reads.
+    Clients registered by provision-local keep no admin password in the registry and are skipped
+    (scripts/dev-up.sh migrates them). One client failing (its vault down, secrets that don't
+    open) doesn't stop the others; then this raises, so the deploy stops and the running API
+    stays. Like provisioning, `apply` also sets the `zm_engine` and `zm_api` passwords to the
+    registry's, so every API deploy reverts a role password changed only in the vault: rotate
+    them through the registry."""
+    from zm_api import secrets as sealed
+    from zm_worker.provision.supabase import _dsn
+
+    applied: dict[str, list[str]] = {}
+    failed = []
+    for slug, box in clients:
+        try:
+            secrets: dict[str, Any] = sealed.unseal(box) if box else {}
+            if "supabase_ref" not in secrets:
+                log.info("skipped: a local client, dev-up.sh migrates it", extra={"client": slug})
+                continue
+            dsn = _dsn(
+                "postgres", secrets["supabase_ref"], secrets["db_password"], secrets["pooler_host"]
+            )
+            applied[slug] = apply(dsn, {role: secrets[f"{role}_password"] for role in ROLES})
+        except Exception:
+            log.exception("vault migrations failed", extra={"client": slug})
+            failed.append(slug)
+    if failed:
+        raise RuntimeError(f"vault migrations failed for {', '.join(failed)}")
     return applied

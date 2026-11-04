@@ -29,5 +29,6 @@ export {
   appearanceScope,
   schemeStorageKey,
   useAppearance,
+  type AppearanceChange,
   type ZmClientLook,
 } from "./ZmProvider";

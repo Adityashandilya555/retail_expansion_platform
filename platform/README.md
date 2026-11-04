@@ -213,7 +213,7 @@ For test clients only, `zm-worker deprovision <slug> --yes` deletes `operaton-<s
 
 A broken resolver must trip check 1 (the negative control).
 
-**`zm-compat --fixtures`** compiles every template and every synthetic release in `tests/compat/`. It then checks each page against the layout and block manifests in `packages/zm-blocks`. A block not built yet must be listed in `packages/zm-blocks/planned.json` with the issue that builds it. When that block ships its `manifest.json`, remove it from the list.
+**`zm-compat --fixtures`** validates and compiles every template and every synthetic release in `tests/compat/`. Validation checks each page against `packages/zm-blocks/catalogue.json`, so a template can place only blocks that are built. That file is generated from the shell's registry: when a manifest changes, `pnpm vitest run -u packages/zm-blocks/src/catalogue.test.ts` rewrites it, and `pnpm test` fails while it is stale.
 
 ## Layout
 ```
@@ -235,9 +235,9 @@ Project `zm-platform`, environments `test` (tracks `main`) and `production` (tra
 
 What the file sets for each service:
 - **Source:** the GitHub repo, branch `main` in `test` and `release` in `production` (`ctx.isEnvironment("production")`), with root directory `platform`. Apply the file once per environment (`npx @railway/cli environment <name>`, then `config plan` / `config apply`; production only from a clean `origin/release` checkout). The Dockerfiles use `platform/` as their build context, the same as compose, and `dockerfilePath` is relative to it.
-- **Watch patterns:** repo-absolute, so only `platform/apps/<svc>/**`, `platform/packages/**`, `pyproject.toml` and `uv.lock` (plus `infra/supabase/**` for the worker) trigger a deploy. Operaton-only merges deploy nothing.
+- **Watch patterns:** repo-absolute, so only `platform/apps/<svc>/**`, `platform/packages/**`, `pyproject.toml` and `uv.lock` (plus `infra/supabase/**` for the worker and `infra/supabase/client/**` for the api) trigger a deploy. Operaton-only merges deploy nothing.
 - **Deploy:** one replica in `asia-southeast1-eqsg3a`; restart on failure is Railway's default, so the file doesn't set it.
-- **api only:** healthcheck `/healthz`. The api listens on `$PORT`, injected by Railway. Pre-deploy runs the control-plane migrations (`alembic -c apps/api/alembic.ini -x db=platform upgrade head`, S1-04); a failed migration stops the deploy.
+- **api only:** healthcheck `/healthz`. The api listens on `$PORT`, injected by Railway. Pre-deploy runs the control-plane migrations (`alembic -c apps/api/alembic.ini -x db=platform upgrade head`, S1-04), then every ready cloud client's vault migrations (`python -m zm_worker vault-migrate --ready`), so a new version never serves a vault without the columns it reads. A failed migration stops the deploy and the running version stays. Clients registered by `provision-local` are skipped: `scripts/dev-up.sh` migrates local vaults. Like provisioning, it also sets each vault's `zm_engine` and `zm_api` passwords to the registry's, so every api deploy reverts a role password changed only in the vault: rotate them through the registry.
 - **Variables:** `LOG_LEVEL`, plus `WORKER_TICK_SECONDS` and `RAILWAY_REGION` for the worker.
   - Secrets, and values that come from other systems, are `preserve()`: Railway keeps the value set in the dashboard. That covers `RAILWAY_API_TOKEN` and `SUPABASE_ACCESS_TOKEN` (worker), and `CORS_ALLOWED_ORIGINS` (api, set with #14). Paste secrets into the Railway dashboard only, never into git, issues or chat.
   - Railway provides `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID` and `PORT` at runtime.

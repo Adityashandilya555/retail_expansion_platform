@@ -7,6 +7,7 @@ import { AppFrame, ZmProvider } from "@zm/ui";
 import { LogOut, Users } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router";
 import { People } from "./People";
+import { applyPreferences, savePreferences } from "./preferences";
 import { api, currentUser, loadUi, signOut, type AppUi, type Workspace } from "./session";
 
 const PEOPLE = "admin/people"; // the client admin's page (S2-23), whatever the release holds
@@ -57,12 +58,13 @@ function Screen({ label }: { label: string }) {
 export function Shell({ workspace }: { workspace: Workspace | null }) {
   const navigate = useNavigate();
   const queries = useQueryClient();
-  const me = useQuery({ queryKey: ["me"], queryFn: currentUser });
+  const me = useQuery({ queryKey: ["me"], queryFn: () => currentUser().then(applyPreferences) });
   const ui = useQuery({ queryKey: ["ui"], queryFn: loadUi, enabled: Boolean(me.data) });
   const path = useParams()["*"] ?? "";
   const section = path.split("/")[0] || undefined;
 
   if (me.data === null) return <Navigate to="/" replace />;
+  const userId = me.data?.id;
   const look = ui.data?.client ?? workspace ?? undefined;
   let body;
   if (me.isError) {
@@ -125,7 +127,11 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
     );
   }
   return (
-    <ZmProvider client={look} userId={me.data?.id}>
+    <ZmProvider
+      client={look}
+      userId={userId}
+      onAppearanceChange={userId ? (change) => void savePreferences(userId, change) : undefined}
+    >
       {body}
     </ZmProvider>
   );

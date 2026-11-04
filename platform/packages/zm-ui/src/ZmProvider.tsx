@@ -3,7 +3,7 @@ import "@mantine/notifications/styles.css";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/plus-jakarta-sans";
 import "@fontsource-variable/jetbrains-mono";
-import { MantineProvider, localStorageColorSchemeManager } from "@mantine/core";
+import { MantineProvider, localStorageColorSchemeManager, type MantineColorScheme } from "@mantine/core";
 import { Notifications } from "@mantine/notifications";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { type Accent, type Preset, createZmTheme, isAccent, resolveAccent, resolvePreset } from "./theme";
@@ -33,7 +33,15 @@ export function schemeStorageKey(userId?: string | null): string {
   return `zm:color-scheme:${appearanceScope(userId)}`;
 }
 
-type Appearance = { accent: Accent; preset: Preset; setAccent: (accent: Accent) => void };
+/** One pick in the appearance menu, shaped like the client app's `PUT /app/me/preferences` (#93). */
+export type AppearanceChange = { color_scheme?: MantineColorScheme; accent?: Accent };
+
+type Appearance = {
+  accent: Accent;
+  preset: Preset;
+  setAccent: (accent: Accent) => void;
+  onAppearanceChange?: (change: AppearanceChange) => void;
+};
 const AppearanceContext = createContext<Appearance | null>(null);
 
 function storedAccent(userId?: string | null): string | null {
@@ -58,11 +66,14 @@ export function ZmProvider({
   userId,
   forceColorScheme,
   env,
+  onAppearanceChange,
   children,
 }: {
   client?: ZmClientLook;
   /** The signed-in user (from the API); omit when signed out. Scopes the stored appearance. */
   userId?: string | null;
+  /** Called on each pick in the appearance menu, e.g. to save it on the server; else it stays in this browser. */
+  onAppearanceChange?: (change: AppearanceChange) => void;
   /** For previews and tests; users pick the scheme in the appearance menu. */
   forceColorScheme?: "light" | "dark";
   env?: "default" | "test";
@@ -81,10 +92,10 @@ export function ZmProvider({
   const accent = resolveAccent({ user: userAccent, client: client?.accent, preset });
 
   useEffect(() => {
-    if (client?.accent && !isAccent(client.accent)) {
-      console.warn(`[zm-ui] unknown accent "${client.accent}", using "${preset.defaultAccent}"`);
+    for (const id of [userAccent, client?.accent]) {
+      if (id && !isAccent(id)) console.warn(`[zm-ui] unknown accent "${id}", using "${accent}"`);
     }
-  }, [client?.accent, preset.defaultAccent]);
+  }, [userAccent, client?.accent, accent]);
 
   const setAccent = useCallback(
     (next: Accent) => {
@@ -99,7 +110,10 @@ export function ZmProvider({
   );
 
   const theme = useMemo(() => createZmTheme({ preset, accent }), [preset, accent]);
-  const appearance = useMemo(() => ({ accent, preset, setAccent }), [accent, preset, setAccent]);
+  const appearance = useMemo(
+    () => ({ accent, preset, setAccent, onAppearanceChange }),
+    [accent, preset, setAccent, onAppearanceChange],
+  );
 
   return (
     <MantineProvider

@@ -46,11 +46,17 @@ export default defineRailway((ctx) => {
     build: {
       builder: "DOCKERFILE",
       dockerfilePath: "apps/api/Dockerfile",
-      watchPatterns: ["/platform/apps/api/**", ...shared],
+      // a new client migration redeploys the API, so the pre-deploy below applies it
+      watchPatterns: ["/platform/apps/api/**", "/platform/infra/supabase/client/**", ...shared],
     },
     healthcheck: "/healthz",
-    // Control-plane migrations (S1-04) on PLATFORM_DATABASE_URL before each deploy; WORKDIR is /app.
-    preDeploy: "alembic -c apps/api/alembic.ini -x db=platform upgrade head",
+    // Before each deploy (WORKDIR /app), in order: control-plane migrations (S1-04) on
+    // PLATFORM_DATABASE_URL, then every ready client's vault migrations, so this version never
+    // serves a vault without the columns it reads. If either fails, the running version stays.
+    preDeploy: [
+      "alembic -c apps/api/alembic.ini -x db=platform upgrade head",
+      "python -m zm_worker vault-migrate --ready",
+    ],
     replicas: { [REGION]: 1 },
     env: {
       LOG_LEVEL: "info",
