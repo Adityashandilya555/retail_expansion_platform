@@ -1,6 +1,7 @@
 """Publish (#23): the client's draft → a release on that client's own Operaton.
 
-1. Compile the draft (`zm_compiler.compile`, #19).
+1. Compile the draft (`zm_compiler.compile`, #19) and check it against the active release's
+   fields (S2-25, `zm_api.versioning`).
 2. Make sure its level groups (`<dept>__L<n>`) exist in the client's Operaton.
 3. Deploy every BPMN resource plus `zm-release.json` as one deployment named `<slug>-release`,
    with duplicate filtering and `deploy-changed-only=false`: an unchanged draft gives back the
@@ -8,7 +9,8 @@
    `zm-release.json`), redeploys every resource, which the stage call activities bound with
    `calledElementBinding="deployment"` need (DeployCmd.java:207-263, CallableElementUtil:94-96).
 4. Record the release as the next active version, unless that deployment is already recorded,
-   and on the draft as its `base_version`.
+   and on the draft as its `base_version`. A new release's workflow is stamped: `since` on the
+   fields it adds, `required_from_version` on those it makes required.
    Steps 1-4 run in one client-database transaction under a per-client advisory lock, so two
    publishes at once deploy and number their versions in the same order.
 5. Index it in `platform.releases` (idempotent, so a retried publish repairs a missing row).
@@ -28,9 +30,15 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from zm_api import releases
+from zm_api import releases, versioning
 from zm_api.context import ClientContext, OwnerCtx, owner_router
-from zm_api.errors import Conflict, NotFound, ServiceUnavailable, UnprocessableContent
+from zm_api.errors import (
+    Conflict,
+    FieldError,
+    NotFound,
+    ServiceUnavailable,
+    UnprocessableContent,
+)
 from zm_api.operaton import OperatonError
 from zm_api.registry import get_client
 from zm_compiler import CompileError, Release, compile
@@ -73,12 +81,22 @@ def blocks_used(ui: dict[str, Any]) -> dict[str, None]:
     return dict.fromkeys(sorted(names))
 
 
-def _compile(slug: str, draft: dict[str, Any]) -> tuple[Any, Release]:
+def _compile(
+    slug: str, draft: dict[str, Any], live: dict[str, Any] | None = None
+) -> tuple[Any, Release]:
+    """`live`: the active release's workflow, whose fields the draft may only add to."""
     try:
         wf = migrate(draft)
-        return wf, compile(wf, slug)
+        release = compile(wf, slug)
     except (SchemaVersionError, ValueError, CompileError) as e:  # ValidationError is a ValueError
         raise UnprocessableContent(f"The draft can't be published: {e}") from None
+    errors = versioning.errors(live, draft)
+    if errors:
+        raise UnprocessableContent(
+            "The draft can't be published: it changes released fields",
+            errors=[FieldError(path=e.path, message=e.message) for e in errors],
+        )
+    return wf, release
 
 
 async def _ensure_groups(ctx: ClientContext, release: Release) -> None:
@@ -123,7 +141,8 @@ async def publish(
             draft = await releases.get_draft(conn)
             if draft is None:
                 raise Conflict("This client has no draft to publish yet")
-            wf, release = _compile(slug, draft)
+            live = await releases.active_release(conn)
+            wf, release = _compile(slug, draft, live.workflow if live else None)
 
             await _ensure_groups(ctx, release)
             files = {**release.bpmn, RELEASE_RESOURCE: release_json(release)}
@@ -133,12 +152,16 @@ async def publish(
             row = await releases.release_by_deployment(conn, deployment_id)
             created = row is None
             if row is None:
+                # the document as published, after any schema migration (D14), stamped (S2-25)
+                workflow = wf.model_dump(mode="json", by_alias=True, exclude_unset=True)
+                versioning.stamp(
+                    live.workflow if live else None, workflow, await releases.next_version(conn)
+                )
                 row = await releases.insert_release(
                     conn,
                     {
                         "deployment_id": deployment_id,
-                        # the document as published, after any schema migration (D14)
-                        "workflow": wf.model_dump(mode="json", by_alias=True, exclude_unset=True),
+                        "workflow": workflow,
                         "forms": {
                             k: {"schema": f.schema, "layout": f.layout}
                             for k, f in release.forms.items()

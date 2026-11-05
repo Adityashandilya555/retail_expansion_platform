@@ -143,12 +143,19 @@ def test_sections_show_only_what_the_level_sees() -> None:
     spec = compile(migrate(doc), "pilot-local").forms["start:store_launch"]
     form = {"schema": spec.schema, "layout": spec.layout}
     values = {"site_name": "Indiranagar", "deal_notes": "secret"}
-    l1 = cases.sections(tasks.visible_form(form, {"bd": 1}), values)
+    fields = doc["fields"]
+    l1 = cases.sections(tasks.visible_form(form, {"bd": 1}), values, fields, fields)
     assert "deal" not in [s.key for s in l1]
-    l2 = cases.sections(tasks.visible_form(form, {"bd": 2}), values)
+    l2 = cases.sections(tasks.visible_form(form, {"bd": 2}), values, fields, fields)
     deal = next(s for s in l2 if s.key == "deal")
     assert deal.fields == [
-        {"key": "deal_notes", "label": "Deal notes", "type": "textarea", "value": "secret"}
+        {
+            "key": "deal_notes",
+            "label": "Deal notes",
+            "type": "textarea",
+            "value": "secret",
+            "since": None,
+        }
     ]
     site = l1[0].fields[0]
     assert site["key"] == "site_name" and site["value"] == "Indiranagar"

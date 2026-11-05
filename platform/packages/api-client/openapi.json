@@ -191,11 +191,12 @@
             "type": "integer"
           },
           "release_version": {
+            "description": "The release the case started on, which its start values were captured on.",
             "title": "Release Version",
             "type": "integer"
           },
           "sections": {
-            "description": "The start form as the user sees it, filled with the case's values.",
+            "description": "The active release's start form as the user sees it, filled with the case's values; a\nremoved field shows while the case has a value for it.",
             "items": {
               "$ref": "#/components/schemas/SectionOut"
             },
@@ -341,6 +342,7 @@
             "type": "integer"
           },
           "release_version": {
+            "description": "The release the case started on, which its start values were captured on.",
             "title": "Release Version",
             "type": "integer"
           },
@@ -1113,8 +1115,21 @@
             "type": "string"
           },
           "label": {
+            "description": "The label in the active release: a renamed field shows its new one.",
             "title": "Label",
             "type": "string"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when the case's release didn't have the field: the release that added it (no value;\nthe shell shows \"added in vN\").",
+            "title": "Since"
           },
           "type": {
             "anyOf": [
@@ -1135,7 +1150,8 @@
           "key",
           "label",
           "type",
-          "value"
+          "value",
+          "since"
         ],
         "title": "FieldOut",
         "type": "object"

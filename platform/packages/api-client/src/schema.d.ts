@@ -808,11 +808,15 @@ export interface components {
             my_tasks: number;
             /** Open Tasks */
             open_tasks: number;
-            /** Release Version */
+            /**
+             * Release Version
+             * @description The release the case started on, which its start values were captured on.
+             */
             release_version: number;
             /**
              * Sections
-             * @description The start form as the user sees it, filled with the case's values.
+             * @description The active release's start form as the user sees it, filled with the case's values; a
+             *     removed field shows while the case has a value for it.
              */
             sections: components["schemas"]["SectionOut"][];
             /** Stages */
@@ -892,7 +896,10 @@ export interface components {
             my_tasks: number;
             /** Open Tasks */
             open_tasks: number;
-            /** Release Version */
+            /**
+             * Release Version
+             * @description The release the case started on, which its start values were captured on.
+             */
             release_version: number;
             /** Stages */
             stages: components["schemas"]["StageOut"][];
@@ -1191,8 +1198,17 @@ export interface components {
         FieldOut: {
             /** Key */
             key: string;
-            /** Label */
+            /**
+             * Label
+             * @description The label in the active release: a renamed field shows its new one.
+             */
             label: string;
+            /**
+             * Since
+             * @description Set when the case's release didn't have the field: the release that added it (no value;
+             *     the shell shows "added in vN").
+             */
+            since: number | null;
             /** Type */
             type: string | null;
             /** Value */
