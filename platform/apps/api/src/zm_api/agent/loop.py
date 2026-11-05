@@ -14,9 +14,10 @@ History lives in the client's vault, insert-only (0009): replies go back unchang
 blocks too, since Opus 5.5 checks that earlier turns weren't edited. A reply is stored with the
 messages it answers and, when it called tools, with their results, so the stored history always
 replays. A call that stops (refusal, max_tokens) or answers nothing keeps only its usage, and the
-rest of its turn is dropped. The budget, AGENT_MAX_TOKENS_PER_CONVERSATION, counts what each call read fresh or wrote
-(input, cache writes, output; cache reads, at a twentieth of the price, don't). `count_tokens`
-sizes each call first, and a call that could pass the budget if none of it were cached isn't made.
+rest of its turn is dropped. The budget, AGENT_MAX_TOKENS_PER_CONVERSATION, counts what each
+call read fresh or wrote (input, cache writes, output; cache reads, at a twentieth of the price,
+don't). `count_tokens` sizes each call first, and a call that could pass the budget if none of it
+were cached isn't made.
 """
 
 import json
