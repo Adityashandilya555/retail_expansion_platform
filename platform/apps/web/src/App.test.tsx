@@ -497,6 +497,135 @@ test("resending an invite POSTs the invited person's email, name and memberships
   expect(await bodies(seen, "POST")).toEqual([{ email: PRIYA.email, name: "Priya", memberships: PRIYA.memberships }]);
 });
 
+// --- change requests (S2-24a) ---------------------------------------------------------------------
+
+const TARGETS = {
+  forms: [
+    {
+      id: "start",
+      title: "Site",
+      fields: [
+        { key: "city", label: "City", type: "text" },
+        { key: "store_model", label: "Store model", type: "select" },
+      ],
+    },
+    { id: "bd_upload_loi", title: "Upload LOI", fields: [{ key: "loi_file", label: "LOI", type: "document" }] },
+  ],
+  field_types: ["text", "number", "select", "document"],
+};
+const STATE_AND_DISTRICT = {
+  kind: "add_field",
+  form: "start",
+  fields: [
+    { label: "State", type: "text", options: [] },
+    { label: "District", type: "text", options: [] },
+  ],
+};
+const REQUESTED = { note: null, review_note: null, shipped_in_version: null, created_at: "2026-11-02T09:00:00Z", updated_at: "2026-11-02T09:00:00Z" };
+const REQUESTS = [
+  { ...REQUESTED, id: "c2", kind: "add_field", payload: STATE_AND_DISTRICT, status: "submitted" },
+  { ...REQUESTED, id: "c1", kind: "rename_field_label", payload: { kind: "rename_field_label", field: "city", label: "Town" }, status: "rejected", review_note: "Reports group by City" },
+  { ...REQUESTED, id: "c0", kind: "add_field", payload: { kind: "add_field", form: "start" }, status: "shipped" }, // stored under older rules
+];
+
+/** A client admin with the change-request API; returns the change-request calls it saw. */
+function changesApi(routes: Record<string, Handler> = {}): Request[] {
+  return adminApi({
+    "GET /app/admin/change-requests": () => json(REQUESTS),
+    "GET /app/admin/change-requests/targets": () => json(TARGETS),
+    ...routes,
+  });
+}
+
+async function openRequestForm() {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Request a change" }));
+  return { user, dialog: within(await screen.findByRole("dialog", { name: "Request a change" })) };
+}
+
+test("a client admin's Change requests page lists each request with its status and review note", async () => {
+  changesApi();
+  renderAt("/app");
+  await screen.findByRole("region", { name: "task_inbox" });
+  await userEvent.setup().click(nav().getByRole("button", { name: "Change requests" }));
+  const table = await screen.findByRole("table", { name: "Change requests" });
+  expect(await within(table).findByText("Site: add State (text), District (text)")).toBeDefined();
+  expect(within(table).getByText("Rename City to Town")).toBeDefined();
+  expect(within(table).getByText("Rejected")).toBeDefined();
+  expect(within(table).getByText("Reports group by City")).toBeDefined();
+  expect(within(table).getByText("Add fields to a form")).toBeDefined();
+
+  cleanup();
+  forget();
+  signedInApi(sampleUi);
+  renderAt("/app/admin/change-requests");
+  expect(await screen.findByRole("heading", { name: "Page not found" })).toBeDefined();
+  expect(nav().queryByRole("button", { name: "Change requests" })).toBeNull();
+});
+
+test("older change requests load a page at a time", async () => {
+  const page = (offset: number, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ ...REQUESTS[1], id: `r${offset + i}` }));
+  const seen = changesApi({
+    "GET /app/admin/change-requests": (req) => {
+      const offset = Number(new URL(req.url).searchParams.get("offset") ?? 0);
+      return json(offset === 0 ? page(0, 100) : page(99, 4)); // a new request shifted r99 down
+    },
+  });
+  renderAt("/app/admin/change-requests");
+  const table = await screen.findByRole("table", { name: "Change requests" });
+  await vi.waitFor(() => expect(within(table).getAllByText("Rename City to Town")).toHaveLength(100));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Load older requests" }));
+  await vi.waitFor(() => expect(within(table).getAllByText("Rename City to Town")).toHaveLength(103));
+  expect(screen.queryByRole("button", { name: "Load older requests" })).toBeNull(); // a short page is the end
+  const lists = seen.filter((r) => r.method === "GET" && new URL(r.url).pathname === "/app/admin/change-requests");
+  expect(lists.map((r) => new URL(r.url).search)).toEqual(["?limit=100&offset=0", "?limit=100&offset=100"]);
+});
+
+test("asking for State and District on the site form POSTs one add_field request with both", async () => {
+  const seen = changesApi({ "POST /app/admin/change-requests": () => json(REQUESTS[0], 201) });
+  renderAt("/app/admin/change-requests");
+  const { user, dialog } = await openRequestForm();
+  await user.selectOptions(dialog.getByLabelText(/^Form/), "start");
+  await user.type(dialog.getByLabelText(/^Field 1/), "State");
+  await user.click(dialog.getByRole("button", { name: "Add another field" }));
+  await user.type(dialog.getByLabelText(/^Field 2/), "District");
+  await user.type(dialog.getByLabelText(/^Note/), "For the GST registration");
+  await user.click(dialog.getByRole("button", { name: "Send request" }));
+  await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Request a change" })).toBeNull());
+  expect(await bodies(seen, "POST")).toEqual([{ payload: STATE_AND_DISTRICT, note: "For the GST registration" }]);
+});
+
+test("renaming City sends its field key; a target the release lacks shows under the selector", async () => {
+  const refused = {
+    type: "about:blank",
+    title: "Unprocessable Content",
+    status: 422,
+    detail: "The request names something the published release doesn't have",
+    request_id: "r",
+    errors: [{ path: "/payload/field", message: "city isn't a field in the published release" }],
+  };
+  const seen = changesApi({ "POST /app/admin/change-requests": () => json(refused, 422) });
+  renderAt("/app/admin/change-requests");
+  const { user, dialog } = await openRequestForm();
+  await user.selectOptions(dialog.getByLabelText(/^What do you need/), "add_select_option");
+  const choices = (dialog.getByLabelText(/^Field/) as HTMLSelectElement).options;
+  expect([...choices].map((o) => o.value)).toEqual(["", "store_model"]); // only lists take choices
+
+  await user.selectOptions(dialog.getByLabelText(/^What do you need/), "rename_field_label");
+  await user.selectOptions(dialog.getByLabelText(/^Field/), "city");
+  await user.type(dialog.getByLabelText(/^New name/), "Town");
+  await user.click(dialog.getByRole("button", { name: "Send request" }));
+  expect(await dialog.findByText("city isn't a field in the published release")).toBeDefined();
+  await user.click(dialog.getByRole("button", { name: "Send request" }));
+  await vi.waitFor(() => expect(seen.filter((r) => r.method === "POST")).toHaveLength(2));
+  const sent = { payload: { kind: "rename_field_label", field: "city", label: "Town" }, note: null };
+  expect(await bodies(seen, "POST")).toEqual([sent, sent]);
+  const keys = seen.filter((r) => r.method === "POST").map((r) => r.headers.get("Idempotency-Key"));
+  expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/);
+  expect(keys[1]).toBe(keys[0]); // a resend from the same form can't store the request twice
+});
+
 test("/invite/:token sets the password and opens the app", async () => {
   const sent: unknown[] = [];
   api({

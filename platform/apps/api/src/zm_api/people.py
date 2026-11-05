@@ -194,7 +194,7 @@ async def client_admin(ctx: ClientCtx, uid: UserId) -> UUID:
             )
         ).scalar_one_or_none()
     if not allowed:
-        raise Forbidden("Only the client admin manages people")
+        raise Forbidden("Only the client admin can do this")
     return uid
 
 

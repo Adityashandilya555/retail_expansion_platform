@@ -4,13 +4,20 @@ import { Alert, Anchor, Button, Center, Loader, Menu, Stack, Text, Title } from 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BlocksApi, PageRenderer, defaultCasePage } from "@zm/blocks";
 import { AppFrame, ZmProvider } from "@zm/ui";
-import { LogOut, Users } from "lucide-react";
+import { FilePen, LogOut, Users } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router";
+import { ChangeRequests } from "./ChangeRequests";
 import { People } from "./People";
 import { applyPreferences, savePreferences } from "./preferences";
 import { api, currentUser, loadUi, signOut, type AppUi, type Workspace } from "./session";
 
-const PEOPLE = "admin/people"; // the client admin's page (S2-23), whatever the release holds
+// the client admin's pages (S2-23, S2-24a), whatever the release holds
+const PEOPLE = "admin/people";
+const CHANGES = "admin/change-requests";
+const ADMIN_NAV = [
+  { key: PEOPLE, label: "People", icon: Users },
+  { key: CHANGES, label: "Change requests", icon: FilePen },
+];
 
 function NotFound() {
   return (
@@ -86,8 +93,8 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
     body = (
       <AppFrame
         clientName={release?.client.name ?? me.data.client.name}
-        nav={admin ? [...nav, { key: PEOPLE, label: "People", icon: Users }] : nav}
-        activeKey={path === PEOPLE ? PEOPLE : (section ?? home)}
+        nav={admin ? [...nav, ...ADMIN_NAV] : nav}
+        activeKey={path === PEOPLE || path === CHANGES ? path : (section ?? home)}
         onNavigate={(key) => navigate(`/app/${key}`)}
         user={{ name: me.data.name, email: me.data.email }}
         userMenu={
@@ -105,6 +112,8 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
       >
         {admin && path === PEOPLE ? (
           <People selfId={me.data.id} />
+        ) : admin && path === CHANGES ? (
+          <ChangeRequests />
         ) : ui.isError ? (
           <Alert color="red" title="Couldn't load this workspace.">
             <Button mt="sm" variant="default" onClick={() => void ui.refetch()}>

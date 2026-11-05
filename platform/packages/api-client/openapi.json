@@ -1,6 +1,97 @@
 {
   "components": {
     "schemas": {
+      "AddDocumentType": {
+        "additionalProperties": false,
+        "properties": {
+          "form": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Form",
+            "type": "string"
+          },
+          "kind": {
+            "const": "add_document_type",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "form",
+          "label"
+        ],
+        "title": "AddDocumentType",
+        "type": "object"
+      },
+      "AddField": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/NewField"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Fields",
+            "type": "array"
+          },
+          "form": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Form",
+            "type": "string"
+          },
+          "kind": {
+            "const": "add_field",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "form",
+          "fields"
+        ],
+        "title": "AddField",
+        "type": "object"
+      },
+      "AddSelectOption": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "A `select` or `multi_select` field.",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Field",
+            "type": "string"
+          },
+          "kind": {
+            "const": "add_select_option",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "field",
+          "label"
+        ],
+        "title": "AddSelectOption",
+        "type": "object"
+      },
       "AppUi": {
         "properties": {
           "client": {
@@ -379,6 +470,199 @@
           "after_sha256"
         ],
         "title": "ChangeOut",
+        "type": "object"
+      },
+      "ChangeRequestIn": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why, for the reviewer.",
+            "title": "Note"
+          },
+          "payload": {
+            "discriminator": {
+              "mapping": {
+                "add_document_type": "#/components/schemas/AddDocumentType",
+                "add_field": "#/components/schemas/AddField",
+                "add_select_option": "#/components/schemas/AddSelectOption",
+                "rename_field_label": "#/components/schemas/RenameFieldLabel",
+                "set_required": "#/components/schemas/SetRequired"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AddField"
+              },
+              {
+                "$ref": "#/components/schemas/RenameFieldLabel"
+              },
+              {
+                "$ref": "#/components/schemas/AddDocumentType"
+              },
+              {
+                "$ref": "#/components/schemas/SetRequired"
+              },
+              {
+                "$ref": "#/components/schemas/AddSelectOption"
+              }
+            ],
+            "title": "Payload"
+          }
+        },
+        "required": [
+          "payload"
+        ],
+        "title": "ChangeRequestIn",
+        "type": "object"
+      },
+      "ChangeRequestOut": {
+        "description": "A stored request as stored: a payload sent under older rules still reads, so one old row\ncan't fail the list.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "add_field",
+              "rename_field_label",
+              "add_document_type",
+              "set_required",
+              "add_select_option"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "description": "The `Payload` as sent, `kind` included.",
+            "title": "Payload",
+            "type": "object"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Our answer, once reviewed.",
+            "title": "Review Note"
+          },
+          "shipped_in_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The release that carries it, once shipped.",
+            "title": "Shipped In Version"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "in_review",
+              "approved",
+              "rejected",
+              "shipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "payload",
+          "note",
+          "status",
+          "review_note",
+          "shipped_in_version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ChangeRequestOut",
+        "type": "object"
+      },
+      "ChangeTargets": {
+        "properties": {
+          "field_types": {
+            "items": {
+              "enum": [
+                "text",
+                "textarea",
+                "number",
+                "currency",
+                "percent",
+                "date",
+                "date_range",
+                "select",
+                "multi_select",
+                "yes_no",
+                "rating",
+                "user",
+                "address",
+                "checklist",
+                "line_items",
+                "computed",
+                "document",
+                "info"
+              ],
+              "type": "string"
+            },
+            "title": "Field Types",
+            "type": "array"
+          },
+          "forms": {
+            "items": {
+              "$ref": "#/components/schemas/TargetForm"
+            },
+            "title": "Forms",
+            "type": "array"
+          }
+        },
+        "required": [
+          "forms",
+          "field_types"
+        ],
+        "title": "ChangeTargets",
         "type": "object"
       },
       "ClientDetail": {
@@ -1111,6 +1395,59 @@
         "title": "NavItem",
         "type": "object"
       },
+      "NewField": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "options": {
+            "default": [],
+            "description": "The choices of a `select` or `multi_select` field, and only of those.",
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Options",
+            "type": "array"
+          },
+          "type": {
+            "enum": [
+              "text",
+              "textarea",
+              "number",
+              "currency",
+              "percent",
+              "date",
+              "date_range",
+              "select",
+              "multi_select",
+              "yes_no",
+              "rating",
+              "user",
+              "address",
+              "checklist",
+              "line_items",
+              "computed",
+              "document",
+              "info"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "type"
+        ],
+        "title": "NewField",
+        "type": "object"
+      },
       "OpenTaskOut": {
         "properties": {
           "assignee": {
@@ -1462,6 +1799,36 @@
         "title": "ReleaseOut",
         "type": "object"
       },
+      "RenameFieldLabel": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Field",
+            "type": "string"
+          },
+          "kind": {
+            "const": "rename_field_label",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "description": "The new label; the stored key stays.",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "field",
+          "label"
+        ],
+        "title": "RenameFieldLabel",
+        "type": "object"
+      },
       "SectionOut": {
         "properties": {
           "fields": {
@@ -1486,6 +1853,33 @@
           "fields"
         ],
         "title": "SectionOut",
+        "type": "object"
+      },
+      "SetRequired": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Field",
+            "type": "string"
+          },
+          "kind": {
+            "const": "set_required",
+            "title": "Kind",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "field",
+          "required"
+        ],
+        "title": "SetRequired",
         "type": "object"
       },
       "StageOut": {
@@ -1670,6 +2064,32 @@
           "release_version"
         ],
         "title": "SubmitOut",
+        "type": "object"
+      },
+      "TargetForm": {
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/UiField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "fields"
+        ],
+        "title": "TargetForm",
         "type": "object"
       },
       "TaskDetail": {
@@ -2201,6 +2621,203 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/app/admin/change-requests": {
+      "get": {
+        "description": "The client's requests, newest first, `limit` at a time; fewer than `limit` is the end.",
+        "operationId": "list_change_requests_app_admin_change_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ChangeRequestOut"
+                  },
+                  "title": "Response List Change Requests App Admin Change Requests Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Change Requests",
+        "tags": [
+          "app"
+        ]
+      },
+      "post": {
+        "description": "With an `Idempotency-Key`, sending the same request again returns the first one instead\nof storing it twice.",
+        "operationId": "submit_change_request_app_admin_change_requests_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeRequestIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeRequestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Submit Change Request",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/admin/change-requests/targets": {
+      "get": {
+        "description": "What a request may name: the active release's forms with their fields, and field types.",
+        "operationId": "change_targets_app_admin_change_requests_targets_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeTargets"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Change Targets",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/admin/change-requests/{change_request_id}": {
+      "get": {
+        "description": "Another client's request is a 404, like one that doesn't exist.",
+        "operationId": "get_change_request_app_admin_change_requests__change_request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeRequestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Get Change Request",
+        "tags": [
+          "app"
+        ]
+      }
+    },
     "/app/admin/departments": {
       "get": {
         "description": "What memberships may name: the active release's departments and levels.",

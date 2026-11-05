@@ -4,6 +4,71 @@
  */
 
 export interface paths {
+    "/app/admin/change-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Change Requests
+         * @description The client's requests, newest first, `limit` at a time; fewer than `limit` is the end.
+         */
+        get: operations["list_change_requests_app_admin_change_requests_get"];
+        put?: never;
+        /**
+         * Submit Change Request
+         * @description With an `Idempotency-Key`, sending the same request again returns the first one instead
+         *     of storing it twice.
+         */
+        post: operations["submit_change_request_app_admin_change_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/admin/change-requests/targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Change Targets
+         * @description What a request may name: the active release's forms with their fields, and field types.
+         */
+        get: operations["change_targets_app_admin_change_requests_targets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/admin/change-requests/{change_request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Change Request
+         * @description Another client's request is a 404, like one that doesn't exist.
+         */
+        get: operations["get_change_request_app_admin_change_requests__change_request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/app/admin/departments": {
         parameters: {
             query?: never;
@@ -654,6 +719,45 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AddDocumentType */
+        AddDocumentType: {
+            /** Form */
+            form: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "add_document_type";
+            /** Label */
+            label: string;
+        };
+        /** AddField */
+        AddField: {
+            /** Fields */
+            fields: components["schemas"]["NewField"][];
+            /** Form */
+            form: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "add_field";
+        };
+        /** AddSelectOption */
+        AddSelectOption: {
+            /**
+             * Field
+             * @description A `select` or `multi_select` field.
+             */
+            field: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "add_select_option";
+            /** Label */
+            label: string;
+        };
         /** AppUi */
         AppUi: {
             client: components["schemas"]["UiClient"];
@@ -845,6 +949,74 @@ export interface components {
              * @description On an undo's row, the change it undid.
              */
             undoes: number | null;
+        };
+        /** ChangeRequestIn */
+        ChangeRequestIn: {
+            /**
+             * Note
+             * @description Why, for the reviewer.
+             */
+            note?: string | null;
+            /** Payload */
+            payload: components["schemas"]["AddField"] | components["schemas"]["RenameFieldLabel"] | components["schemas"]["AddDocumentType"] | components["schemas"]["SetRequired"] | components["schemas"]["AddSelectOption"];
+        };
+        /**
+         * ChangeRequestOut
+         * @description A stored request as stored: a payload sent under older rules still reads, so one old row
+         *     can't fail the list.
+         */
+        ChangeRequestOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "add_field" | "rename_field_label" | "add_document_type" | "set_required" | "add_select_option";
+            /** Note */
+            note: string | null;
+            /**
+             * Payload
+             * @description The `Payload` as sent, `kind` included.
+             */
+            payload: {
+                [key: string]: unknown;
+            };
+            /**
+             * Review Note
+             * @description Our answer, once reviewed.
+             */
+            review_note: string | null;
+            /**
+             * Shipped In Version
+             * @description The release that carries it, once shipped.
+             */
+            shipped_in_version: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "submitted" | "in_review" | "approved" | "rejected" | "shipped";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ChangeTargets */
+        ChangeTargets: {
+            /** Field Types */
+            field_types: ("text" | "textarea" | "number" | "currency" | "percent" | "date" | "date_range" | "select" | "multi_select" | "yes_no" | "rating" | "user" | "address" | "checklist" | "line_items" | "computed" | "document" | "info")[];
+            /** Forms */
+            forms: components["schemas"]["TargetForm"][];
         };
         /** ClientDetail */
         ClientDetail: {
@@ -1121,6 +1293,22 @@ export interface components {
              */
             visible_to: string[];
         };
+        /** NewField */
+        NewField: {
+            /** Label */
+            label: string;
+            /**
+             * Options
+             * @description The choices of a `select` or `multi_select` field, and only of those.
+             * @default []
+             */
+            options: string[];
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "text" | "textarea" | "number" | "currency" | "percent" | "date" | "date_range" | "select" | "multi_select" | "yes_no" | "rating" | "user" | "address" | "checklist" | "line_items" | "computed" | "document" | "info";
+        };
         /** OpenTaskOut */
         OpenTaskOut: {
             /** Assignee */
@@ -1251,6 +1439,21 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** RenameFieldLabel */
+        RenameFieldLabel: {
+            /** Field */
+            field: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "rename_field_label";
+            /**
+             * Label
+             * @description The new label; the stored key stays.
+             */
+            label: string;
+        };
         /** SectionOut */
         SectionOut: {
             /** Fields */
@@ -1259,6 +1462,18 @@ export interface components {
             key: string;
             /** Title */
             title: string;
+        };
+        /** SetRequired */
+        SetRequired: {
+            /** Field */
+            field: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "set_required";
+            /** Required */
+            required: boolean;
         };
         /** StageOut */
         StageOut: {
@@ -1337,6 +1552,15 @@ export interface components {
              * Format: uuid
              */
             submission_id: string;
+        };
+        /** TargetForm */
+        TargetForm: {
+            /** Fields */
+            fields: components["schemas"]["UiField"][];
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
         };
         /** TaskDetail */
         TaskDetail: {
@@ -1540,6 +1764,133 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_change_requests_app_admin_change_requests_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeRequestOut"][];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    submit_change_request_app_admin_change_requests_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeRequestIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeRequestOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    change_targets_app_admin_change_requests_targets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeTargets"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_change_request_app_admin_change_requests__change_request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeRequestOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_departments_app_admin_departments_get: {
         parameters: {
             query?: never;
