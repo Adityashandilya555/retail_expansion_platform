@@ -343,9 +343,9 @@ def test_the_second_turn_reads_the_first_from_the_cache(
     assert one["cache_control"] == {"type": "ephemeral"}
     assert [t["name"] for t in one["tools"]] == sorted(tools.TOOLS)
     assert all(t["eager_input_streaming"] for t in one["tools"])
-    assert [t["strict"] for t in one["tools"]] == [
-        tools.TOOLS[t["name"]].edit is not None for t in one["tools"]
-    ]
+    # the loop sends each tool's strictness as the tools module defines it (#143's split)
+    strict = {d["name"]: d["strict"] for d in tools.definitions()}
+    assert [t["strict"] for t in one["tools"]] == [strict[t["name"]] for t in one["tools"]]
     assert one["tool_choice"] == {"type": "auto"} and "thinking" not in one
     assert one["output_config"] == {"effort": "high"}  # a configure conversation
     assert (one["model"], one["max_tokens"]) == ("claude-opus-5-5", 64_000)
