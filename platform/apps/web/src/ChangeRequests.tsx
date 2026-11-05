@@ -10,8 +10,8 @@ import { must, save, type Errors } from "./People";
 import { api } from "./session";
 
 type ChangeRequest = components["schemas"]["ChangeRequestOut"];
-type Payload = ChangeRequest["payload"];
-type Kind = Payload["kind"];
+type Payload = components["schemas"]["ChangeRequestIn"]["payload"];
+type Kind = ChangeRequest["kind"];
 type Targets = components["schemas"]["ChangeTargets"];
 type FieldType = Targets["field_types"][number];
 /** A new field as typed: its choices on one line, comma-separated. */
@@ -36,22 +36,28 @@ const SHOWN = ["/payload/form", "/payload/field"]; // errors shown under their s
 const NEW_ROW: FieldRow = { label: "", type: "text", options: "" };
 const typeName = (type: string) => type.replaceAll("_", " ");
 
-/** One line per request, in the release's names (ids for what the release no longer has). */
-function describe(p: Payload, targets: Targets | undefined): string {
+/** One line per request, in the release's names (ids for what the release no longer has). A
+ * request sent under older rules may not read as a `Payload`; it shows as its kind. */
+function describe(r: ChangeRequest, targets: Targets | undefined): string {
   const forms = targets?.forms ?? [];
   const form = (id: string) => forms.find((f) => f.id === id)?.title ?? id;
   const field = (key: string) => forms.flatMap((f) => f.fields).find((f) => f.key === key)?.label ?? key;
-  switch (p.kind) {
-    case "add_field":
-      return `${form(p.form)}: add ${p.fields.map((f) => `${f.label} (${typeName(f.type)})`).join(", ")}`;
-    case "add_document_type":
-      return `${form(p.form)}: add document ${p.label}`;
-    case "rename_field_label":
-      return `Rename ${field(p.field)} to ${p.label}`;
-    case "set_required":
-      return `Make ${field(p.field)} ${p.required ? "required" : "optional"}`;
-    case "add_select_option":
-      return `${field(p.field)}: add choice ${p.label}`;
+  const p = r.payload as Payload;
+  try {
+    switch (p.kind) {
+      case "add_field":
+        return `${form(p.form)}: add ${p.fields.map((f) => `${f.label} (${typeName(f.type)})`).join(", ")}`;
+      case "add_document_type":
+        return `${form(p.form)}: add document ${p.label}`;
+      case "rename_field_label":
+        return `Rename ${field(p.field)} to ${p.label}`;
+      case "set_required":
+        return `Make ${field(p.field)} ${p.required ? "required" : "optional"}`;
+      case "add_select_option":
+        return `${field(p.field)}: add choice ${p.label}`;
+    }
+  } catch {
+    return KINDS[r.kind];
   }
 }
 
@@ -65,6 +71,7 @@ function RequestForm({ targets, onDone }: { targets: Targets; onDone: () => void
   const [note, setNote] = useState("");
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
+  const [sendKey] = useState(() => crypto.randomUUID()); // a resend after a lost answer stores nothing twice
   const setRow = (i: number, change: Partial<FieldRow>) => setRows(rows.map((r, j) => (j === i ? { ...r, ...change } : r)));
   const choices = (r: FieldRow) => (LISTS.includes(r.type) ? r.options.split(",").map((o) => o.trim()).filter(Boolean) : []);
   const fieldGroups = targets.forms
@@ -91,7 +98,12 @@ function RequestForm({ targets, onDone }: { targets: Targets; onDone: () => void
   async function submit(e: FormEvent) {
     e.preventDefault();
     setPending(true);
-    const failed = await save(api.POST("/app/admin/change-requests", { body: { payload: payload(), note: note.trim() || null } }));
+    const failed = await save(
+      api.POST("/app/admin/change-requests", {
+        params: { header: { "Idempotency-Key": sendKey } },
+        body: { payload: payload(), note: note.trim() || null },
+      }),
+    );
     setPending(false);
     if (!failed) {
       notifyInfo("Request sent", "We review every request and answer here.");
@@ -158,6 +170,7 @@ function RequestForm({ targets, onDone }: { targets: Targets; onDone: () => void
                   <TextInput
                     label={`Choices for field ${i + 1}`}
                     description="Separate them with commas."
+                    required
                     value={r.options}
                     onChange={(e) => setRow(i, { options: e.currentTarget.value })}
                   />
@@ -230,7 +243,7 @@ export function ChangeRequests() {
         onRetry={() => void requests.refetch()}
         emptyText="No requests yet"
         columns={[
-          { key: "payload", header: "Request", render: (r) => describe(r.payload, targets.data) },
+          { key: "payload", header: "Request", render: (r) => describe(r, targets.data) },
           { key: "status", header: "Status", render: (r) => <StatusPill tone={STATUS[r.status][0]}>{STATUS[r.status][1]}</StatusPill> },
           { key: "review_note", header: "Review note", render: (r) => r.review_note ?? "—" },
           { key: "created_at", header: "Sent", render: (r) => new Date(r.created_at).toLocaleDateString(), sortValue: (r) => r.created_at },

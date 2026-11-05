@@ -26,6 +26,9 @@ UPGRADE = [
             ('submitted', 'in_review', 'approved', 'rejected', 'shipped')
     """,
     """
+        -- A client's requests go with the client (cascade), like its provisioning steps and
+        -- releases index: nothing deletes a client yet, and submitted_by points into the client's
+        -- own database, which goes too. Offboarding will decide what of a client to keep.
         create table platform.change_requests (
             id                 uuid primary key default gen_random_uuid(),
             client_id          uuid not null references platform.clients (id) on delete cascade,
@@ -37,13 +40,20 @@ UPGRADE = [
             review_note        text,
             reviewed_by        uuid references platform.owners (id),
             shipped_in_version int,
+            idempotency_key    text,  -- the submit's Idempotency-Key header, if it sent one
             created_at         timestamptz not null default now(),
-            updated_at         timestamptz not null default now()
+            updated_at         timestamptz not null default now(),
+            check (payload ->> 'kind' = kind::text),
+            unique (client_id, idempotency_key)
         )
     """,
     """
         -- a client's own list, newest first
-        create index on platform.change_requests (client_id, created_at desc)
+        create index on platform.change_requests (client_id, created_at desc, id desc)
+    """,
+    """
+        -- the owner console's queue (S2-24b): every client's requests by status, oldest first
+        create index on platform.change_requests (status, created_at)
     """,
 ]
 

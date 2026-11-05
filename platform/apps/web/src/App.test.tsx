@@ -484,8 +484,9 @@ const STATE_AND_DISTRICT = {
 };
 const REQUESTED = { note: null, review_note: null, shipped_in_version: null, created_at: "2026-11-02T09:00:00Z", updated_at: "2026-11-02T09:00:00Z" };
 const REQUESTS = [
-  { ...REQUESTED, id: "c2", payload: STATE_AND_DISTRICT, status: "submitted" },
-  { ...REQUESTED, id: "c1", payload: { kind: "rename_field_label", field: "city", label: "Town" }, status: "rejected", review_note: "Reports group by City" },
+  { ...REQUESTED, id: "c2", kind: "add_field", payload: STATE_AND_DISTRICT, status: "submitted" },
+  { ...REQUESTED, id: "c1", kind: "rename_field_label", payload: { kind: "rename_field_label", field: "city", label: "Town" }, status: "rejected", review_note: "Reports group by City" },
+  { ...REQUESTED, id: "c0", kind: "add_field", payload: { kind: "add_field", form: "start" }, status: "shipped" }, // stored under older rules
 ];
 
 /** A client admin with the change-request API; returns the change-request calls it saw. */
@@ -513,6 +514,7 @@ test("a client admin's Change requests page lists each request with its status a
   expect(within(table).getByText("Rename City to Town")).toBeDefined();
   expect(within(table).getByText("Rejected")).toBeDefined();
   expect(within(table).getByText("Reports group by City")).toBeDefined();
+  expect(within(table).getByText("Add fields to a form")).toBeDefined();
 
   cleanup();
   forget();
@@ -557,7 +559,13 @@ test("renaming City sends its field key; a target the release lacks shows under 
   await user.type(dialog.getByLabelText(/^New name/), "Town");
   await user.click(dialog.getByRole("button", { name: "Send request" }));
   expect(await dialog.findByText("city isn't a field in the published release")).toBeDefined();
-  expect(await bodies(seen, "POST")).toEqual([{ payload: { kind: "rename_field_label", field: "city", label: "Town" }, note: null }]);
+  await user.click(dialog.getByRole("button", { name: "Send request" }));
+  await vi.waitFor(() => expect(seen.filter((r) => r.method === "POST")).toHaveLength(2));
+  const sent = { payload: { kind: "rename_field_label", field: "city", label: "Town" }, note: null };
+  expect(await bodies(seen, "POST")).toEqual([sent, sent]);
+  const keys = seen.filter((r) => r.method === "POST").map((r) => r.headers.get("Idempotency-Key"));
+  expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/);
+  expect(keys[1]).toBe(keys[0]); // a resend from the same form can't store the request twice
 });
 
 test("/invite/:token sets the password and opens the app", async () => {

@@ -13,11 +13,15 @@ export interface paths {
         };
         /**
          * List Change Requests
-         * @description The client's requests, newest first.
+         * @description The client's requests, newest first, `limit` at a time; fewer than `limit` is the end.
          */
         get: operations["list_change_requests_app_admin_change_requests_get"];
         put?: never;
-        /** Submit Change Request */
+        /**
+         * Submit Change Request
+         * @description With an `Idempotency-Key`, sending the same request again returns the first one instead
+         *     of storing it twice.
+         */
         post: operations["submit_change_request_app_admin_change_requests_post"];
         delete?: never;
         options?: never;
@@ -951,7 +955,11 @@ export interface components {
             /** Payload */
             payload: components["schemas"]["AddField"] | components["schemas"]["RenameFieldLabel"] | components["schemas"]["AddDocumentType"] | components["schemas"]["SetRequired"] | components["schemas"]["AddSelectOption"];
         };
-        /** ChangeRequestOut */
+        /**
+         * ChangeRequestOut
+         * @description A stored request as stored: a payload sent under older rules still reads, so one old row
+         *     can't fail the list.
+         */
         ChangeRequestOut: {
             /**
              * Created At
@@ -963,10 +971,20 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "add_field" | "rename_field_label" | "add_document_type" | "set_required" | "add_select_option";
             /** Note */
             note: string | null;
-            /** Payload */
-            payload: components["schemas"]["AddField"] | components["schemas"]["RenameFieldLabel"] | components["schemas"]["AddDocumentType"] | components["schemas"]["SetRequired"] | components["schemas"]["AddSelectOption"];
+            /**
+             * Payload
+             * @description The `Payload` as sent, `kind` included.
+             */
+            payload: {
+                [key: string]: unknown;
+            };
             /**
              * Review Note
              * @description Our answer, once reviewed.
@@ -1276,7 +1294,7 @@ export interface components {
             label: string;
             /**
              * Options
-             * @description The choices of a `select` or `multi_select` field.
+             * @description The choices of a `select` or `multi_select` field, and only of those.
              * @default []
              */
             options: string[];
@@ -1743,7 +1761,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     list_change_requests_app_admin_change_requests_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1773,7 +1794,9 @@ export interface operations {
     submit_change_request_app_admin_change_requests_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };

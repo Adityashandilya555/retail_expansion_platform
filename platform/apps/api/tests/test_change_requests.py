@@ -12,6 +12,7 @@ import json
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -19,8 +20,9 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter, ValidationError
+from sqlalchemy.exc import IntegrityError
 
-from zm_api.change_requests import ChangeRequestIn, target_error
+from zm_api.change_requests import ChangeRequestIn, ChangeRequestOut, target_error
 from zm_api.main import create_app
 from zm_api.releases import cache_clear
 from zm_schema import WorkflowV1
@@ -35,7 +37,9 @@ STATE_AND_DISTRICT = {
     "form": "start",
     "fields": [{"label": "State", "type": "text"}, {"label": "District", "type": "text"}],
 }
+SET_REQUIRED = {"kind": "set_required", "field": "city", "required": True}
 TABLES = ("app.cases", "app.case_counters", "app.releases", "app.drafts")
+URL = "/app/admin/change-requests"
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +91,41 @@ def test_new_fields_take_a_type_from_the_field_catalogue() -> None:
     ):
         with pytest.raises(ValidationError):
             adapter.validate_python({"payload": payload})
+
+
+def test_ids_options_and_the_whole_payload_are_bounded() -> None:
+    def refused(payload: dict[str, Any]) -> list[tuple[int | str, ...]]:
+        with pytest.raises(ValidationError) as e:
+            ChangeRequestIn.model_validate({"payload": payload})
+        return [error["loc"] for error in e.value.errors()]
+
+    model = {"label": "Model", "type": "select", "options": ["Mall", "High street"]}
+    assert ChangeRequestIn.model_validate({"payload": {**STATE_AND_DISTRICT, "fields": [model]}})
+
+    fields = ("payload", "add_field", "fields", 0, "options")
+    assert refused({"kind": "set_required", "field": "f" * 65, "required": True}) == [
+        ("payload", "set_required", "field")
+    ]
+    assert refused({**STATE_AND_DISTRICT, "form": "f" * 65}) == [("payload", "add_field", "form")]
+    assert refused({**STATE_AND_DISTRICT, "fields": [{**model, "options": []}]}) == [fields]
+    assert refused({**STATE_AND_DISTRICT, "fields": [{**model, "type": "text"}]}) == [fields]
+    huge = {**model, "options": [f"{n:03} {'x' * 196}" for n in range(100)]}  # each fits alone
+    assert refused({**STATE_AND_DISTRICT, "fields": [huge] * 20}) == [("payload",)]
+
+
+def test_a_stored_request_reads_as_stored_even_when_it_no_longer_validates() -> None:
+    stale = {"kind": "set_required", "field": "city"}  # stored before `required` was required
+    now = datetime.now(UTC)
+    row = {
+        **dict.fromkeys(("note", "review_note", "shipped_in_version")),
+        "id": uuid.uuid4(),
+        "kind": "set_required",
+        "payload": stale,
+        "status": "submitted",
+        "created_at": now,
+        "updated_at": now,
+    }
+    assert ChangeRequestOut(**row).payload == stale
 
 
 # --- on the local stack ------------------------------------------------------------------------
@@ -243,3 +282,68 @@ def test_a_normal_user_gets_403_and_another_clients_request_404(world: World) ->
     assert world.http.get(path, headers=world.auth("admin")).status_code == 404
     listed = world.http.get("/app/admin/change-requests", headers=world.auth("admin")).json()
     assert str(theirs) not in {r["id"] for r in listed}
+
+
+@pytest.mark.integration
+def test_a_stored_request_that_no_longer_validates_still_lists(world: World) -> None:
+    stale = {"kind": "set_required", "field": "city"}  # `required` missing
+    insert = (
+        "insert into platform.change_requests (client_id, submitted_by, kind, payload)"
+        " values (:c, :by, :kind, cast(:p as jsonb)) returning id"
+    )
+    row = {"c": world.ids["pilot"], "by": uuid.UUID(world.users["admin"]), "p": json.dumps(stale)}
+    stored = asyncio.run(platform_sql(insert, **row, kind="set_required"))[0]["id"]
+
+    listed = world.http.get(URL, headers=world.auth("admin"))
+    assert listed.status_code == 200, listed.text
+    mine = next(r for r in listed.json() if r["id"] == str(stored))
+    assert (mine["kind"], mine["payload"]) == ("set_required", stale)
+    with pytest.raises(IntegrityError):  # the kind column keeps to the payload's
+        asyncio.run(platform_sql(insert, **row, kind="add_field"))
+
+
+@pytest.mark.integration
+def test_the_list_comes_in_pages_newest_first(world: World) -> None:
+    admin = world.auth("admin")
+    sent = [
+        world.http.post(URL, json={"payload": SET_REQUIRED}, headers=admin).json()["id"]
+        for _ in range(2)
+    ]
+    newest = world.http.get(URL, params={"limit": 2}, headers=admin).json()
+    assert [r["id"] for r in newest] == sent[::-1]
+    second = world.http.get(URL, params={"limit": 1, "offset": 1}, headers=admin).json()
+    assert [r["id"] for r in second] == sent[:1]
+    too_many = world.http.get(URL, params={"limit": 501}, headers=admin)
+    assert too_many.status_code == 422, too_many.text
+
+
+@pytest.mark.integration
+def test_a_retry_with_the_same_idempotency_key_returns_the_first_request(world: World) -> None:
+    key = str(uuid.uuid4())
+    asyncio.run(  # client B used the key too: keys are per client
+        platform_sql(
+            "insert into platform.change_requests (client_id, submitted_by, kind, payload,"
+            " idempotency_key) values (:c, :by, 'set_required', cast(:p as jsonb), :k)",
+            c=world.ids["qsr"],
+            by=uuid.uuid4(),
+            p=json.dumps(SET_REQUIRED),
+            k=key,
+        )
+    )
+    headers = {**world.auth("admin"), "Idempotency-Key": key}
+    first = world.http.post(URL, json={"payload": SET_REQUIRED}, headers=headers)
+    again = world.http.post(URL, json={"payload": SET_REQUIRED}, headers=headers)
+    assert (first.status_code, again.status_code) == (201, 201), again.text
+    assert again.json() == first.json()
+    stored = asyncio.run(
+        platform_sql(
+            "select client_id from platform.change_requests where idempotency_key = :k"
+            " order by created_at",
+            k=key,
+        )
+    )
+    assert [r["client_id"] for r in stored] == [world.ids["qsr"], world.ids["pilot"]]
+
+    other = {"payload": {**SET_REQUIRED, "required": False}}
+    reused = world.http.post(URL, json=other, headers=headers)
+    assert reused.status_code == 409, reused.text

@@ -5,6 +5,8 @@
         "additionalProperties": false,
         "properties": {
           "form": {
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Form",
             "type": "string"
           },
@@ -41,6 +43,8 @@
             "type": "array"
           },
           "form": {
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Form",
             "type": "string"
           },
@@ -63,6 +67,8 @@
         "properties": {
           "field": {
             "description": "A `select` or `multi_select` field.",
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Field",
             "type": "string"
           },
@@ -514,6 +520,7 @@
         "type": "object"
       },
       "ChangeRequestOut": {
+        "description": "A stored request as stored: a payload sent under older rules still reads, so one old row\ncan't fail the list.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -523,6 +530,17 @@
           "id": {
             "format": "uuid",
             "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "add_field",
+              "rename_field_label",
+              "add_document_type",
+              "set_required",
+              "add_select_option"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "note": {
@@ -537,34 +555,10 @@
             "title": "Note"
           },
           "payload": {
-            "discriminator": {
-              "mapping": {
-                "add_document_type": "#/components/schemas/AddDocumentType",
-                "add_field": "#/components/schemas/AddField",
-                "add_select_option": "#/components/schemas/AddSelectOption",
-                "rename_field_label": "#/components/schemas/RenameFieldLabel",
-                "set_required": "#/components/schemas/SetRequired"
-              },
-              "propertyName": "kind"
-            },
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/AddField"
-              },
-              {
-                "$ref": "#/components/schemas/RenameFieldLabel"
-              },
-              {
-                "$ref": "#/components/schemas/AddDocumentType"
-              },
-              {
-                "$ref": "#/components/schemas/SetRequired"
-              },
-              {
-                "$ref": "#/components/schemas/AddSelectOption"
-              }
-            ],
-            "title": "Payload"
+            "additionalProperties": true,
+            "description": "The `Payload` as sent, `kind` included.",
+            "title": "Payload",
+            "type": "object"
           },
           "review_note": {
             "anyOf": [
@@ -609,6 +603,7 @@
         },
         "required": [
           "id",
+          "kind",
           "payload",
           "note",
           "status",
@@ -1405,7 +1400,7 @@
           },
           "options": {
             "default": [],
-            "description": "The choices of a `select` or `multi_select` field.",
+            "description": "The choices of a `select` or `multi_select` field, and only of those.",
             "items": {
               "maxLength": 200,
               "minLength": 1,
@@ -1802,6 +1797,8 @@
         "additionalProperties": false,
         "properties": {
           "field": {
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Field",
             "type": "string"
           },
@@ -1856,6 +1853,8 @@
         "additionalProperties": false,
         "properties": {
           "field": {
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Field",
             "type": "string"
           },
@@ -2618,8 +2617,33 @@
   "paths": {
     "/app/admin/change-requests": {
       "get": {
-        "description": "The client's requests, newest first.",
+        "description": "The client's requests, newest first, `limit` at a time; fewer than `limit` is the end.",
         "operationId": "list_change_requests_app_admin_change_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -2652,7 +2676,28 @@
         ]
       },
       "post": {
+        "description": "With an `Idempotency-Key`, sending the same request again returns the first one instead\nof storing it twice.",
         "operationId": "submit_change_request_app_admin_change_requests_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
