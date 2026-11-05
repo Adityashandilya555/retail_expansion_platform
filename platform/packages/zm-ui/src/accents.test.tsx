@@ -1,6 +1,8 @@
-// #20 and #34 acceptance: every extra renders in light and dark for every preset × accent.
-// Contrast is checked numerically in theme.test.ts (jsdom can't compute it); this checks that each
-// extra renders with the preset, accent and scheme applied, keeps its text, and passes axe.
+// #20 and #34 acceptance: every extra renders in light and dark for every preset, with the client's
+// accent. Contrast is checked numerically in theme.test.ts for every preset × accent × scheme (jsdom
+// can't compute it); an accent changes only Mantine's CSS variables, which axe can't see here, so
+// axe runs once per preset × scheme. This checks that each extra renders with the preset, accent and
+// scheme applied, keeps its text, and passes axe.
 import { screen, within } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
 import { AccentSwatches } from "./AppearanceMenu";
@@ -13,7 +15,7 @@ import { sampleColumns, sampleNav, sampleSites, sampleStages } from "./samples";
 import { StageTracker } from "./StageTracker";
 import { StatusPill, type StatusTone } from "./StatusPill";
 import { expectNoAxeViolations, renderWithZm } from "./test";
-import { ACCENTS, PRESETS } from "./theme";
+import { PRESETS } from "./theme";
 import { useAppearance } from "./ZmProvider";
 
 const TONES: StatusTone[] = ["done", "open", "queued", "closed", "warning"];
@@ -41,10 +43,10 @@ function Extras() {
   );
 }
 
-describe.each(Object.keys(PRESETS).flatMap((preset) => ACCENTS.map((accent) => [preset, accent])))("%s · %s", (preset, accent) => {
+describe.each(Object.keys(PRESETS))("%s", (preset) => {
   test.each(["light", "dark"] as const)("every extra renders in %s and passes axe", async (scheme) => {
-    renderWithZm(<Extras />, { scheme, client: { theme: preset, accent } });
-    expect(screen.getByTestId("probe").textContent).toBe(`${preset}:${accent}`);
+    renderWithZm(<Extras />, { scheme, client: { theme: preset, accent: "plum" } });
+    expect(screen.getByTestId("probe").textContent).toBe(`${preset}:plum`);
     expect(document.documentElement.getAttribute("data-mantine-color-scheme")).toBe(scheme);
     expect(screen.getByText("Matrix Retail")).toBeDefined();
     expect(screen.getByRole("heading", { level: 1, name: "Sites" })).toBeDefined();
