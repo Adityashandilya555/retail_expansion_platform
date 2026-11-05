@@ -524,6 +524,25 @@ test("a client admin's Change requests page lists each request with its status a
   expect(nav().queryByRole("button", { name: "Change requests" })).toBeNull();
 });
 
+test("older change requests load a page at a time", async () => {
+  const page = (offset: number, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ ...REQUESTS[1], id: `r${offset + i}` }));
+  const seen = changesApi({
+    "GET /app/admin/change-requests": (req) => {
+      const offset = Number(new URL(req.url).searchParams.get("offset") ?? 0);
+      return json(offset === 0 ? page(0, 100) : page(100, 3));
+    },
+  });
+  renderAt("/app/admin/change-requests");
+  const table = await screen.findByRole("table", { name: "Change requests" });
+  await vi.waitFor(() => expect(within(table).getAllByText("Rename City to Town")).toHaveLength(100));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Load older requests" }));
+  await vi.waitFor(() => expect(within(table).getAllByText("Rename City to Town")).toHaveLength(103));
+  expect(screen.queryByRole("button", { name: "Load older requests" })).toBeNull(); // a short page is the end
+  const lists = seen.filter((r) => r.method === "GET" && new URL(r.url).pathname === "/app/admin/change-requests");
+  expect(lists.map((r) => new URL(r.url).search)).toEqual(["?limit=100&offset=0", "?limit=100&offset=100"]);
+});
+
 test("asking for State and District on the site form POSTs one add_field request with both", async () => {
   const seen = changesApi({ "POST /app/admin/change-requests": () => json(REQUESTS[0], 201) });
   renderAt("/app/admin/change-requests");

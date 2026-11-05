@@ -1,7 +1,7 @@
 // `/app/admin/change-requests` (S2-24a): the client admin asks us for a field or document change and
 // follows its review. A fixed route of the shell for client admins, like People (D19).
 import { ActionIcon, Button, Group, Loader, Modal, NativeSelect, SegmentedControl, Stack, Text, Textarea, TextInput } from "@mantine/core";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
 import { DataTable, notifyError, notifyInfo, PageHeader, StatusPill, type StatusTone } from "@zm/ui";
 import { Plus, X } from "lucide-react";
@@ -10,6 +10,8 @@ import { must, save, type Errors } from "./People";
 import { api } from "./session";
 
 type ChangeRequest = components["schemas"]["ChangeRequestOut"];
+/** Requests per page; the API's default and what decides "there may be more". */
+const PAGE = 100;
 type Payload = components["schemas"]["ChangeRequestIn"]["payload"];
 type Kind = ChangeRequest["kind"];
 type Targets = components["schemas"]["ChangeTargets"];
@@ -220,7 +222,14 @@ function RequestForm({ targets, onDone }: { targets: Targets; onDone: () => void
 export function ChangeRequests() {
   const queries = useQueryClient();
   const [requesting, setRequesting] = useState(false);
-  const requests = useQuery({ queryKey: ["change-requests"], queryFn: () => must(api.GET("/app/admin/change-requests")) });
+  // a page at a time, newest first: a full page means there may be older ones
+  const requests = useInfiniteQuery({
+    queryKey: ["change-requests"],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) =>
+      must(api.GET("/app/admin/change-requests", { params: { query: { limit: PAGE, offset: pageParam } } })),
+    getNextPageParam: (last, pages) => (last.length === PAGE ? pages.length * PAGE : undefined),
+  });
   const targets = useQuery({ queryKey: ["change-targets"], queryFn: () => must(api.GET("/app/admin/change-requests/targets")) });
   const done = () => {
     setRequesting(false);
@@ -236,7 +245,7 @@ export function ChangeRequests() {
       />
       <DataTable
         caption="Change requests"
-        rows={requests.data ?? []}
+        rows={requests.data?.pages.flat() ?? []}
         rowKey={(r) => r.id}
         loading={requests.isPending}
         error={requests.isError ? "Couldn't load the change requests." : null}
@@ -249,6 +258,13 @@ export function ChangeRequests() {
           { key: "created_at", header: "Sent", render: (r) => new Date(r.created_at).toLocaleDateString(), sortValue: (r) => r.created_at },
         ]}
       />
+      {requests.hasNextPage && (
+        <Group justify="center">
+          <Button variant="default" loading={requests.isFetchingNextPage} onClick={() => void requests.fetchNextPage()}>
+            Load older requests
+          </Button>
+        </Group>
+      )}
       <Modal opened={requesting} onClose={() => setRequesting(false)} title="Request a change">
         {targets.data ? (
           <RequestForm targets={targets.data} onDone={done} />

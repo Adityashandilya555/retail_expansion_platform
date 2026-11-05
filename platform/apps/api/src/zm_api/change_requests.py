@@ -222,12 +222,18 @@ async def submit_change_request(
 ) -> ChangeRequestOut:
     """With an `Idempotency-Key`, sending the same request again returns the first one instead
     of storing it twice."""
+    note = body.note or None
+    # a repeat is answered before validation: the first one was stored, even if a release
+    # published since no longer has what it names
+    if idempotency_key is not None:
+        first = await _first(request, ctx, idempotency_key)
+        if first is not None:
+            return _same(first, body, note)
     error = target_error(await _released(ctx), body.payload)
     if error:
         raise UnprocessableContent(
             "The request names something the published release doesn't have", errors=[error]
         )
-    note = body.note or None
     async with request.app.state.platform.engine().begin() as conn:
         row = await conn.execute(
             text(
@@ -247,8 +253,21 @@ async def submit_change_request(
         stored = row.mappings().one_or_none()
     if stored is not None:
         return ChangeRequestOut(**stored)
-    # a repeat (no key never conflicts): the key's first request, if this is the same request
-    first = (await _requests(request, ctx, "idempotency_key = :key", key=idempotency_key))[0]
+    # the same key raced us in (no key never conflicts): theirs is the first request
+    first = await _first(request, ctx, str(idempotency_key))
+    if first is None:  # stored and then removed in between
+        raise Conflict("This Idempotency-Key's request is gone; send it with a new key")
+    return _same(first, body, note)
+
+
+async def _first(request: Request, ctx: ClientContext, key: str) -> ChangeRequestOut | None:
+    """The request this client already sent with `key`, if any."""
+    found = await _requests(request, ctx, "idempotency_key = :key", key=key)
+    return found[0] if found else None
+
+
+def _same(first: ChangeRequestOut, body: ChangeRequestIn, note: str | None) -> ChangeRequestOut:
+    """The first request, when this one repeats it; a key reused for something else is 409."""
     if (first.payload, first.note) != (body.payload.model_dump(mode="json"), note):
         raise Conflict("This Idempotency-Key was used for another request")
     return first

@@ -347,3 +347,27 @@ def test_a_retry_with_the_same_idempotency_key_returns_the_first_request(world: 
     other = {"payload": {**SET_REQUIRED, "required": False}}
     reused = world.http.post(URL, json=other, headers=headers)
     assert reused.status_code == 409, reused.text
+
+
+@pytest.mark.integration
+def test_a_retry_returns_the_first_request_even_if_its_field_is_gone_now(world: World) -> None:
+    """The response was lost, then a release dropped the field: the retry still answers with the
+    stored request instead of a 422 about the field."""
+    key = str(uuid.uuid4())
+    gone = {"kind": "set_required", "field": "gone_since", "required": True}
+    asyncio.run(
+        platform_sql(
+            "insert into platform.change_requests (client_id, submitted_by, kind, payload,"
+            " idempotency_key) values (:c, :by, 'set_required', cast(:p as jsonb), :k)",
+            c=world.ids["pilot"],
+            by=uuid.UUID(world.users["admin"]),
+            p=json.dumps(gone),
+            k=key,
+        )
+    )
+    headers = {**world.auth("admin"), "Idempotency-Key": key}
+    retry = world.http.post(URL, json={"payload": gone}, headers=headers)
+    assert retry.status_code == 201, retry.text
+    assert retry.json()["payload"] == gone
+    fresh = world.http.post(URL, json={"payload": gone}, headers=world.auth("admin"))
+    assert fresh.status_code == 422  # without the key it's a new request, checked as usual
