@@ -57,6 +57,18 @@ def test_a_block_its_region_doesnt_take_and_a_full_region(minimal: dict[str, Any
     ]
 
 
+def test_the_look_is_a_registered_preset_and_accent(minimal: dict[str, Any]) -> None:
+    # catalogue.json lists the shell's presets and accents (@zm/ui theme.ts); the shell would only
+    # fall back to quartz and the preset's accent for anything else
+    minimal["apps"] = {"theme": "warm", "accent": "copper"}
+    assert validate(minimal) == []
+    minimal["apps"] = {"theme": "neon", "accent": "chartreuse"}
+    assert [str(e) for e in validate(minimal)] == [
+        "apps.theme: unknown theme preset 'neon'",
+        "apps.accent: unknown accent 'chartreuse'",
+    ]
+
+
 def test_a_case_page_needs_a_flow(minimal: dict[str, Any]) -> None:
     site = {"key": "site", "layout": "case", "regions": {"header": [{"block": "case_header"}]}}
     assert errors(minimal, site) == ["apps.pages[0].flow: page 'site': layout 'case' needs flow"]

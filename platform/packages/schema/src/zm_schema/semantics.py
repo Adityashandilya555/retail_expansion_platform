@@ -235,8 +235,12 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
                     group_filled |= form_fields.get(t.form, set()) if t.form else set()
                 before |= group_filled
 
-    # ── apps: each page against the UI packages (catalogue.json, #37) ──
+    # ── apps: the look and each page against the UI packages (catalogue.json, #37) ──
     ui = catalogue.load()
+    if doc.apps.theme not in ui["presets"]:
+        err("apps.theme", f"unknown theme preset '{doc.apps.theme}'")
+    if doc.apps.accent is not None and doc.apps.accent not in ui["accents"]:
+        err("apps.accent", f"unknown accent '{doc.apps.accent}'")
     page_keys: set[str] = set()
     for pi, page in enumerate(doc.apps.pages):
         pp = join("apps.pages", pi)
