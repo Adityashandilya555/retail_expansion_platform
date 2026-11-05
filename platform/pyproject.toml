@@ -54,8 +54,9 @@ testpaths = [
 markers = [
     "integration: needs the local stack from scripts/dev-up.sh",
     "isolation: two local clients can't reach each other (#31); needs the local stack too",
+    "live: calls the real Anthropic API (#38); by hand only, with ANTHROPIC_API_KEY",
 ]
-addopts = ["-m", "not integration and not isolation", "--import-mode=importlib"]
+addopts = ["-m", "not integration and not isolation and not live", "--import-mode=importlib"]
 
 [tool.coverage.run]
 # scripts/ too: the demo driver and the local helpers (#31) are run by tests from their path
