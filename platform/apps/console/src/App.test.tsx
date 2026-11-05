@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { components } from "@zm/api-client";
+import { PRESETS } from "@zm/ui";
 import { expectNoAxeViolations } from "@zm/ui/test";
 import { MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
@@ -390,8 +391,9 @@ const pressedAccent = () => screen.getAllByRole("button", { pressed: true, name:
 const preview = (label: string, variable: string) =>
   presetGroup().getByRole("radio", { name: new RegExp(`^${label}`) }).querySelector<HTMLElement>(".mantine-Paper-root")?.style.getPropertyValue(variable);
 
-test("the Look panel saves the preset and default accent to the draft; nothing is live until publish", async () => {
-  let apps: object = { theme: "quartz" };
+/** A ready client whose draft starts at `apps`; each `PATCH …/draft/theme` is applied and recorded in `sent`. */
+function lookApi(start: object) {
+  let apps = start;
   const sent: unknown[] = [];
   const calls = signedInApi({
     [`GET /owner/clients/${ID}`]: ready,
@@ -403,8 +405,21 @@ test("the Look panel saves the preset and default accent to the draft; nothing i
       return json(draft(apps));
     },
   });
+  return { sent, calls };
+}
+
+/** Opens the client page on fake timers (a preset is saved once the picker settles). */
+async function openLook() {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
   renderAt(`/clients/${ID}`);
   await screen.findByRole("radiogroup", { name: "Theme preset" });
+  return userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+}
+const settle = () => act(() => vi.advanceTimersByTimeAsync(1000));
+
+test("the Look panel saves the preset and default accent to the draft; nothing is live until publish", async () => {
+  const { sent, calls } = lookApi({ theme: "quartz" });
+  const user = await openLook();
   expect(screen.getByText(/once you publish/)).toBeDefined();
   expect(checkedPreset()).toEqual(["Quartz"]);
   expect(pressedAccent()).toEqual(["Accent: Slate"]); // quartz's own default
@@ -413,11 +428,15 @@ test("the Look panel saves the preset and default accent to the draft; nothing i
   expect(preview("Warm", "--mantine-heading-font-weight")).toBe("600");
   expect(preview("Quartz", "--mantine-primary-color-filled")).toContain("slate");
   expect(preview("Warm", "--mantine-primary-color-filled")).toContain("copper");
+  // dimmed text is under AA (3.3:1 light, 4.0:1 dark): the panel's words use the body colour
+  for (const text of [/once you publish/, "Slate, the preset's default", ...Object.values(PRESETS).map((p) => p.description)]) {
+    expect(screen.getByText(text).getAttribute("style") ?? "").not.toContain("dimmed");
+  }
 
-  const user = userEvent.setup();
   await user.click(presetGroup().getByRole("radio", { name: /^Warm/ }));
-  await waitFor(() => expect(checkedPreset()).toEqual(["Warm"]));
-  expect(pressedAccent()).toEqual(["Accent: Copper"]);
+  await settle();
+  await waitFor(() => expect(pressedAccent()).toEqual(["Accent: Copper"]));
+  expect(checkedPreset()).toEqual(["Warm"]);
 
   await user.click(screen.getByRole("button", { name: "Accent: Plum" }));
   await waitFor(() => expect(pressedAccent()).toEqual(["Accent: Plum"]));
@@ -429,12 +448,44 @@ test("the Look panel saves the preset and default accent to the draft; nothing i
   expect(calls).not.toContain(`POST /owner/clients/${ID}/publish`);
 });
 
+test("a new preset drops an accent that was only the old preset's default, and keeps a picked one", async () => {
+  const { sent } = lookApi({ theme: "quartz", accent: "slate" }); // as the matrix-retail template seeds it
+  const user = await openLook();
+  await user.click(presetGroup().getByRole("radio", { name: /^Warm/ }));
+  await settle();
+  await waitFor(() => expect(pressedAccent()).toEqual(["Accent: Copper"])); // warm's own, not quartz's slate
+  expect(sent).toEqual([{ theme: "warm", accent: null }]);
+
+  await user.click(screen.getByRole("button", { name: "Accent: Plum" }));
+  await waitFor(() => expect(pressedAccent()).toEqual(["Accent: Plum"]));
+  await user.click(presetGroup().getByRole("radio", { name: /^Quartz/ }));
+  await settle();
+  await waitFor(() => expect(checkedPreset()).toEqual(["Quartz"]));
+  expect(pressedAccent()).toEqual(["Accent: Plum"]);
+  expect(sent.at(-1)).toEqual({ theme: "quartz" });
+});
+
+test("arrow keys through the preset cards save once, where they stop", async () => {
+  const { sent } = lookApi({ theme: "quartz" });
+  const user = await openLook();
+  presetGroup().getByRole("radio", { name: /^Quartz/ }).focus();
+  await user.keyboard("{ArrowRight}{ArrowRight}{ArrowRight}"); // Warm, Quartz (it wraps), Warm
+  expect(checkedPreset()).toEqual(["Warm"]); // the cards follow the keys at once
+  expect(sent).toEqual([]);
+  await settle();
+  await waitFor(() => expect(sent).toEqual([{ theme: "warm" }])); // one change-log row
+  await user.keyboard("{ArrowRight}{ArrowRight}"); // Quartz, then back to the saved Warm
+  await settle();
+  expect(checkedPreset()).toEqual(["Warm"]);
+  expect(sent).toHaveLength(1); // nothing new to save
+});
+
 test("a look the API refuses stays unsaved and says why", async () => {
   const refused = { type: "about:blank", title: "x", status: 422, detail: "The change would make the draft invalid", request_id: "r", errors: [] };
   signedInApi({ [`GET /owner/clients/${ID}`]: ready, [`PATCH /owner/clients/${ID}/draft/theme`]: () => json(refused, 422) });
-  renderAt(`/clients/${ID}`);
-  await screen.findByRole("radiogroup", { name: "Theme preset" });
-  await userEvent.setup().click(presetGroup().getByRole("radio", { name: /^Warm/ }));
+  const user = await openLook();
+  await user.click(presetGroup().getByRole("radio", { name: /^Warm/ }));
+  await settle();
   expect(await screen.findByText("The change would make the draft invalid")).toBeDefined();
   expect(checkedPreset()).toEqual(["Quartz"]);
 });

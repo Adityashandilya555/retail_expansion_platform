@@ -17,7 +17,7 @@ import {
   StatusPill,
   type StatusTone,
 } from "@zm/ui";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
 import { api } from "./session";
 
@@ -185,10 +185,15 @@ export function NewClient() {
 
 // --- the client's look (#34): its draft's theme preset and default accent (D19) ------------------
 
+/** Arrow keys pick each preset card they pass; a pick is saved once the picker rests this long. */
+const SETTLE_MS = 500;
+
 function Look({ clientId }: { clientId: string }) {
   const queries = useQueryClient();
   const path = { params: { path: { client_id: clientId } } };
   const draft = useQuery({ queryKey: ["draft", clientId], queryFn: () => must(api.GET("/owner/clients/{client_id}/draft", path)) });
+  const [picked, setPicked] = useState<string | null>(null); // a preset not saved yet
+  const settling = useRef<ReturnType<typeof setTimeout>>(undefined);
   if (draft.isPending) return null;
   if (!draft.data) {
     return (
@@ -203,12 +208,27 @@ function Look({ clientId }: { clientId: string }) {
   const preset = resolvePreset(apps.theme);
   const accent = isAccent(apps.accent) ? apps.accent : null;
 
-  async function save(body: ThemeIn) {
+  /** Saves `change` with the preset still settling, if any. A new preset drops an accent that was only
+   * the old preset's default (e.g. the template's), so the new preset's own default shows. */
+  async function save(change: ThemeIn, theme = picked) {
+    clearTimeout(settling.current);
+    const body = theme && theme !== preset.key ? { theme, ...(accent === preset.defaultAccent && { accent: null }), ...change } : change;
     try {
-      queries.setQueryData(["draft", clientId], await must(api.PATCH("/owner/clients/{client_id}/draft/theme", { ...path, body })));
+      // nothing to save when the keys come to rest on the saved preset
+      if (Object.keys(body).length > 0) {
+        queries.setQueryData(["draft", clientId], await must(api.PATCH("/owner/clients/{client_id}/draft/theme", { ...path, body })));
+      }
     } catch (e) {
       notifyError(e instanceof Error && e.message !== "Request failed" ? e.message : "Couldn't save the look.");
+    } finally {
+      setPicked((p) => (p === theme ? null : p));
     }
+  }
+
+  function pick(theme: string) {
+    setPicked(theme);
+    clearTimeout(settling.current);
+    settling.current = setTimeout(() => void save({}, theme), SETTLE_MS);
   }
 
   return (
@@ -216,23 +236,21 @@ function Look({ clientId }: { clientId: string }) {
       <Title order={2} size="h3">
         Look
       </Title>
-      <Text size="sm" c="dimmed">
+      <Text size="sm">
         Saved to the draft. The sign-in page and every screen change once you publish; people can still pick their own accent.
       </Text>
-      <PresetPicker label="Theme preset" value={preset.key} onChange={(theme) => void save({ theme })} accent={accent} />
+      <PresetPicker label="Theme preset" value={picked ?? preset.key} onChange={pick} accent={accent} />
       <Text size="sm" fw={500}>
         Default accent
       </Text>
       <Group gap="md">
-        <AccentSwatches value={accent ?? preset.defaultAccent} onChange={(picked) => void save({ accent: picked })} />
+        <AccentSwatches value={accent ?? preset.defaultAccent} onChange={(choice) => void save({ accent: choice })} />
         {accent ? (
           <Button variant="subtle" size="compact-sm" onClick={() => void save({ accent: null })}>
             Use the preset's default
           </Button>
         ) : (
-          <Text size="sm" c="dimmed">
-            {accentLabel(preset.defaultAccent)}, the preset's default
-          </Text>
+          <Text size="sm">{accentLabel(preset.defaultAccent)}, the preset's default</Text>
         )}
       </Group>
     </Stack>

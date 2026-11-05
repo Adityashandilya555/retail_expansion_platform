@@ -46,9 +46,7 @@ export function PresetPicker({
               <Radio.Indicator />
               <Stack gap={2}>
                 <Text fw={600}>{preset.label}</Text>
-                <Text size="sm" c="dimmed">
-                  {preset.description}
-                </Text>
+                <Text size="sm">{preset.description}</Text>
               </Stack>
             </Group>
             <Preview preset={preset} accent={accent ?? preset.defaultAccent} />
