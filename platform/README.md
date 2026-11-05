@@ -135,6 +135,10 @@ Owner endpoints under `/owner/clients/{id}/draft`: `GET` (the draft), `GET /chan
 
 `definitions()` gives them as Messages API tools: no extra properties, every property required (null only where it means "none", such as a task with no form), and no client parameter. The 17 edits are `strict: true` and the reads and checks aren't, which keeps a request inside Anthropic's [schema complexity limits](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) (at most 20 strict tools, 16 union and 24 optional parameters in total; a test counts them). `update_task` and `update_field` set every value, so a form, shown fields or options can be cleared. `call(ctx, author, name, args, conversation_id?)` runs one for the console's client: an edit builds its RFC 6902 patch from the locked draft (`apply_change` also takes a function of the draft) and is logged under the tool's name, with undo. It answers `{ok, summary, errors?}`, plus `data` for a read; `summary` is the change chip. `get_overview`, `get_task`, `get_form` and every done edit also answer the draft's `draft_sha256`; each edit takes the one it last got and is refused while the draft has changed since, so it never overwrites a person's edit it hasn't read. A result's `data` is cut at 40,000 characters of JSON and its `errors` at 50, flagged `truncated`. There is no HTTP route: the agent loop (#38) calls them.
 
+**For #38:**
+- **Edits must run one at a time.** Two edits sent in one turn carry the same `draft_sha256`, so every one after the first is refused as stale. Send edits with `tool_choice.disable_parallel_tool_use: true`, or run them in order, each with the sha the previous edit answered.
+- **A problem the draft already had doesn't block an edit.** That holds even when the edit moves stages or tasks: problems are matched without their list positions.
+
 ## Publish
 A client's draft `workflow.json` (`app.drafts` in its vault) becomes a release on its own Operaton (#23):
 ```bash

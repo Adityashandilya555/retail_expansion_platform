@@ -21,6 +21,8 @@ Owners reach all of it under `/owner/clients/{id}/draft`.
 """
 
 import json
+import re
+from collections import Counter
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime
@@ -148,10 +150,26 @@ def patched(doc: dict[str, Any], patch: Patch) -> tuple[dict[str, Any], Patch]:
     after = _apply(doc, patch)
     errors = validate(after)
     if errors:
-        old = {(e.path, e.message) for e in validate(doc)}
-        if new := [e for e in errors if (e.path, e.message) not in old]:
+        # problems are matched without list positions, counted: a change that moves stages or
+        # tasks moves the old problems' paths too (stages[1] → stages[2]), and still adds none
+        old = Counter(_problem(e) for e in validate(doc))
+        new = []
+        for e in errors:
+            if old[_problem(e)] > 0:
+                old[_problem(e)] -= 1
+            else:
+                new.append(e)
+        if new:
             raise _invalid(new)
     return after, inverse(doc, after)
+
+
+_POSITION = re.compile(r"\[\d+\]")
+
+
+def _problem(error: Any) -> tuple[str, str]:
+    """An error as a problem of the draft, independent of where lists put it right now."""
+    return _POSITION.sub("[]", error.path), error.message
 
 
 def _outline(doc: dict[str, Any] | None) -> dict[str, Any]:
