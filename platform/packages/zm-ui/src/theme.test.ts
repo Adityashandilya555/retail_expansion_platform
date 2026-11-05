@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import focusCss from "./focus.css?raw";
 import {
   ACCENTS,
   PRESETS,
@@ -52,7 +53,10 @@ const matrix = Object.keys(PRESETS).flatMap((preset) =>
   ACCENTS.flatMap((accent) => (["light", "dark"] as const).map((scheme) => ({ preset, accent, scheme }))),
 );
 
-describe("contrast (WCAG AA 4.5:1) for every preset × accent × scheme", () => {
+/** The colours focus.css draws focus rings in (WCAG asks 3:1 against the page). */
+const FOCUS_COLOURS = [...focusCss.matchAll(/outline(?:-color)?:[^;]*var\((--[\w-]+)\)/g)].map((m) => m[1] as string);
+
+describe("contrast (WCAG AA: 4.5:1 text, 3:1 focus ring) for every preset × accent × scheme", () => {
   test.each(matrix)("$preset · $accent · $scheme: filled button text", ({ preset, accent, scheme }) => {
     const v = cssVariables(preset, accent, scheme);
     expect(contrast(v("--mantine-primary-color-contrast"), v("--mantine-primary-color-filled"))).toBeGreaterThanOrEqual(4.5);
@@ -61,6 +65,12 @@ describe("contrast (WCAG AA 4.5:1) for every preset × accent × scheme", () => 
   test.each(matrix)("$preset · $accent · $scheme: link on page", ({ preset, accent, scheme }) => {
     const v = cssVariables(preset, accent, scheme);
     expect(contrast(v("--mantine-color-anchor"), v("--mantine-color-body"))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test.each(matrix)("$preset · $accent · $scheme: focus ring on page", ({ preset, accent, scheme }) => {
+    const v = cssVariables(preset, accent, scheme);
+    expect(FOCUS_COLOURS).not.toEqual([]);
+    for (const ring of FOCUS_COLOURS) expect(contrast(v(ring), v("--mantine-color-body"))).toBeGreaterThanOrEqual(3);
   });
 });
 
