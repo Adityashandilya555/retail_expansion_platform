@@ -1,14 +1,18 @@
 """The agent's tools v1 (#36, S2-04a; blueprint §10): read, org, flow, forms and checks.
 
-Each tool is a Pydantic model of its arguments, sent to Claude as a strict JSON schema (no extra
-properties, every property required, optional ones nullable), and a handler. An edit's handler is
-a pure function from the draft to an RFC 6902 patch: `drafts.apply_change` builds it from the
-locked draft, validates the result and logs it under the tool's name, with undo. A read answers
-from the draft. No tool publishes, migrates, manages people or takes a client: the caller passes
-the ClientContext of the console's client. `call` answers `{ok, summary, errors?}`, plus `data`
-for a read; an edit's `summary` is its change chip.
+Each tool is a Pydantic model of its arguments, sent to Claude as a JSON schema with no extra
+properties and every property required (null only where it means "none"), and a handler. The
+edits' schemas are strict; the reads' aren't, to stay inside the API's limits. An edit's handler
+is a pure function from the draft to an RFC 6902 patch: `drafts.apply_change` builds it from the
+locked draft, validates the result and logs it under the tool's name, with undo. An edit names the
+`draft_sha256` its last read or edit returned and is refused when the draft has changed since, so
+it never overwrites a person's edit it hasn't seen. No tool publishes, migrates, manages people or
+takes a client: the caller passes the ClientContext of the console's client. `call` answers
+`{ok, summary, errors?}`, plus `data` for a read and `draft_sha256`, cut to a size (`truncated`);
+an edit's `summary` is its change chip.
 """
 
+import json
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, Literal, get_args
@@ -16,9 +20,9 @@ from uuid import UUID
 
 import jsonpatch
 from jsonpointer import JsonPointer
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from zm_api import drafts, releases, templates
+from zm_api import drafts, templates
 from zm_api.context import ClientContext
 from zm_api.errors import ApiError, Conflict, NotFound, UnprocessableContent
 from zm_schema.errors import loc_to_path
@@ -36,11 +40,17 @@ V1_RENDERS = frozenset(
 )
 
 
-# --- arguments: strict schemas (null = "none" or "leave as is", as each says) --------------------
+# --- arguments: strict schemas, every value given (null only where it means "none") -------------
 
 
 class _Args(BaseModel):
     model_config = ConfigDict(extra="forbid", use_attribute_docstrings=True)
+
+
+class _Edit(_Args):
+    draft_sha256: str = Field(exclude=True)
+    """The `draft_sha256` your last read or edit returned; if the draft has changed since, the
+    edit is refused and you read it again."""
 
 
 class NoArgs(_Args):
@@ -51,17 +61,21 @@ class TaskRef(_Args):
     task_id: str
 
 
+class TaskToRemove(_Edit):
+    task_id: str
+
+
 class FormRef(_Args):
     form: str
     """Form key, as a task's `form` names it."""
 
 
-class TemplateRef(_Args):
+class TemplateRef(_Edit):
     template: str
     """Template key from list_templates."""
 
 
-class NewDepartment(_Args):
+class NewDepartment(_Edit):
     key: str
     """Short key, e.g. `legal`; it names the Operaton groups (`legal__L1`), so it never changes."""
     name: str
@@ -69,12 +83,12 @@ class NewDepartment(_Args):
     """Level names, L1 (most junior) first."""
 
 
-class RenameDepartment(_Args):
+class RenameDepartment(_Edit):
     department: str
     name: str
 
 
-class Levels(_Args):
+class Levels(_Edit):
     department: str
     levels: list[str]
     """Every level's name, L1 (most junior) first; replaces the ladder."""
@@ -83,8 +97,8 @@ class Levels(_Args):
 class LevelPerformer(_Args):
     department: str
     level: int
-    or_above: bool | None
-    """Higher levels of the department may do it too; null = no."""
+    or_above: bool
+    """Higher levels of the department may do it too."""
 
 
 class InitiatorPerformer(_Args):
@@ -107,13 +121,13 @@ class NewTask(_Args):
     performer: Performer
     form: str | None
     """Key of the form it fills; null = none."""
-    show: list[str] | None
-    """Fields filled by earlier steps, shown read-only; null = none."""
+    show: list[str]
+    """Fields filled by earlier steps, shown read-only; empty = none."""
 
 
-class NewStage(_Args):
-    flow: str | None
-    """Flow key; null = the first flow."""
+class NewStage(_Edit):
+    flow: str
+    """Flow key, from get_overview."""
     key: str
     name: str
     department: str
@@ -123,35 +137,37 @@ class NewStage(_Args):
     """At least one, in order."""
 
 
-class StageAfter(_Args):
-    flow: str | None
-    """Flow key; null = the first flow."""
+class StageAfter(_Edit):
+    flow: str
+    """Flow key, from get_overview."""
     stage: str
     after: list[str]
     """Stage keys that must all finish first (several = they run in parallel); empty = none."""
 
 
-class TaskIn(_Args):
-    flow: str | None
-    """Flow key; null = the first flow."""
+class TaskIn(_Edit):
+    flow: str
+    """Flow key, from get_overview."""
     stage: str
     task: NewTask
     before: str | None
     """Insert before this task of the stage; null = at its end."""
 
 
-class TaskChanges(_Args):
+class TaskChanges(_Edit):
     task_id: str
-    name: str | None
-    performer: Performer | None
+    name: str
+    performer: Performer
     form: str | None
-    show: list[str] | None
+    """Null = no form."""
+    show: list[str]
+    """Empty = none."""
 
 
-class TaskMove(_Args):
+class TaskMove(_Edit):
     task_id: str
-    flow: str | None
-    """Flow key; null = the first flow."""
+    flow: str
+    """Flow key, from get_overview."""
     stage: str
     before: str | None
     """Put it before this task of the stage; null = at its end."""
@@ -162,10 +178,10 @@ class OutcomeIn(_Args):
     label: str
     to: str | None
     """A task of the same stage, `@close` (ends the case) or `@end`; null = the next step."""
-    comment_required: bool | None
+    comment_required: bool
 
 
-class Outcomes(_Args):
+class Outcomes(_Edit):
     task_id: str
     outcomes: list[OutcomeIn]
     """The task's decision buttons, replacing any it has; empty = a plain submit."""
@@ -176,17 +192,17 @@ class DeptLevel(_Args):
     level: int
 
 
-class ApprovalChain(_Args):
+class ApprovalChain(_Edit):
     task_id: str
     chain: list[DeptLevel]
     """Approvers in order; empty removes the task's approval."""
     send_back_to: str | None
     """A task of the same stage an approver can send it back to; null = none."""
-    allow_reject: bool | None
-    """Null = yes."""
+    allow_reject: bool
+    """Usually true."""
 
 
-class DocumentSlot(_Args):
+class DocumentSlot(_Edit):
     task_id: str
     """The task whose form gets the slot (the task needs a form)."""
     key: str
@@ -194,10 +210,10 @@ class DocumentSlot(_Args):
     label: str
     accept: list[str]
     """File extensions, e.g. `["pdf", "jpg"]`."""
-    max_mb: int | None
-    """1 to 100; null = 25."""
-    required: bool | None
-    keep_versions: bool | None
+    max_mb: int
+    """1 to 100; usually 25."""
+    required: bool
+    keep_versions: bool
 
 
 class OptionIn(_Args):
@@ -205,33 +221,34 @@ class OptionIn(_Args):
     label: str
 
 
-class NewField(_Args):
+class NewField(_Edit):
     key: str
     """Lowercase letters, digits and `_`, 2 to 41 characters; it never changes."""
     type: FieldType
     """From list_field_types; a document field comes from add_document_slot."""
     label: str
-    required: bool | None
-    options: list[OptionIn] | None
-    """For select and multi_select; null = none."""
+    required: bool
+    options: list[OptionIn]
+    """For select and multi_select; empty for the other types."""
 
 
-class FieldChanges(_Args):
+class FieldChanges(_Edit):
     key: str
     """The field to change; its key itself never changes."""
-    label: str | None
-    options: list[OptionIn] | None
-    required: bool | None
+    label: str
+    options: list[OptionIn]
+    """Empty = none."""
+    required: bool
 
 
-class FieldRef(_Args):
+class FieldRef(_Edit):
     key: str
 
 
 class CellIn(_Args):
     field: str
-    span: int | None
-    """Columns out of 12; null = the whole row."""
+    span: int
+    """Columns out of 12; 12 = the whole row."""
 
 
 class SectionIn(_Args):
@@ -243,7 +260,7 @@ class SectionIn(_Args):
     """Hide the section from levels below this one; null = shown to all."""
 
 
-class FormLayout(_Args):
+class FormLayout(_Edit):
     form: str
     """Form key; a new key makes a new form (point a task at it with update_task)."""
     sections: list[SectionIn]
@@ -263,11 +280,11 @@ def _index(items: list[Doc], key: str, what: str) -> int:
     return keys.index(key)
 
 
-def _flow(doc: Doc, flow: str | None) -> int:
-    return 0 if flow is None else _index(doc["flows"], flow, "flow")
+def _flow(doc: Doc, flow: str) -> int:
+    return _index(doc["flows"], flow, "flow")
 
 
-def _stage(doc: Doc, flow: str | None, stage: str) -> str:
+def _stage(doc: Doc, flow: str, stage: str) -> str:
     fi = _flow(doc, flow)
     return _ptr("flows", fi, "stages", _index(doc["flows"][fi]["stages"], stage, "stage"))
 
@@ -307,7 +324,7 @@ def _form(doc: Doc, key: str) -> Doc:
     return doc["forms"][key]
 
 
-def _insert_at(doc: Doc, flow: str | None, stage: str, before: str | None) -> str:
+def _insert_at(doc: Doc, flow: str, stage: str, before: str | None) -> str:
     """Where a task goes: before `before`, a task of the stage, else at the stage's end."""
     at = _stage(doc, flow, stage)
     if before is None:
@@ -338,10 +355,16 @@ def _levels(names: list[str]) -> list[Doc]:
     return [{"n": n, "name": name} for n, name in enumerate(names, 1)]
 
 
-def _set(at: str, changes: BaseModel, exclude: set[str]) -> Patch:
-    """`add` (sets a member, whether there or not) for each argument that isn't null."""
-    values = changes.model_dump(exclude=exclude, exclude_none=True)
-    return [{"op": "add", "path": f"{at}/{k}", "value": v} for k, v in values.items()]
+def _set(at: str, current: Doc, values: Doc) -> Patch:
+    """`add` (sets a member, whether there or not) for each value; a null or empty one removes
+    the member, if it is there."""
+    return [
+        {"op": "add", "path": f"{at}/{k}", "value": v}
+        if v not in (None, [])
+        else {"op": "remove", "path": f"{at}/{k}"}
+        for k, v in values.items()
+        if v not in (None, []) or k in current
+    ]
 
 
 # --- edits: draft -> patch (pure) ----------------------------------------------------------------
@@ -385,7 +408,8 @@ def add_task(doc: Doc, a: TaskIn) -> Patch:
 
 
 def update_task(doc: Doc, a: TaskChanges) -> Patch:
-    return _set(_task(doc, a.task_id)[0], a, {"task_id"})
+    at, task = _task(doc, a.task_id)
+    return _set(at, task, a.model_dump(exclude={"task_id"}))
 
 
 def move_task(doc: Doc, a: TaskMove) -> Patch:
@@ -418,19 +442,22 @@ def add_document_slot(doc: Doc, a: DocumentSlot) -> Patch:
         raise UnprocessableContent(
             f"Task '{a.task_id}' has no form: arrange one, then set it with update_task"
         )
-    rule = a.model_dump(include={"accept", "max_mb", "keep_versions"}, exclude_none=True)
-    field = {"type": "document", "label": a.label, "required": bool(a.required), "document": rule}
+    rule = a.model_dump(include={"accept", "max_mb", "keep_versions"})
+    field = {"type": "document", "label": a.label, "required": a.required, "document": rule}
     last = len(_form(doc, task["form"])["sections"]) - 1
     row = _ptr("forms", task["form"], "sections", last, "rows", "-")
     return [*_new_field(doc, a.key, field), {"op": "add", "path": row, "value": [{"field": a.key}]}]
 
 
 def add_field(doc: Doc, a: NewField) -> Patch:
-    return _new_field(doc, a.key, a.model_dump(exclude={"key"}, exclude_none=True))
+    field = a.model_dump(exclude={"key"})
+    if not a.options:
+        del field["options"]
+    return _new_field(doc, a.key, field)
 
 
 def update_field(doc: Doc, a: FieldChanges) -> Patch:
-    return _set(_field(doc, a.key), a, {"key"})
+    return _set(_field(doc, a.key), doc["fields"][a.key], a.model_dump(exclude={"key"}))
 
 
 def remove_field(doc: Doc, a: FieldRef) -> Patch:
@@ -446,12 +473,10 @@ def arrange_form(doc: Doc, a: FormLayout) -> Patch:
 # --- reads ---------------------------------------------------------------------------------------
 
 
-async def _draft(ctx: ClientContext) -> Doc:
+async def _draft(ctx: ClientContext) -> tuple[Doc, str]:
+    """The draft and the sha256 an edit names to say it read this one."""
     async with ctx.db.connect() as conn:
-        doc = await releases.get_draft(conn)
-    if doc is None:
-        raise NotFound(drafts.NO_DRAFT)
-    return doc
+        return await drafts.read(conn)
 
 
 def overview(doc: Doc) -> Doc:
@@ -496,24 +521,26 @@ def overview(doc: Doc) -> Doc:
     }
 
 
-def _ok(summary: str, data: Any) -> Result:
-    return {"ok": True, "summary": summary, "data": data}
+def _ok(summary: str, data: Any, **more: Any) -> Result:
+    return {"ok": True, "summary": summary, "data": data, **more}
 
 
 async def get_overview(ctx: ClientContext, _: NoArgs) -> Result:
-    return _ok("The draft", overview(await _draft(ctx)))
+    doc, sha = await _draft(ctx)
+    return _ok("The draft", overview(doc), draft_sha256=sha)
 
 
 async def get_task(ctx: ClientContext, a: TaskRef) -> Result:
-    return _ok(f"Task {a.task_id}", _task(await _draft(ctx), a.task_id)[1])
+    doc, sha = await _draft(ctx)
+    return _ok(f"Task {a.task_id}", _task(doc, a.task_id)[1], draft_sha256=sha)
 
 
 async def get_form(ctx: ClientContext, a: FormRef) -> Result:
-    doc = await _draft(ctx)
+    doc, sha = await _draft(ctx)
     form = _form(doc, a.form)
     used = {c["field"] for s in form["sections"] for row in s["rows"] for c in row}
     fields = {k: f for k, f in doc.get("fields", {}).items() if k in used}
-    return _ok(f"Form {a.form}", {"form": form, "fields": fields})
+    return _ok(f"Form {a.form}", {"form": form, "fields": fields}, draft_sha256=sha)
 
 
 async def list_field_types(_ctx: ClientContext, _: NoArgs) -> Result:
@@ -622,8 +649,8 @@ TOOLS: dict[str, Tool] = {
         summary=lambda a: f"Added task: {a.task.name}",
     ),
     "update_task": Tool(
-        "Change a task's name, performer, form or shown fields; null leaves one as it is, and"
-        " the id never changes.",
+        "Set a task's name, performer, form and shown fields, all of them (start from get_task):"
+        " a null form or empty show clears it. The id never changes.",
         TaskChanges,
         edit=update_task,
         summary=lambda a: f"Updated task: {a.task_id}",
@@ -636,7 +663,7 @@ TOOLS: dict[str, Tool] = {
     ),
     "remove_task": Tool(
         "Remove a task from its stage.",
-        TaskRef,
+        TaskToRemove,
         edit=remove_task,
         summary=lambda a: f"Removed task: {a.task_id}",
     ),
@@ -672,8 +699,8 @@ TOOLS: dict[str, Tool] = {
         summary=lambda a: f"Added: {a.label}",
     ),
     "update_field": Tool(
-        "Change a field's label, options or whether it is required; null leaves one as it is."
-        " Its key and type never change.",
+        "Set a field's label, options and whether it is required, all of them (start from"
+        " get_form): empty options clears them. Its key and type never change.",
         FieldChanges,
         edit=update_field,
         summary=lambda a: f"Updated field: {a.key}",
@@ -706,16 +733,33 @@ TOOLS: dict[str, Tool] = {
 
 
 def definitions() -> list[Doc]:
-    """The tools as the Messages API takes them."""
+    """The tools as the Messages API takes them. Only the edits are strict: Anthropic caps strict
+    tools and their union and optional parameters per request (test_tools checks the totals), and
+    every call is validated here anyway."""
     return [
         {
             "name": name,
             "description": t.description,
             "input_schema": t.args.model_json_schema(),
-            "strict": True,
+            "strict": t.edit is not None,
         }
         for name, t in TOOLS.items()
     ]
+
+
+MAX_DATA = 40_000
+"""Characters of JSON a result's `data` keeps (about 10k tokens; Matrix Retail's overview is a
+quarter of it); past it, `data` is that much of its JSON text."""
+MAX_ERRORS = 50
+
+
+def _fit(result: Result) -> Result:
+    """`result` cut to MAX_DATA and MAX_ERRORS, with `truncated` when it was."""
+    if len(result.get("errors", [])) > MAX_ERRORS:
+        result = {**result, "errors": result["errors"][:MAX_ERRORS], "truncated": True}
+    if "data" in result and len(found := json.dumps(result["data"])) > MAX_DATA:
+        result = {**result, "data": found[:MAX_DATA], "truncated": True}
+    return result
 
 
 async def call(
@@ -725,7 +769,14 @@ async def call(
     args: Any,
     conversation_id: UUID | None = None,
 ) -> Result:
-    """Run one tool call for `ctx`'s client; every refusal comes back as `ok: false`."""
+    """Run one tool call for `ctx`'s client; every refusal comes back as `ok: false`. A read of
+    the draft and a done edit answer the draft's `draft_sha256`, which the next edit names."""
+    return _fit(await _call(ctx, author, name, args, conversation_id))
+
+
+async def _call(
+    ctx: ClientContext, author: UUID, name: str, args: Any, conversation_id: UUID | None
+) -> Result:
     tool = TOOLS.get(name)
     if tool is None:
         return {"ok": False, "summary": f"No tool '{name}'"}
@@ -734,7 +785,13 @@ async def call(
         if tool.read is not None:
             return await tool.read(ctx, a)
         change = await drafts.apply_change(
-            ctx, author, name, lambda doc: tool.edit(doc, a), tool.summary(a), conversation_id
+            ctx,
+            author,
+            name,
+            lambda doc: tool.edit(doc, a),
+            tool.summary(a),
+            conversation_id,
+            draft_sha256=a.draft_sha256,
         )
     except ValidationError as e:
         errors = [{"path": loc_to_path(x["loc"]), "message": x["msg"]} for x in e.errors()]
@@ -742,4 +799,6 @@ async def call(
     except ApiError as e:
         found = {"errors": [x.model_dump() for x in e.errors]} if e.errors else {}
         return {"ok": False, "summary": e.detail or "Refused", **found}
-    return {"ok": True, "summary": tool.summary(a) if change else "Nothing changed"}
+    if change is None:  # the draft is still the one the agent read
+        return {"ok": True, "summary": "Nothing changed", "draft_sha256": a.draft_sha256}
+    return {"ok": True, "summary": tool.summary(a), "draft_sha256": change.after_sha256}

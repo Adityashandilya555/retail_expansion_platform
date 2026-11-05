@@ -62,6 +62,18 @@ def test_a_patch_that_breaks_validation_is_422_with_paths() -> None:
     assert doc == matrix_retail()
 
 
+def test_an_invalid_draft_takes_a_change_that_adds_no_problem_and_refuses_one_that_does() -> None:
+    broken = matrix_retail()  # e.g. as an undo restored it, without validating it again
+    broken["flows"][0]["stages"][0]["after"] = ["nope"]
+    after, _ = drafts.patched(broken, CHANGES[1])  # unrelated: the old problem stays
+    assert "gst_no" in after["fields"] and len(drafts.validate(after)) == 1
+    with pytest.raises(UnprocessableContent) as e:
+        drafts.patched(broken, [{"op": "add", "path": "/flows/0/stages/1/after/-", "value": "x"}])
+    assert [(x.path, x.message) for x in e.value.errors or []] == [
+        ("flows[0].stages[1].after[1]", "unknown stage 'x' in flow 'store_launch'")
+    ]  # only what the change brings in
+
+
 @pytest.mark.parametrize(
     "patch",
     [

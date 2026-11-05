@@ -3,7 +3,10 @@ change log held in memory; bad arguments of every kind; the strict schemas. The 
 against the pilot vault's real log (`pytest -m integration` after dev-up.sh)."""
 
 import asyncio
+import copy
+import hashlib
 import json
+import random
 import re
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -19,13 +22,15 @@ from zm_api.agent import tools
 from zm_api.templates import load_templates
 from zm_schema.models import FieldType
 
-from ..test_draft import canonical, pilot  # noqa: F401 (pilot: the vault fixture)
+from ..test_draft import CHANGES, canonical, pilot  # noqa: F401 (pilot: the vault fixture)
 from ..test_publish import Clients, Stack, clients, vault_sql  # noqa: F401
 from ..test_publish_unit import matrix_retail
 
 Doc = dict[str, Any]
 OWNER = uuid.uuid4()
 ZM_FORM = Path(__file__).resolve().parents[4] / "packages" / "zm-forms" / "src" / "ZmForm.tsx"
+READ = "<draft_sha256 of the last read>"
+"""Stands for the draft's sha256 in an edit's arguments; `agent` puts the one it last got there."""
 
 
 def stage(doc: Doc, key: str) -> Doc:
@@ -52,8 +57,13 @@ def qsr() -> Doc:
     return next(t.workflow for t in load_templates() if t.key == "qsr")
 
 
-MANAGER = {"department": "management", "level": 1, "or_above": None}
-SLOT = {"accept": ["pdf"], "max_mb": None, "required": True, "keep_versions": True}
+def sent(tool: str, args: Doc) -> Doc:
+    """`args` as Claude sends them: an edit also names the draft it read."""
+    return {**args, "draft_sha256": READ} if tools.TOOLS[tool].edit else args
+
+
+MANAGER = {"department": "management", "level": 1, "or_above": False}
+SLOT = {"accept": ["pdf"], "max_mb": 25, "required": True, "keep_versions": True}
 
 # (tool, arguments as Claude sends them, where to look in the draft after it, what is there)
 EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
@@ -78,7 +88,7 @@ EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
     (
         "add_stage",
         {
-            "flow": None,
+            "flow": "store_launch",
             "key": "handover",
             "name": "Handover",
             "department": "management",
@@ -89,12 +99,12 @@ EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
                     "name": "Accept the store",
                     "performer": MANAGER,
                     "form": None,
-                    "show": None,
+                    "show": [],
                 }
             ],
         },
         lambda d: (stage(d, "handover")["after"], stage(d, "handover")["tasks"][0]["performer"]),
-        (["closure"], {"department": "management", "level": 1}),
+        (["closure"], MANAGER),
     ),
     (
         "set_after",
@@ -105,7 +115,7 @@ EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
     (
         "add_task",
         {
-            "flow": None,
+            "flow": "store_launch",
             "stage": "bd_loi",
             "task": {
                 "id": "bd_check_loi",
@@ -120,20 +130,20 @@ EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
         ["bd_upload_loi", "bd_check_loi", "bd_send_legal"],
     ),
     (
-        "update_task",
+        "update_task",  # every value is set: a new name, the rest as get_task showed them
         {
             "task_id": "bd_review_draft",
             "name": "Review the draft site",
-            "performer": None,
+            "performer": {"department": "bd", "level": 2, "or_above": False},
             "form": None,
-            "show": None,
+            "show": [],
         },
         lambda d: (task(d, "bd_review_draft")["name"], "outcomes" in task(d, "bd_review_draft")),
         ("Review the draft site", True),
     ),
     (
         "move_task",
-        {"task_id": "prj_push_nso", "flow": None, "stage": "nso", "before": "nso_comms"},
+        {"task_id": "prj_push_nso", "flow": "store_launch", "stage": "nso", "before": "nso_comms"},
         lambda d: ("prj_push_nso" in ids(d, "project"), ids(d, "nso")[:2]),
         (False, ["prj_push_nso", "nso_comms"]),
     ),
@@ -148,13 +158,13 @@ EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
         {
             "task_id": "nso_launch_ready",
             "outcomes": [
-                {"id": "ready", "label": "Ready", "to": None, "comment_required": None},
+                {"id": "ready", "label": "Ready", "to": None, "comment_required": False},
                 {"id": "redo", "label": "Not ready", "to": "nso_comms", "comment_required": True},
             ],
         },
         lambda d: task(d, "nso_launch_ready")["outcomes"],
         [
-            {"id": "ready", "label": "Ready"},
+            {"id": "ready", "label": "Ready", "comment_required": False},
             {"id": "redo", "label": "Not ready", "to": "nso_comms", "comment_required": True},
         ],
     ),
@@ -181,23 +191,23 @@ EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
                 "type": "document",
                 "label": "Fire NOC upload",
                 "required": True,
-                "document": {"accept": ["pdf"], "keep_versions": True},
+                "document": {"accept": ["pdf"], "max_mb": 25, "keep_versions": True},
             },
             [{"field": "fire_noc"}],
         ),
     ),
     (
         "add_field",
-        {"key": "gst_no", "type": "text", "label": "GST no", "required": None, "options": None},
+        {"key": "gst_no", "type": "text", "label": "GST no", "required": False, "options": []},
         lambda d: d["fields"]["gst_no"],
-        {"type": "text", "label": "GST no"},
+        {"type": "text", "label": "GST no", "required": False},
     ),
     (
         "update_field",
         {
             "key": "site_name",
             "label": "Site name (as on the lease)",
-            "options": None,
+            "options": [],
             "required": False,
         },
         lambda d: d["fields"]["site_name"],
@@ -268,45 +278,51 @@ READS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
     ("diff_vs_live", {}, lambda r: "site_name" in r["data"]["fields"]["added"], True),
 ]
 
-ARGS = {tool: args for tool, args, *_ in EDITS + READS}
+ARGS = {tool: sent(tool, args) for tool, args, *_ in EDITS + READS}
 
 # Arguments the schema takes but the draft doesn't: each comes back ok=false, changing nothing.
 BAD: Doc = {
-    "get_task": {"task_id": "nope"},
-    "get_form": {"form": "nope"},
-    "load_template": {"template": "nope"},
-    "add_department": {"key": "legal", "name": "Legal again", "levels": ["Clerk"]},
-    "update_department": {"department": "nope", "name": "Nope"},
-    "set_levels": {"department": "bd", "levels": []},
-    "add_stage": {**ARGS["add_stage"], "after": ["nope"]},
-    "set_after": {"flow": None, "stage": "launch", "after": ["nso", "nope"]},
-    "add_task": {**ARGS["add_task"], "task": {**ARGS["add_task"]["task"], "id": "bd_review_draft"}},
-    "update_task": {**ARGS["update_task"], "task_id": "nope"},
-    "move_task": {**ARGS["move_task"], "stage": "nope"},
-    "remove_task": {"task_id": "bd_upload_loi"},  # bd_send_legal sends back to it
-    "set_outcomes": {
-        "task_id": "bd_send_legal",
-        "outcomes": [{"id": "x", "label": "X", "to": "nope", "comment_required": None}],
-    },
-    "set_approval_chain": {
-        **ARGS["set_approval_chain"],
-        "chain": [{"department": "nope", "level": 1}],
-    },
-    "add_document_slot": {**ARGS["add_document_slot"], "task_id": "bd_review_draft"},  # no form
-    "add_field": {**ARGS["add_field"], "key": "site_name"},  # taken
-    "update_field": {**ARGS["update_field"], "key": "nope"},
-    "remove_field": {"key": "nope"},
-    "arrange_form": {
-        "form": "bd_upload_loi",
-        "sections": [
-            {
-                "key": "x",
-                "title": "X",
-                "rows": [[{"field": "nope", "span": None}]],
-                "hidden_below_level": None,
-            }
-        ],
-    },
+    tool: sent(tool, args)
+    for tool, args in {
+        "get_task": {"task_id": "nope"},
+        "get_form": {"form": "nope"},
+        "load_template": {"template": "nope"},
+        "add_department": {"key": "legal", "name": "Legal again", "levels": ["Clerk"]},
+        "update_department": {"department": "nope", "name": "Nope"},
+        "set_levels": {"department": "bd", "levels": []},
+        "add_stage": {**ARGS["add_stage"], "after": ["nope"]},
+        "set_after": {"flow": "store_launch", "stage": "launch", "after": ["nso", "nope"]},
+        "add_task": {
+            **ARGS["add_task"],
+            "task": {**ARGS["add_task"]["task"], "id": "bd_review_draft"},
+        },
+        "update_task": {**ARGS["update_task"], "task_id": "nope"},
+        "move_task": {**ARGS["move_task"], "stage": "nope"},
+        "remove_task": {"task_id": "bd_upload_loi"},  # bd_send_legal sends back to it
+        "set_outcomes": {
+            "task_id": "bd_send_legal",
+            "outcomes": [{"id": "x", "label": "X", "to": "nope", "comment_required": False}],
+        },
+        "set_approval_chain": {
+            **ARGS["set_approval_chain"],
+            "chain": [{"department": "nope", "level": 1}],
+        },
+        "add_document_slot": {**ARGS["add_document_slot"], "task_id": "bd_review_draft"},
+        "add_field": {**ARGS["add_field"], "key": "site_name"},  # taken
+        "update_field": {**ARGS["update_field"], "key": "nope"},
+        "remove_field": {"key": "nope"},
+        "arrange_form": {
+            "form": "bd_upload_loi",
+            "sections": [
+                {
+                    "key": "x",
+                    "title": "X",
+                    "rows": [[{"field": "nope", "span": 12}]],
+                    "hidden_below_level": None,
+                }
+            ],
+        },
+    }.items()
 }
 
 
@@ -324,7 +340,54 @@ def bad_calls() -> Iterator[tuple[str, Any]]:
     yield "publish", {}
 
 
+def nodes(value: Any) -> Iterator[tuple[Any, Any]]:
+    """(container, key or index) of every value inside `value`."""
+    if isinstance(value, dict | list):
+        for k, v in value.items() if isinstance(value, dict) else enumerate(value):
+            yield value, k
+            yield from nodes(v)
+
+
+def malformed(rng: random.Random, args: Doc) -> Doc:
+    """`args` with one to three random faults, each of which a tool's schema refuses wherever it
+    lands: a property dropped (all are required) or added (none is allowed), or a value swapped
+    for a fraction, a list of one or an object, which no property takes in its place."""
+    args = copy.deepcopy(args)
+    for _ in range(rng.randint(1, 3)):
+        inside = list(nodes(args))
+        objects = [args, *(c[k] for c, k in inside if isinstance(c[k], dict))]
+        target, fault = rng.choice(objects), rng.choice(["drop", "add", "swap"])
+        if fault == "drop" and (own := [k for k in target if not k.startswith("zz")]):
+            del target[rng.choice(own)]  # never an added one: that would undo a fault
+        elif fault == "swap" and inside:
+            c, k = rng.choice(inside)
+            fraction = 0.25 + rng.random() / 2
+            c[k] = rng.choice([fraction, [fraction], {"zz": fraction}])
+        else:
+            target[f"zz_{rng.randrange(100)}"] = rng.random()
+    return args
+
+
+async def agent(ctx: Any, author: uuid.UUID, calls: Any) -> list[Doc]:
+    """Runs `calls` the way the agent does: it reads the draft first, and an edit's READ becomes
+    the `draft_sha256` its last read or edit returned."""
+    sha = (await tools.call(ctx, author, "get_overview", {}))["draft_sha256"]
+    results = []
+    for tool, args in calls:
+        if isinstance(args, dict) and args.get("draft_sha256") == READ:
+            args = {**args, "draft_sha256": sha}
+        result = await tools.call(ctx, author, tool, args)
+        sha = result.get("draft_sha256", sha)
+        results.append(result)
+    return results
+
+
 # --- unit: the vault's draft row and log in memory ----------------------------------------------
+
+
+def sha(doc: Doc) -> str:
+    """The test's stand-in for the vault's sha256 over jsonb's text."""
+    return hashlib.sha256(canonical(doc).encode()).hexdigest()
 
 
 class FakeDb:
@@ -346,35 +409,41 @@ def held(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     async def draft(_conn: Any, *, lock: bool = False) -> Doc:
         return state.doc
 
-    async def log(_conn: Any, after: Doc, change: Doc) -> Doc:
+    async def read(_conn: Any) -> tuple[Doc, str]:
+        return state.doc, sha(state.doc)
+
+    async def log(_conn: Any, after: Doc, change: Doc) -> SimpleNamespace:
         state.doc = after
         state.log.append(change)
-        return change
+        return SimpleNamespace(**change, after_sha256=sha(after))
 
     async def none(_conn: Any) -> None:
         return None
 
     monkeypatch.setattr(drafts, "_draft", draft)
+    monkeypatch.setattr(drafts, "read", read)
     monkeypatch.setattr(drafts, "_log", log)
-    monkeypatch.setattr(releases, "get_draft", draft)
     monkeypatch.setattr(releases, "active_release", none)
     return state
 
 
 def call(state: SimpleNamespace, tool: str, args: Any) -> Doc:
-    return asyncio.run(tools.call(state.ctx, OWNER, tool, args))
+    """One call after a read, as the agent makes it."""
+    [result] = asyncio.run(agent(state.ctx, OWNER, [(tool, args)]))
+    return result
 
 
 @pytest.mark.parametrize(("tool", "args", "look", "want"), EDITS, ids=[e[0] for e in EDITS])
 def test_each_edit_applies_its_patch_and_logs_its_tool(
     held: SimpleNamespace, tool: str, args: Doc, look: Callable[[Doc], Any], want: Any
 ) -> None:
-    result = call(held, tool, args)
+    result = call(held, tool, sent(tool, args))
     assert result["ok"], result
     assert look(held.doc) == want
     assert [(c["tool"], c["summary"], c["author_owner_id"]) for c in held.log] == [
         (tool, result["summary"], OWNER)
     ]
+    assert result["draft_sha256"] == sha(held.doc)
 
 
 @pytest.mark.parametrize(("tool", "args", "look", "want"), READS, ids=[r[0] for r in READS])
@@ -388,7 +457,7 @@ def test_each_read_answers_from_the_draft_and_changes_nothing(
 
 def edits() -> list[tuple[str, Doc]]:
     """Every edit but load_template (an untouched draft only), in the table's order."""
-    return [(tool, args) for tool, args, *_ in EDITS if tool != "load_template"]
+    return [(tool, sent(tool, args)) for tool, args, *_ in EDITS if tool != "load_template"]
 
 
 def fold() -> Doc:
@@ -402,7 +471,7 @@ def fold() -> Doc:
 
 
 def test_the_edits_add_up_one_after_another(held: SimpleNamespace) -> None:
-    assert all(call(held, tool, args)["ok"] for tool, args in edits())
+    assert all(r["ok"] for r in asyncio.run(agent(held.ctx, OWNER, edits())))
     assert [c["tool"] for c in held.log] == [tool for tool, _ in edits()]
     assert canonical(held.doc) == canonical(fold())
 
@@ -411,6 +480,18 @@ def test_bad_arguments_come_back_as_errors_and_change_nothing(held: SimpleNamesp
     for tool, args in bad_calls():
         result = call(held, tool, args)
         assert result["ok"] is False and result["summary"], (tool, args, result)
+    assert held.doc == matrix_retail() and held.log == []
+
+
+def test_random_malformed_arguments_come_back_as_errors_and_change_nothing(
+    held: SimpleNamespace,
+) -> None:
+    rng = random.Random(36)  # seeded: a failing case names itself and comes back on a rerun
+    for tool, args in ARGS.items():
+        for _ in range(20):
+            bad = malformed(rng, args)
+            result = call(held, tool, bad)
+            assert result["ok"] is False and result["summary"], (tool, bad, result)
     assert held.doc == matrix_retail() and held.log == []
 
 
@@ -431,10 +512,11 @@ def test_a_bad_argument_comes_back_with_its_path(held: SimpleNamespace) -> None:
 def test_set_outcomes_refuses_one_id_twice(held: SimpleNamespace) -> None:
     # both would compile to the same XOR condition, so the second could never be taken
     outcomes = [
-        {"id": "ready", "label": "Ready", "to": None, "comment_required": None},
+        {"id": "ready", "label": "Ready", "to": None, "comment_required": False},
         {"id": "ready", "label": "Not ready", "to": "nso_comms", "comment_required": True},
     ]
-    result = call(held, "set_outcomes", {"task_id": "nso_launch_ready", "outcomes": outcomes})
+    args = sent("set_outcomes", {"task_id": "nso_launch_ready", "outcomes": outcomes})
+    result = call(held, "set_outcomes", args)
     assert result["ok"] is False
     assert [e["message"] for e in result["errors"]] == ["duplicate outcome id 'ready'"]
     assert held.doc == matrix_retail() and held.log == []
@@ -447,13 +529,30 @@ def test_update_field_never_changes_a_key(held: SimpleNamespace) -> None:
     assert held.doc == matrix_retail() and held.log == []
 
 
+def test_update_task_sets_every_value_so_a_form_or_shown_fields_can_be_cleared(
+    held: SimpleNamespace,
+) -> None:
+    upload = task(matrix_retail(), "bd_upload_loi")
+    args = {**ARGS["update_task"], "task_id": "bd_upload_loi", "name": upload["name"]}
+    cleared = {**args, "performer": upload["performer"], "form": None, "show": []}
+    patch = tools.update_task(matrix_retail(), tools.TaskChanges.model_validate(cleared))
+    at = "/flows/0/stages/1/tasks/0"
+    assert [p for p in patch if p["op"] == "remove"] == [
+        {"op": "remove", "path": f"{at}/form"},
+        {"op": "remove", "path": f"{at}/show"},
+    ]
+    assert call(held, "update_task", {**cleared, "form": "bd_upload_loi"})["ok"]
+    assert task(held.doc, "bd_upload_loi") == {k: v for k, v in upload.items() if k != "show"}
+
+
 def test_load_template_only_replaces_an_untouched_draft(held: SimpleNamespace) -> None:
-    assert call(held, "load_template", {"template": "matrix-retail"}) == {
+    assert call(held, "load_template", sent("load_template", {"template": "matrix-retail"})) == {
         "ok": True,
         "summary": "Nothing changed",
+        "draft_sha256": sha(matrix_retail()),
     }
     assert call(held, "add_field", ARGS["add_field"])["ok"]
-    refused = call(held, "load_template", {"template": "qsr"})
+    refused = call(held, "load_template", sent("load_template", {"template": "qsr"}))
     assert refused["ok"] is False and "unchanged template" in refused["summary"]
     assert [c["tool"] for c in held.log] == ["add_field"]
 
@@ -464,6 +563,44 @@ def test_an_empty_approval_chain_removes_the_approval(held: SimpleNamespace) -> 
     assert call(held, "set_approval_chain", none)["ok"]
     assert "approval" not in task(held.doc, "fc_send")
     assert call(held, "set_approval_chain", none)["summary"] == "Nothing changed"
+
+
+def test_an_edit_made_on_a_read_older_than_the_draft_is_refused(held: SimpleNamespace) -> None:
+    def read() -> str:
+        return call(held, "get_task", {"task_id": "bd_upload_loi"})["draft_sha256"]
+
+    def update_field(seen: str) -> Doc:
+        return call(held, "update_field", {**ARGS["update_field"], "draft_sha256": seen})
+
+    before = read()
+    # a person changes the draft in the console after the agent read it
+    asyncio.run(drafts.apply_change(held.ctx, OWNER, "set_theme", CHANGES[2], "Accent: copper"))
+    assert update_field(before) == {"ok": False, "summary": drafts.STALE}
+    assert [c["tool"] for c in held.log] == ["set_theme"]
+    after = read()
+    done = update_field(after)
+    assert done["ok"] and done["draft_sha256"] == sha(held.doc) != after != before
+    assert [c["tool"] for c in held.log] == ["set_theme", "update_field"]
+
+
+def test_a_long_result_is_cut_and_says_so(
+    held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert "truncated" not in call(held, "get_overview", {})  # the Matrix Retail draft fits
+    monkeypatch.setattr(tools, "MAX_DATA", 100)
+    monkeypatch.setattr(tools, "MAX_ERRORS", 2)
+    overview = call(held, "get_overview", {})
+    assert overview["truncated"] is True
+    assert overview["data"] == json.dumps(tools.overview(matrix_retail()))[:100]
+    assert overview["draft_sha256"] == sha(matrix_retail())
+    empty = call(held, "add_field", sent("add_field", {}))  # five arguments missing
+    assert empty["truncated"] is True and len(empty["errors"]) == 2
+
+
+# Anthropic's structured-output limits, summed over every strict schema in one request
+# ("Schema complexity limits"; past any of them the request is a 400):
+# https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+STRICT_TOOLS, UNION_PARAMETERS, OPTIONAL_PARAMETERS = 20, 16, 24
 
 
 def schemas(node: Any) -> Iterator[Doc]:
@@ -478,12 +615,28 @@ def schemas(node: Any) -> Iterator[Doc]:
             yield from schemas(value)
 
 
+def test_the_strict_tools_fit_the_api_limits() -> None:
+    strict = [d for d in tools.definitions() if d["strict"]]
+    parameters = [  # every property of every object, nested ones and `$defs` included
+        (p, name in o.get("required", []))
+        for d in strict
+        for o in schemas(d["input_schema"])
+        for name, p in o.get("properties", {}).items()
+    ]
+    unions = [p for p, _ in parameters if "anyOf" in p or isinstance(p.get("type"), list)]
+    optional = [p for p, required in parameters if not required]
+    assert len(strict) <= STRICT_TOOLS, len(strict)
+    assert len(unions) <= UNION_PARAMETERS, len(unions)
+    assert len(optional) <= OPTIONAL_PARAMETERS, len(optional)
+
+
 def test_every_tool_schema_is_strict_and_names_no_client_or_tenant() -> None:
     definitions = tools.definitions()
     assert [d["name"] for d in definitions] == list(tools.TOOLS)
     assert sorted(tools.TOOLS) == sorted(ARGS)  # a row per tool, and no tool beyond the spec
     for d in definitions:
-        assert d["strict"] is True and d["description"]
+        # the edits are strict; reads and checks aren't, to stay inside the limits above
+        assert d["strict"] is (tools.TOOLS[d["name"]].edit is not None) and d["description"]
         objects = list(schemas(d["input_schema"]))
         assert objects[0] is d["input_schema"]
         for schema in objects:
@@ -509,8 +662,7 @@ def test_v1_renders_exactly_what_zm_forms_draws() -> None:
 def run(c: Clients, *calls: tuple[str, Any]) -> list[Doc]:
     async def go() -> list[Doc]:
         async with Stack(c) as stack:
-            ctx = await stack.ctx("pilot")
-            return [await tools.call(ctx, c.owner, tool, args) for tool, args in calls]
+            return await agent(await stack.ctx("pilot"), c.owner, calls)
 
     return asyncio.run(go())
 
@@ -519,9 +671,14 @@ def run(c: Clients, *calls: tuple[str, Any]) -> list[Doc]:
 def test_every_edit_lands_in_the_vault_logged_with_its_tool(pilot: Clients) -> None:  # noqa: F811
     results = run(pilot, *edits())
     assert all(r["ok"] for r in results), results
-    log = vault_sql("pilot", "select tool, summary from app.draft_changes order by id")
+    log = vault_sql(
+        "pilot", "select tool, summary, after_sha256 from app.draft_changes order by id"
+    )
     [(draft,)] = vault_sql("pilot", "select workflow from app.drafts")
-    assert log == [(tool, r["summary"]) for (tool, _), r in zip(edits(), results, strict=True)]
+    assert log == [
+        (tool, r["summary"], r["draft_sha256"])
+        for (tool, _), r in zip(edits(), results, strict=True)
+    ]
     assert canonical(draft) == canonical(fold())
 
 
@@ -541,6 +698,24 @@ def test_reads_answer_from_the_vault(pilot: Clients) -> None:  # noqa: F811
     for (tool, _, look, want), result in zip(READS, results, strict=True):
         assert look(result) == want, tool
     assert vault_sql("pilot", "select count(*) from app.draft_changes") == [(0,)]
+    [(now,)] = vault_sql("pilot", f"select {drafts._DRAFT_SHA}")
+    assert results[0]["draft_sha256"] == now
+
+
+@pytest.mark.integration
+def test_an_edit_on_a_stale_read_is_refused_in_the_vault(pilot: Clients) -> None:  # noqa: F811
+    async def go() -> tuple[Doc, Doc]:
+        async with Stack(pilot) as stack:
+            ctx = await stack.ctx("pilot")
+            read = await tools.call(ctx, pilot.owner, "get_task", {"task_id": "bd_upload_loi"})
+            await drafts.apply_change(ctx, pilot.owner, "set_theme", CHANGES[2], "Accent: copper")
+            stale = {**ARGS["update_field"], "draft_sha256": read["draft_sha256"]}
+            return read, await tools.call(ctx, pilot.owner, "update_field", stale)
+
+    read, refused = asyncio.run(go())
+    assert refused == {"ok": False, "summary": drafts.STALE}
+    [(tool, logged)] = vault_sql("pilot", "select tool, after_sha256 from app.draft_changes")
+    assert tool == "set_theme" and logged != read["draft_sha256"]
 
 
 @pytest.mark.integration
@@ -549,9 +724,10 @@ def test_load_template_replaces_the_seeded_draft_but_not_one_with_work_in_it(
 ) -> None:
     loaded, added, refused = run(
         pilot,
-        ("load_template", {"template": "qsr"}),  # the draft round-tripped jsonb: still the template
+        # the draft round-tripped jsonb: still the template
+        ("load_template", sent("load_template", {"template": "qsr"})),
         ("add_field", ARGS["add_field"]),
-        ("load_template", {"template": "matrix-retail"}),
+        ("load_template", sent("load_template", {"template": "matrix-retail"})),
     )
     assert loaded["ok"] and added["ok"] and not refused["ok"]
     assert vault_sql("pilot", "select tool from app.draft_changes order by id") == [
