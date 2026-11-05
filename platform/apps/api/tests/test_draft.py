@@ -62,6 +62,44 @@ def test_a_patch_that_breaks_validation_is_422_with_paths() -> None:
     assert doc == matrix_retail()
 
 
+def test_an_invalid_draft_takes_a_change_that_adds_no_problem_and_refuses_one_that_does() -> None:
+    broken = matrix_retail()  # e.g. as an undo restored it, without validating it again
+    broken["flows"][0]["stages"][0]["after"] = ["nope"]
+    after, _ = drafts.patched(broken, CHANGES[1])  # unrelated: the old problem stays
+    assert "gst_no" in after["fields"] and len(drafts.validate(after)) == 1
+    with pytest.raises(UnprocessableContent) as e:
+        drafts.patched(broken, [{"op": "add", "path": "/flows/0/stages/1/after/-", "value": "x"}])
+    assert [(x.path, x.message) for x in e.value.errors or []] == [
+        ("flows[0].stages[1].after[1]", "unknown stage 'x' in flow 'store_launch'")
+    ]  # only what the change brings in
+
+
+def test_a_change_that_moves_stages_or_tasks_on_an_invalid_draft_adds_no_problem() -> None:
+    """Old problems' paths move with their list items; they still aren't the change's fault."""
+    broken = matrix_retail()
+    broken["flows"][0]["stages"][1]["after"] = ["nope"]  # reported at stages[1]
+    moved, _ = drafts.patched(  # now at stages[0]: the same problem, not a new one
+        broken, [{"op": "move", "from": "/flows/0/stages/1", "path": "/flows/0/stages/0"}]
+    )
+    problems = sorted(drafts._problem(e) for e in drafts.validate(broken))
+    assert len(problems) > 1  # `after` and the `show`s that lost their earlier stage
+    assert sorted(drafts._problem(e) for e in drafts.validate(moved)) == problems
+    assert "flows[0].stages[0].after[0]" in [e.path for e in drafts.validate(moved)]
+    intro = {"id": "bd_loi_intro", "name": "Intro", "performer": {"department": "bd", "level": 1}}
+    shifted, _ = drafts.patched(  # a task first in the broken stage: its old problems shift down
+        broken, [{"op": "add", "path": "/flows/0/stages/1/tasks/0", "value": intro}]
+    )
+    assert sorted(drafts._problem(e) for e in drafts.validate(shifted)) == problems
+    with pytest.raises(UnprocessableContent):  # reordering that breaks a `show` is still refused
+        tasks = "/flows/0/stages/1/tasks"
+        drafts.patched(broken, [{"op": "move", "from": f"{tasks}/1", "path": f"{tasks}/0"}])
+    with pytest.raises(UnprocessableContent) as e:  # a second, new problem of the same kind
+        drafts.patched(
+            broken, [{"op": "add", "path": "/flows/0/stages/2/after/-", "value": "nope"}]
+        )
+    assert [x.path for x in e.value.errors or []] == ["flows[0].stages[2].after[1]"]
+
+
 @pytest.mark.parametrize(
     "patch",
     [
@@ -442,3 +480,12 @@ def test_the_theme_picker_works_on_a_draft_without_apps(pilot: Clients) -> None:
         response = api.patch(f"{url}/theme", headers=auth, json={"theme": "warm"})
     assert response.status_code == 200
     assert response.json()["workflow"]["apps"] == {"theme": "warm"}
+
+
+def test_an_old_problem_whose_message_names_a_position_doesnt_block_a_shift() -> None:
+    """ "task id 'x' already used at <path>" carries a list position in its text too."""
+    broken = matrix_retail()
+    first = broken["flows"][0]["stages"][0]["tasks"][0]
+    broken["flows"][0]["stages"][2]["tasks"].append({**first})  # the same id twice
+    intro = {"id": "bd_intro", "name": "Intro", "performer": {"department": "bd", "level": 1}}
+    drafts.patched(broken, [{"op": "add", "path": "/flows/0/stages/0/tasks/0", "value": intro}])

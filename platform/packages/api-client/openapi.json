@@ -292,6 +292,11 @@
       },
       "ChangeOut": {
         "properties": {
+          "after_sha256": {
+            "description": "The sha256 of the draft it left, over jsonb's text form.",
+            "title": "After Sha256",
+            "type": "string"
+          },
           "at": {
             "format": "date-time",
             "title": "At",
@@ -370,7 +375,8 @@
           "tool",
           "patch",
           "summary",
-          "undoes"
+          "undoes",
+          "after_sha256"
         ],
         "title": "ChangeOut",
         "type": "object"

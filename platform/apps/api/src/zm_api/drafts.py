@@ -4,9 +4,11 @@
 an RFC 6902 patch to a copy, validates the result with `zm_schema.validate` (S1-07, including the
 `schema_version` check of D14), and writes the draft and its `app.draft_changes` row in one
 transaction holding the draft's row lock, so changes apply one at a time. A change that doesn't
-apply or breaks validation writes nothing and comes back as a 422 listing every problem. S2-25's
-field-versioning rules (#35) aren't checked yet: they go in `_change`, which holds the vault
-connection and can read the active release there, so no caller changes.
+apply, or brings in problems the draft didn't have, writes nothing and comes back as a 422 listing
+them (problems it already had don't block it). A caller that passes the sha256 of the draft it
+read gets a 409 when the draft has changed since. S2-25's field-versioning rules (#35) aren't
+checked yet: they go in `_change`, which holds the vault connection and can read the active
+release there, so no caller changes.
 
 `undo` applies the inverse of the newest change not yet undone, as a new row pointing at it
 (`undoes`), so the log only grows: 0005's trigger refuses updates and deletes, and zm_api has no
@@ -19,6 +21,9 @@ Owners reach all of it under `/owner/clients/{id}/draft`.
 """
 
 import json
+import re
+from collections import Counter
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime
 from typing import Annotated, Any
@@ -58,6 +63,8 @@ class ChangeOut(BaseModel):
     summary: str
     undoes: int | None
     """On an undo's row, the change it undid."""
+    after_sha256: str
+    """The sha256 of the draft it left, over jsonb's text form."""
 
 
 class DraftOut(BaseModel):
@@ -137,13 +144,34 @@ def _apply(doc: dict[str, Any], patch: Patch) -> dict[str, Any]:
 
 
 def patched(doc: dict[str, Any], patch: Patch) -> tuple[dict[str, Any], Patch]:
-    """`doc` with `patch` applied, and its inverse. A patch that doesn't apply, or leaves an
-    invalid draft, is a 422 with every problem."""
+    """`doc` with `patch` applied, and its inverse. A patch that doesn't apply, or raises the
+    number of any kind of problem `doc` had, is a 422 listing the extra ones: a draft already
+    invalid (an undo restores without validating) still takes a change that adds none. (A change
+    may swap one problem for another of the same kind; validate and publish still report it.)"""
     after = _apply(doc, patch)
     errors = validate(after)
     if errors:
-        raise _invalid(errors)
+        # problems are matched without list positions, counted: a change that moves stages or
+        # tasks moves the old problems' paths too (stages[1] → stages[2]), and still adds none
+        old = Counter(_problem(e) for e in validate(doc))
+        new = []
+        for e in errors:
+            if old[_problem(e)] > 0:
+                old[_problem(e)] -= 1
+            else:
+                new.append(e)
+        if new:
+            raise _invalid(new)
     return after, inverse(doc, after)
+
+
+_POSITION = re.compile(r"\[\d+\]")
+
+
+def _problem(error: Any) -> tuple[str, str]:
+    """An error as a problem of the draft, independent of where lists put it right now: in its
+    path and in its message (e.g. "task id 'x' already used at flows[0].stages[0].tasks[1].id")."""
+    return _POSITION.sub("[]", error.path), _POSITION.sub("[]", error.message)
 
 
 def _outline(doc: dict[str, Any] | None) -> dict[str, Any]:
@@ -208,13 +236,13 @@ def diff(live: dict[str, Any] | None, draft: dict[str, Any]) -> DraftDiff:
 # --- the client's vault ----------------------------------------------------------------------
 
 _CHANGE = (
-    "id, at, author_owner_id, conversation_id, change_request_id, tool, patch, summary, undoes"
+    "id, at, author_owner_id, conversation_id, change_request_id, tool, patch, summary, undoes,"
+    " after_sha256"
 )
 # The stored draft's sha256 over jsonb's own text form, which is the same for the same document.
-_DRAFT_SHA = (
-    "(select encode(sha256(convert_to(workflow::text, 'UTF8')), 'hex')"
-    " from app.drafts where id = 1)"
-)
+_SHA = "encode(sha256(convert_to(workflow::text, 'UTF8')), 'hex')"
+_DRAFT_SHA = f"(select {_SHA} from app.drafts where id = 1)"
+STALE = "The draft changed since you read it; read it again"
 
 
 async def _draft(conn: AsyncConnection, *, lock: bool = False) -> dict[str, Any]:
@@ -223,6 +251,16 @@ async def _draft(conn: AsyncConnection, *, lock: bool = False) -> dict[str, Any]
     if doc is None:
         raise NotFound(NO_DRAFT)
     return doc
+
+
+async def read(conn: AsyncConnection) -> tuple[dict[str, Any], str]:
+    """The draft and its sha256 (as `after_sha256` logs it), from one statement."""
+    row = (
+        await conn.execute(text(f"select workflow, {_SHA} from app.drafts where id = 1"))
+    ).one_or_none()
+    if row is None:
+        raise NotFound(NO_DRAFT)
+    return row[0], row[1]
 
 
 async def _log(conn: AsyncConnection, after: dict[str, Any], change: dict[str, Any]) -> ChangeOut:
@@ -263,14 +301,21 @@ async def apply_change(
     ctx: ClientContext,
     author: UUID,
     tool: str,
-    patch: Patch,
+    patch: Patch | Callable[[dict[str, Any]], Patch],
     summary: str,
     conversation_id: UUID | None = None,
     change_request_id: UUID | None = None,
+    draft_sha256: str | None = None,
 ) -> ChangeOut | None:
-    """Apply and log one change; None when the patch changes nothing (nothing is logged)."""
+    """Apply and log one change; None when the patch changes nothing (nothing is logged). A patch
+    that points into lists (the agent's tools, #36) is a function of the draft, built from the
+    locked one, so a change landing just before can't shift what it points at. With
+    `draft_sha256`, the sha256 of the draft the caller read, a draft changed since is a 409: the
+    change would overwrite an edit the caller hasn't seen."""
     async with ctx.db.begin() as conn:
         doc = await _draft(conn, lock=True)
+        if draft_sha256 is not None and (await read(conn))[1] != draft_sha256:
+            raise Conflict(STALE)
         return await _change(
             conn,
             doc,
@@ -279,7 +324,7 @@ async def apply_change(
                 "conversation_id": conversation_id,
                 "change_request_id": change_request_id,
                 "tool": tool,
-                "patch": patch,
+                "patch": patch(doc) if callable(patch) else patch,
                 "summary": summary,
             },
         )

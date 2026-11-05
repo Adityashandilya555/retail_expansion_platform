@@ -806,6 +806,11 @@ export interface components {
         /** ChangeOut */
         ChangeOut: {
             /**
+             * After Sha256
+             * @description The sha256 of the draft it left, over jsonb's text form.
+             */
+            after_sha256: string;
+            /**
              * At
              * Format: date-time
              */
