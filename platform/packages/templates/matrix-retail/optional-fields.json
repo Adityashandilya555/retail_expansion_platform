@@ -1,0 +1,13 @@
+{
+  "fields": {
+    "state": { "type": "text", "label": "State" },
+    "district": { "type": "text", "label": "District" },
+    "gst_no": { "type": "text", "label": "GST no" },
+    "landlord_pan": { "type": "text", "label": "Landlord PAN" },
+    "gst_certificate": {
+      "type": "document",
+      "label": "GST certificate",
+      "document": { "accept": ["pdf", "jpg", "png"], "max_mb": 25, "keep_versions": false }
+    }
+  }
+}
