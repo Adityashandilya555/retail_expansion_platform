@@ -7,3 +7,9 @@
 .mantine-Chip-input:focus-visible + .mantine-Chip-label {
   outline-color: var(--mantine-color-anchor);
 }
+
+/* Inputs show focus as a border, not an outline: --input-bd-focus, also shade 8 in dark mode and
+   barely different from the unfocused border. The error state keeps its own (more specific) rule. */
+.mantine-Input-input {
+  --input-bd-focus: var(--mantine-color-anchor);
+}
