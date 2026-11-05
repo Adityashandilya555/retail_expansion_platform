@@ -758,7 +758,12 @@ def _fit(result: Result) -> Result:
     if len(result.get("errors", [])) > MAX_ERRORS:
         result = {**result, "errors": result["errors"][:MAX_ERRORS], "truncated": True}
     if "data" in result and len(found := json.dumps(result["data"])) > MAX_DATA:
+        # no sha for a read the agent couldn't see whole: an edit needs one of a full read
+        result = {k: v for k, v in result.items() if k != "draft_sha256"}
         result = {**result, "data": found[:MAX_DATA], "truncated": True}
+        result["summary"] = (
+            f"{result.get('summary', '')} (cut: read the parts with get_task or get_form)".strip()
+        )
     return result
 
 

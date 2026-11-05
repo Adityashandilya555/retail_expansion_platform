@@ -480,3 +480,12 @@ def test_the_theme_picker_works_on_a_draft_without_apps(pilot: Clients) -> None:
         response = api.patch(f"{url}/theme", headers=auth, json={"theme": "warm"})
     assert response.status_code == 200
     assert response.json()["workflow"]["apps"] == {"theme": "warm"}
+
+
+def test_an_old_problem_whose_message_names_a_position_doesnt_block_a_shift() -> None:
+    """ "task id 'x' already used at <path>" carries a list position in its text too."""
+    broken = matrix_retail()
+    first = broken["flows"][0]["stages"][0]["tasks"][0]
+    broken["flows"][0]["stages"][2]["tasks"].append({**first})  # the same id twice
+    intro = {"id": "bd_intro", "name": "Intro", "performer": {"department": "bd", "level": 1}}
+    drafts.patched(broken, [{"op": "add", "path": "/flows/0/stages/0/tasks/0", "value": intro}])

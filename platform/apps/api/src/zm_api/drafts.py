@@ -144,9 +144,10 @@ def _apply(doc: dict[str, Any], patch: Patch) -> dict[str, Any]:
 
 
 def patched(doc: dict[str, Any], patch: Patch) -> tuple[dict[str, Any], Patch]:
-    """`doc` with `patch` applied, and its inverse. A patch that doesn't apply, or brings in
-    problems `doc` didn't have, is a 422 listing them: a draft already invalid (an undo restores
-    without validating) still takes a change that adds none."""
+    """`doc` with `patch` applied, and its inverse. A patch that doesn't apply, or raises the
+    number of any kind of problem `doc` had, is a 422 listing the extra ones: a draft already
+    invalid (an undo restores without validating) still takes a change that adds none. (A change
+    may swap one problem for another of the same kind; validate and publish still report it.)"""
     after = _apply(doc, patch)
     errors = validate(after)
     if errors:
@@ -168,8 +169,9 @@ _POSITION = re.compile(r"\[\d+\]")
 
 
 def _problem(error: Any) -> tuple[str, str]:
-    """An error as a problem of the draft, independent of where lists put it right now."""
-    return _POSITION.sub("[]", error.path), error.message
+    """An error as a problem of the draft, independent of where lists put it right now: in its
+    path and in its message (e.g. "task id 'x' already used at flows[0].stages[0].tasks[1].id")."""
+    return _POSITION.sub("[]", error.path), _POSITION.sub("[]", error.message)
 
 
 def _outline(doc: dict[str, Any] | None) -> dict[str, Any]:

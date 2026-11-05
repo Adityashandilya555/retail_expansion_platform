@@ -592,7 +592,8 @@ def test_a_long_result_is_cut_and_says_so(
     overview = call(held, "get_overview", {})
     assert overview["truncated"] is True
     assert overview["data"] == json.dumps(tools.overview(matrix_retail()))[:100]
-    assert overview["draft_sha256"] == sha(matrix_retail())
+    assert "draft_sha256" not in overview  # no edit may build on a read it couldn't see whole
+    assert overview["summary"].endswith("(cut: read the parts with get_task or get_form)")
     empty = call(held, "add_field", sent("add_field", {}))  # five arguments missing
     assert empty["truncated"] is True and len(empty["errors"]) == 2
 
