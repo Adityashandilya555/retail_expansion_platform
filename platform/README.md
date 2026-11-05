@@ -223,7 +223,7 @@ For test clients only, `zm-worker deprovision <slug> --yes` deletes `operaton-<s
 
 A broken resolver must trip check 1 (the negative control).
 
-**`zm-compat --fixtures`** validates and compiles every template and every synthetic release in `tests/compat/`. Validation checks each page against `packages/zm-blocks/catalogue.json`, so a template can place only blocks that are built. That file is generated from the shell's registry: when a manifest changes, `pnpm vitest run -u packages/zm-blocks/src/catalogue.test.ts` rewrites it, and `pnpm test` fails while it is stale.
+**`zm-compat --fixtures`** validates and compiles every template and every synthetic release in `tests/compat/`. Validation checks each page, and the theme preset and accent, against `packages/zm-blocks/catalogue.json`, so a template can place only blocks that are built and pick only a preset and accent the shell has. That file is generated from the shell's registry and `@zm/ui`'s theme: when a manifest, preset or accent changes, `pnpm vitest run -u packages/zm-blocks/src/catalogue.test.ts` rewrites it, and `pnpm test` fails while it is stale.
 
 ## Layout
 ```

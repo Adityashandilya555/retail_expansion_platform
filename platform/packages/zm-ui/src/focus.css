@@ -1,0 +1,15 @@
+/* The focus ring (#34). Mantine draws it in --mantine-primary-color-filled, which is the accent's
+   shade 8 in dark mode: under WCAG's 3:1 on the dark page. The link colour (shade 6 light, 4 dark)
+   clears 3:1 for every preset × accent × scheme (theme.test.ts). Loaded after Mantine's styles.
+   The last two selectors are Mantine components that draw their own ring, as used in our apps. */
+.mantine-focus-auto:focus-visible,
+.mantine-SegmentedControl-input:focus-visible + .mantine-SegmentedControl-label,
+.mantine-Chip-input:focus-visible + .mantine-Chip-label {
+  outline-color: var(--mantine-color-anchor);
+}
+
+/* Inputs show focus as a border, not an outline: --input-bd-focus, also shade 8 in dark mode and
+   barely different from the unfocused border. The error state keeps its own (more specific) rule. */
+.mantine-Input-input {
+  --input-bd-focus: var(--mantine-color-anchor);
+}

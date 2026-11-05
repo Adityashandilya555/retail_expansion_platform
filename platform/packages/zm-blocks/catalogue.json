@@ -210,5 +210,19 @@
         }
       }
     }
-  }
+  },
+  "presets": [
+    "quartz",
+    "warm"
+  ],
+  "accents": [
+    "slate",
+    "blue",
+    "indigo",
+    "teal",
+    "green",
+    "copper",
+    "plum",
+    "pink"
+  ]
 }

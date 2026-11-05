@@ -1,17 +1,21 @@
-// #20 acceptance: every extra renders in light and dark for every accent of the quartz preset.
-// Contrast is checked numerically in theme.test.ts (jsdom can't compute it); this checks that each
-// extra renders with the accent and scheme applied, keeps its text, and passes axe.
+// #20 and #34 acceptance: every extra renders in light and dark for every preset, with the client's
+// accent. Contrast is checked numerically in theme.test.ts for every preset × accent × scheme (jsdom
+// can't compute it); an accent changes only Mantine's CSS variables, which axe can't see here, so
+// axe runs once per preset × scheme. This checks that each extra renders with the preset, accent and
+// scheme applied, keeps its text, and passes axe.
 import { screen, within } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
+import { AccentSwatches } from "./AppearanceMenu";
 import { AppFrame } from "./AppFrame";
 import { DataTable } from "./DataTable";
 import { Num } from "./Num";
 import { PageHeader } from "./PageHeader";
+import { PresetPicker } from "./PresetPicker";
 import { sampleColumns, sampleNav, sampleSites, sampleStages } from "./samples";
 import { StageTracker } from "./StageTracker";
 import { StatusPill, type StatusTone } from "./StatusPill";
 import { expectNoAxeViolations, renderWithZm } from "./test";
-import { ACCENTS, PRESETS } from "./theme";
+import { PRESETS } from "./theme";
 import { useAppearance } from "./ZmProvider";
 
 const TONES: StatusTone[] = ["done", "open", "queued", "closed", "warning"];
@@ -33,15 +37,16 @@ function Extras() {
       <StageTracker stages={sampleStages} compact label="Compact stages" />
       <DataTable caption="Sites" columns={sampleColumns} rows={sampleSites} rowKey={(s) => s.code} onRowClick={() => {}} />
       <Num value={4250000} currency />
+      <PresetPicker label="Theme preset" value="warm" onChange={() => {}} />
+      <AccentSwatches value="teal" onChange={() => {}} />
     </AppFrame>
   );
 }
 
-describe.each(ACCENTS)("quartz · %s", (accent) => {
+describe.each(Object.keys(PRESETS))("%s", (preset) => {
   test.each(["light", "dark"] as const)("every extra renders in %s and passes axe", async (scheme) => {
-    renderWithZm(<Extras />, { scheme, client: { theme: "quartz", accent } });
-    expect(PRESETS.quartz).toBeDefined();
-    expect(screen.getByTestId("probe").textContent).toBe(`quartz:${accent}`);
+    renderWithZm(<Extras />, { scheme, client: { theme: preset, accent: "plum" } });
+    expect(screen.getByTestId("probe").textContent).toBe(`${preset}:plum`);
     expect(document.documentElement.getAttribute("data-mantine-color-scheme")).toBe(scheme);
     expect(screen.getByText("Matrix Retail")).toBeDefined();
     expect(screen.getByRole("heading", { level: 1, name: "Sites" })).toBeDefined();
@@ -53,6 +58,9 @@ describe.each(ACCENTS)("quartz · %s", (accent) => {
     const table = screen.getByRole("table", { name: "Sites" });
     expect(within(table).getByText("Koramangala 5th Block")).toBeDefined();
     expect(screen.getAllByText("₹42,50,000").length).toBe(2); // the Num sample and the table row
+    const presets = within(screen.getByRole("radiogroup", { name: "Theme preset" }));
+    expect(presets.getAllByRole("radio").map((r) => r.getAttribute("aria-checked"))).toEqual(["false", "true"]);
+    expect(screen.getByRole("button", { name: "Accent: Teal" }).getAttribute("aria-pressed")).toBe("true");
     await expectNoAxeViolations();
   });
 });

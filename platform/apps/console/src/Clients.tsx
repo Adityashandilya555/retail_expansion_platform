@@ -1,16 +1,30 @@
-// Clients, their provisioning and publishing (#29). Provisioning itself is the worker's
+// Clients, their provisioning, look and publishing (#29, #34). Provisioning itself is the worker's
 // (#24, #25): the API queues the steps, and the client page polls them every 5 s.
 import { Button, Code, Group, Modal, NativeSelect, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
-import { DataTable, Notice, notifyError, notifyInfo, PageHeader, StatusPill, type StatusTone } from "@zm/ui";
-import { useState, type FormEvent } from "react";
+import {
+  AccentSwatches,
+  accentLabel,
+  DataTable,
+  isAccent,
+  Notice,
+  notifyError,
+  notifyInfo,
+  PageHeader,
+  PresetPicker,
+  resolvePreset,
+  StatusPill,
+  type StatusTone,
+} from "@zm/ui";
+import { useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
 import { api } from "./session";
 
 type ClientOut = components["schemas"]["ClientOut"];
 type StepOut = components["schemas"]["StepOut"];
 type ReleaseOut = components["schemas"]["ReleaseOut"];
+type ThemeIn = components["schemas"]["ThemeIn"];
 
 const CLIENT_STATUS: Record<ClientOut["status"], [StatusTone, string]> = {
   new: ["queued", "New"],
@@ -169,6 +183,91 @@ export function NewClient() {
   );
 }
 
+// --- the client's look (#34): its draft's theme preset and default accent (D19) ------------------
+
+/** Arrow keys pick each preset card they pass; a pick is saved once the picker rests this long. */
+const SETTLE_MS = 500;
+
+function Look({ clientId }: { clientId: string }) {
+  const queries = useQueryClient();
+  const path = { params: { path: { client_id: clientId } } };
+  const draft = useQuery({ queryKey: ["draft", clientId], queryFn: () => must(api.GET("/owner/clients/{client_id}/draft", path)) });
+  const [picked, setPicked] = useState<string | null>(null); // a preset not saved yet
+  const settling = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // the preset of the last PATCH sent: while one is in flight the draft above still shows the old one
+  const sending = useRef<string | null>(null);
+  // saves go out one at a time, in order, so a slow earlier one can't land after a later one
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  if (draft.isPending) return null;
+  if (!draft.data) {
+    return (
+      <Notice tone="error" title="Couldn't load the client's look.">
+        <Button mt="sm" variant="default" onClick={() => void draft.refetch()}>
+          Retry
+        </Button>
+      </Notice>
+    );
+  }
+  const apps = (draft.data.workflow.apps ?? {}) as ThemeIn;
+  const preset = resolvePreset(apps.theme);
+  const accent = isAccent(apps.accent) ? apps.accent : null;
+
+  /** Saves `change` with the preset still settling, if any. A new preset drops an accent that was only
+   * the old preset's default (e.g. the template's), so the new preset's own default shows. */
+  async function save(change: ThemeIn, theme = picked) {
+    clearTimeout(settling.current);
+    const run = queue.current.then(async () => {
+      const from = resolvePreset(sending.current ?? preset.key);
+      const body = theme && theme !== from.key ? { theme, ...(accent === from.defaultAccent && { accent: null }), ...change } : change;
+      // nothing to save when the keys come to rest on the saved preset
+      if (Object.keys(body).length > 0) {
+        if (body.theme) sending.current = body.theme;
+        queries.setQueryData(["draft", clientId], await must(api.PATCH("/owner/clients/{client_id}/draft/theme", { ...path, body })));
+      }
+    });
+    queue.current = run.catch(() => undefined);
+    try {
+      await run;
+    } catch (e) {
+      sending.current = null; // not saved: the draft's own preset is the one to compare with
+      notifyError(e instanceof Error && e.message !== "Request failed" ? e.message : "Couldn't save the look.");
+    } finally {
+      setPicked((p) => (p === theme ? null : p));
+    }
+  }
+
+  function pick(theme: string) {
+    setPicked(theme);
+    clearTimeout(settling.current);
+    settling.current = setTimeout(() => void save({}, theme), SETTLE_MS);
+  }
+
+  return (
+    <Stack gap="sm">
+      <Title order={2} size="h3">
+        Look
+      </Title>
+      <Text size="sm">
+        Saved to the draft. The sign-in page and every screen change once you publish; people can still pick their own accent.
+      </Text>
+      <PresetPicker label="Theme preset" value={picked ?? preset.key} onChange={pick} accent={accent} />
+      <Text size="sm" fw={500}>
+        Default accent
+      </Text>
+      <Group gap="md">
+        <AccentSwatches value={accent ?? preset.defaultAccent} onChange={(choice) => void save({ accent: choice })} />
+        {accent ? (
+          <Button variant="subtle" size="compact-sm" onClick={() => void save({ accent: null })}>
+            Use the preset's default
+          </Button>
+        ) : (
+          <Text size="sm">{accentLabel(preset.defaultAccent)}, the preset's default</Text>
+        )}
+      </Group>
+    </Stack>
+  );
+}
+
 // --- `/clients/:id` ---------------------------------------------------------------------------
 
 export function ClientPage() {
@@ -269,6 +368,8 @@ export function ClientPage() {
           ]}
         />
       </Stack>
+
+      {c.status === "ready" && <Look clientId={id} />}
 
       {c.status === "ready" && (
         <Stack gap="sm">
