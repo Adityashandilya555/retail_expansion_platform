@@ -231,6 +231,8 @@ export function ChangeRequests() {
     getNextPageParam: (last, pages) => (last.length === PAGE ? pages.length * PAGE : undefined),
   });
   const targets = useQuery({ queryKey: ["change-targets"], queryFn: () => must(api.GET("/app/admin/change-requests/targets")) });
+  // offset pages shift by one when someone sends a request between two loads: keep the first copy
+  const rows = [...new Map((requests.data?.pages.flat() ?? []).map((r) => [r.id, r] as const)).values()];
   const done = () => {
     setRequesting(false);
     void queries.invalidateQueries({ queryKey: ["change-requests"] });
@@ -245,7 +247,7 @@ export function ChangeRequests() {
       />
       <DataTable
         caption="Change requests"
-        rows={requests.data?.pages.flat() ?? []}
+        rows={rows}
         rowKey={(r) => r.id}
         loading={requests.isPending}
         error={requests.isError ? "Couldn't load the change requests." : null}

@@ -530,7 +530,7 @@ test("older change requests load a page at a time", async () => {
   const seen = changesApi({
     "GET /app/admin/change-requests": (req) => {
       const offset = Number(new URL(req.url).searchParams.get("offset") ?? 0);
-      return json(offset === 0 ? page(0, 100) : page(100, 3));
+      return json(offset === 0 ? page(0, 100) : page(99, 4)); // a new request shifted r99 down
     },
   });
   renderAt("/app/admin/change-requests");
