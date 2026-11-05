@@ -75,6 +75,13 @@ describe("contrast (WCAG AA: 4.5:1 text, 3:1 focus ring) for every preset × acc
     expect(FOCUS_COLOURS).toHaveLength(2); // the outline ring and the input border
     for (const ring of FOCUS_COLOURS) expect(contrast(v(ring), v("--mantine-color-body"))).toBeGreaterThanOrEqual(3);
   });
+
+  test.each(matrix)("$preset · $accent · $scheme: a focused input's border against its unfocused one and its fill", ({ preset, accent, scheme }) => {
+    const v = cssVariables(preset, accent, scheme);
+    const [border, fill] = scheme === "dark" ? ["--mantine-color-dark-4", "--mantine-color-dark-6"] : ["--mantine-color-gray-4", "--mantine-color-white"];
+    expect(contrast(v("--mantine-color-anchor"), v(border))).toBeGreaterThanOrEqual(3);
+    expect(contrast(v("--mantine-color-anchor"), v(fill))).toBeGreaterThanOrEqual(3);
+  });
 });
 
 describe("palettes", () => {

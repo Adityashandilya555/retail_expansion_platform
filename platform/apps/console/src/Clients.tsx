@@ -194,6 +194,10 @@ function Look({ clientId }: { clientId: string }) {
   const draft = useQuery({ queryKey: ["draft", clientId], queryFn: () => must(api.GET("/owner/clients/{client_id}/draft", path)) });
   const [picked, setPicked] = useState<string | null>(null); // a preset not saved yet
   const settling = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // the preset of the last PATCH sent: while one is in flight the draft above still shows the old one
+  const sending = useRef<string | null>(null);
+  // saves go out one at a time, in order, so a slow earlier one can't land after a later one
+  const queue = useRef<Promise<void>>(Promise.resolve());
   if (draft.isPending) return null;
   if (!draft.data) {
     return (
@@ -212,13 +216,20 @@ function Look({ clientId }: { clientId: string }) {
    * the old preset's default (e.g. the template's), so the new preset's own default shows. */
   async function save(change: ThemeIn, theme = picked) {
     clearTimeout(settling.current);
-    const body = theme && theme !== preset.key ? { theme, ...(accent === preset.defaultAccent && { accent: null }), ...change } : change;
-    try {
+    const run = queue.current.then(async () => {
+      const from = resolvePreset(sending.current ?? preset.key);
+      const body = theme && theme !== from.key ? { theme, ...(accent === from.defaultAccent && { accent: null }), ...change } : change;
       // nothing to save when the keys come to rest on the saved preset
       if (Object.keys(body).length > 0) {
+        if (body.theme) sending.current = body.theme;
         queries.setQueryData(["draft", clientId], await must(api.PATCH("/owner/clients/{client_id}/draft/theme", { ...path, body })));
       }
+    });
+    queue.current = run.catch(() => undefined);
+    try {
+      await run;
     } catch (e) {
+      sending.current = null; // not saved: the draft's own preset is the one to compare with
       notifyError(e instanceof Error && e.message !== "Request failed" ? e.message : "Couldn't save the look.");
     } finally {
       setPicked((p) => (p === theme ? null : p));

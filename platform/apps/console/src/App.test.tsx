@@ -465,6 +465,32 @@ test("a new preset drops an accent that was only the old preset's default, and k
   expect(sent.at(-1)).toEqual({ theme: "quartz" });
 });
 
+test("picking Quartz while Warm is still being saved ends on Quartz", async () => {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let apps: object = { theme: "quartz" };
+  const sent: unknown[] = [];
+  signedInApi({
+    [`GET /owner/clients/${ID}`]: ready,
+    [`GET /owner/clients/${ID}/draft`]: () => json(draft(apps)),
+    [`PATCH /owner/clients/${ID}/draft/theme`]: async (r) => {
+      const body = (await r.json()) as object;
+      sent.push(body);
+      if (sent.length === 1) await held; // Warm's save is slow to come back
+      apps = { ...apps, ...body };
+      return json(draft(apps));
+    },
+  });
+  const user = await openLook();
+  await user.click(presetGroup().getByRole("radio", { name: /^Warm/ }));
+  await settle(); // Warm's PATCH is out, not answered
+  await user.click(presetGroup().getByRole("radio", { name: /^Quartz/ }));
+  await settle();
+  release();
+  await waitFor(() => expect(sent).toEqual([{ theme: "warm" }, { theme: "quartz" }]));
+  await waitFor(() => expect(checkedPreset()).toEqual(["Quartz"]));
+});
+
 test("arrow keys through the preset cards save once, where they stop", async () => {
   const { sent } = lookApi({ theme: "quartz" });
   const user = await openLook();
