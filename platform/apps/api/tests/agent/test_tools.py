@@ -371,7 +371,8 @@ def malformed(rng: random.Random, args: Doc) -> Doc:
 async def agent(ctx: Any, author: uuid.UUID, calls: Any) -> list[Doc]:
     """Runs `calls` the way the agent does: it reads the draft first, and an edit's READ becomes
     the `draft_sha256` its last read or edit returned."""
-    sha = (await tools.call(ctx, author, "get_overview", {}))["draft_sha256"]
+    # a cut read gives no sha (the agent hasn't seen the whole draft): its edits then name none
+    sha = (await tools.call(ctx, author, "get_overview", {})).get("draft_sha256")
     results = []
     for tool, args in calls:
         if isinstance(args, dict) and args.get("draft_sha256") == READ:
