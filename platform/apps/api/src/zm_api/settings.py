@@ -34,5 +34,17 @@ def platform_database_url() -> str:
     return _required("PLATFORM_DATABASE_URL")
 
 
+def agent_model() -> str:
+    """`AGENT_MODEL`: the admin agent's model (default claude-opus-5-5). The SDK reads
+    `ANTHROPIC_API_KEY` itself."""
+    return os.environ.get("AGENT_MODEL", "claude-opus-5-5")
+
+
+def agent_max_tokens_per_conversation() -> int:
+    """`AGENT_MAX_TOKENS_PER_CONVERSATION`: the agent's budget per conversation, in tokens read
+    fresh or written (default 200000; `zm_api.agent.loop`)."""
+    return int(os.environ.get("AGENT_MAX_TOKENS_PER_CONVERSATION", "200000"))
+
+
 def log_level() -> str:
     return os.environ.get("LOG_LEVEL", "info")

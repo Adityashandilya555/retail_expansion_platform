@@ -19,7 +19,7 @@ request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 client: ContextVar[str | None] = ContextVar("client", default=None)
 
 _SAFE_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
-_EXTRA = ("method", "route", "status", "ms", "op", "error")
+_EXTRA = ("method", "route", "status", "ms", "op", "error", "usage")
 _log = logging.getLogger("zm_api.request")
 
 
