@@ -1,6 +1,7 @@
-"""Agent tools v1 (#36): one row per tool through `tools.call`, with the vault's draft row and
-change log held in memory; bad arguments of every kind; the strict schemas. The same rows then run
-against the pilot vault's real log (`pytest -m integration` after dev-up.sh)."""
+"""Agent tools v1 (#36, and #39's UI tools): one row per tool through `tools.call`, with the
+vault's draft row and change log held in memory; bad arguments of every kind; the strict schemas.
+The same rows then run against the pilot vault's real log (`pytest -m integration` after
+dev-up.sh)."""
 
 import asyncio
 import copy
@@ -22,6 +23,7 @@ from zm_api.agent import tools
 from zm_api.templates import load_templates
 from zm_schema.models import FieldType
 
+from ..test_catalogue import manifests
 from ..test_draft import CHANGES, canonical, pilot  # noqa: F401 (pilot: the vault fixture)
 from ..test_publish import Clients, Stack, clients, vault_sql  # noqa: F401
 from ..test_publish_unit import matrix_retail
@@ -51,6 +53,10 @@ def task(doc: Doc, task_id: str) -> Doc:
 
 def dept(doc: Doc, key: str) -> Doc:
     return next(d for d in doc["org"]["departments"] if d["key"] == key)
+
+
+def page(doc: Doc, key: str) -> Doc:
+    return next(p for p in doc["apps"]["pages"] if p["key"] == key)
 
 
 def qsr() -> Doc:
@@ -237,6 +243,62 @@ EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
         lambda d: d["forms"]["bd_upload_loi"]["sections"][0]["rows"],
         [[{"field": "loi_signed_on", "span": 6}, {"field": "loi_file", "span": 6}]],
     ),
+    # pages, blocks and the menu (#39)
+    (
+        "set_page",
+        {"key": "openings", "layout": "standard", "department": "nso", "flow": "store_launch"},
+        lambda d: page(d, "openings"),
+        {
+            "key": "openings",
+            "layout": "standard",
+            "department": "nso",
+            "flow": "store_launch",
+            "regions": {},
+        },
+    ),
+    (
+        "place_block",
+        {
+            "page": "home",
+            "region": "main",
+            "block": "task_inbox",
+            "props": {"scope": "team"},
+            "index": None,
+        },
+        lambda d: page(d, "home")["regions"]["main"],
+        [
+            {"block": "task_inbox", "props": {"scope": "mine", "group_by": "case"}},
+            {"block": "task_inbox", "props": {"scope": "team"}},
+        ],
+    ),
+    (
+        "update_block",
+        {
+            "page": "bd",
+            "region": "main",
+            "index": 0,
+            "props": {"scope": "mine", "group_by": "none"},
+        },
+        lambda d: page(d, "bd")["regions"]["main"][0],
+        {"block": "task_inbox", "props": {"scope": "mine", "group_by": "none"}},
+    ),
+    (
+        "remove_block",
+        {"page": "management", "region": "main", "index": 1},
+        lambda d: page(d, "management")["regions"]["main"],
+        [{"block": "task_inbox", "props": {"scope": "team"}}],
+    ),
+    (
+        "set_nav",
+        {
+            "items": [
+                {"page": "home", "label": "Home", "visible_to": ["*"]},
+                {"page": "nso", "label": "Openings", "visible_to": ["nso", "management"]},
+            ]
+        },
+        lambda d: [(n["page"], n["label"]) for n in d["apps"]["nav"]],
+        [("home", "Home"), ("nso", "Openings")],
+    ),
     ("load_template", {"template": "qsr"}, lambda d: d == qsr(), True),  # the draft is untouched
 ]
 
@@ -276,6 +338,27 @@ READS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
     ("list_templates", {}, lambda r: [t["key"] for t in r["data"]], ["matrix-retail", "qsr"]),
     ("validate_draft", {}, lambda r: (r["ok"], "errors" in r), (True, False)),
     ("diff_vs_live", {}, lambda r: "site_name" in r["data"]["fields"]["added"], True),
+    (
+        "list_blocks",  # #37: the names and versions of the block manifests
+        {},
+        lambda r: {(b["name"], v) for b in r["data"] for v in b["versions"]},
+        manifests("blocks"),
+    ),
+    (
+        "get_block_manifest",
+        {"block": "task_inbox"},
+        lambda r: (r["data"]["regions"], r["data"]["props"]["properties"]["scope"]["enum"]),
+        (["main", "aside"], ["mine", "team"]),
+    ),
+    (
+        "list_layouts",
+        {},
+        lambda r: {la["name"]: [g["key"] for g in la["regions"]] for la in r["data"]},
+        {
+            "case": ["header", "overview", "tasks", "activity", "documents"],
+            "standard": ["hero", "main", "aside"],
+        },
+    ),
 ]
 
 ARGS = {tool: sent(tool, args) for tool, args, *_ in EDITS + READS}
@@ -322,6 +405,12 @@ BAD: Doc = {
                 }
             ],
         },
+        "get_block_manifest": {"block": "nope"},
+        "set_page": {**ARGS["set_page"], "layout": "case", "flow": None},  # case needs a flow
+        "place_block": {**ARGS["place_block"], "region": "sidebar"},  # standard has none
+        "update_block": {**ARGS["update_block"], "props": {"scope": "all"}},
+        "remove_block": {**ARGS["remove_block"], "index": 2},
+        "set_nav": {"items": [{"page": "nope", "label": "Nope", "visible_to": ["*"]}]},
     }.items()
 }
 
@@ -351,13 +440,15 @@ def nodes(value: Any) -> Iterator[tuple[Any, Any]]:
 def malformed(rng: random.Random, args: Doc) -> Doc:
     """`args` with one to three random faults, each of which a tool's schema refuses wherever it
     lands: a property dropped (all are required) or added (none is allowed), or a value swapped
-    for a fraction, a list of one or an object, which no property takes in its place."""
+    for a fraction, a list of one or an object, which no property takes in its place. A block's
+    `props` are all optional: they get no drop, and its manifest refuses the rest."""
     args = copy.deepcopy(args)
     for _ in range(rng.randint(1, 3)):
         inside = list(nodes(args))
         objects = [args, *(c[k] for c, k in inside if isinstance(c[k], dict))]
         target, fault = rng.choice(objects), rng.choice(["drop", "add", "swap"])
-        if fault == "drop" and (own := [k for k in target if not k.startswith("zz")]):
+        props = any(target is c[k] for c, k in inside if k == "props")
+        if fault == "drop" and not props and (own := [k for k in target if not k.startswith("zz")]):
             del target[rng.choice(own)]  # never an added one: that would undo a fault
         elif fault == "swap" and inside:
             c, k = rng.choice(inside)
@@ -637,13 +728,17 @@ def test_every_tool_schema_is_strict_and_names_no_client_or_tenant() -> None:
     assert [d["name"] for d in definitions] == list(tools.TOOLS)
     assert sorted(tools.TOOLS) == sorted(ARGS)  # a row per tool, and no tool beyond the spec
     for d in definitions:
-        # the edits are strict; reads and checks aren't, to stay inside the limits above
-        assert d["strict"] is (tools.TOOLS[d["name"]].edit is not None) and d["description"]
         objects = list(schemas(d["input_schema"]))
+        # a block's props: free-form here, checked against its manifest when the draft validates
+        free = [o for o in objects if o["additionalProperties"] is not False]
+        # the edits are strict but those with props, which a strict schema can't hold; reads and
+        # checks aren't, to stay inside the limits above
+        edit = tools.TOOLS[d["name"]].edit is not None
+        assert d["strict"] is (edit and not free) and d["description"]
         assert objects[0] is d["input_schema"]
         for schema in objects:
             properties = schema.get("properties", {})
-            assert schema["additionalProperties"] is False, d["name"]
+            assert schema["additionalProperties"] is False or not properties, d["name"]
             assert sorted(schema.get("required", [])) == sorted(properties), d["name"]
             assert not [p for p in properties if "client" in p or "tenant" in p], d["name"]
     # keywords strict tool schemas don't take: the draft's validation checks these instead
