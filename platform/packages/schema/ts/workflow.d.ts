@@ -181,9 +181,14 @@ export interface FieldDef {
   options?: Option[] | null;
   document?: DocumentRule | null;
   /**
-   * Release version that added the field (additive versioning, S2-25).
+   * Release version that added the field (additive versioning, S2-25); publish sets it.
    */
   since?: number | null;
+  /**
+   * Release version from which the field is required; publish sets it. Sites started on an
+   * older release keep its forms (S2-25).
+   */
+  required_from_version?: number | null;
   /**
    * Hidden from new forms; stored values are kept.
    */
