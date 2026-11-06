@@ -503,13 +503,39 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Conversations
+         * @description The calling owner's conversations with the client's agent, newest first (at most 100).
+         */
+        get: operations["list_conversations_owner_clients__client_id__agent_conversations_get"];
         put?: never;
         /**
          * Start Conversation
          * @description A new conversation with the client's agent.
          */
         post: operations["start_conversation_owner_clients__client_id__agent_conversations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/clients/{client_id}/agent/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Conversation
+         * @description What the dock shows of a conversation, from its stored rows and the change log; 404 for
+         *     another owner's. A stream that dropped can't be resumed (the turn stops, its done edits stay),
+         *     so the dock reads the conversation again here.
+         */
+        get: operations["get_conversation_owner_clients__client_id__agent_conversations__conversation_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1069,6 +1095,18 @@ export interface components {
             /** Forms */
             forms: components["schemas"]["TargetForm"][];
         };
+        /** Chip */
+        Chip: {
+            /** Change Id */
+            change_id: number;
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "change";
+            /** Summary */
+            summary: string;
+        };
         /** ClientDetail */
         ClientDetail: {
             /**
@@ -1522,6 +1560,16 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** Refused */
+        Refused: {
+            /** Category */
+            category: string | null;
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "refusal";
+        };
         /** ReleaseOut */
         ReleaseOut: {
             /** Deployment Id */
@@ -1550,6 +1598,16 @@ export interface components {
              * @description The new label; the stored key stays.
              */
             label: string;
+        };
+        /** Said */
+        Said: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "owner" | "agent";
+            /** Text */
+            text: string;
         };
         /** SectionOut */
         SectionOut: {
@@ -1742,6 +1800,16 @@ export interface components {
              */
             token_type: "bearer";
         };
+        /** Transcript */
+        Transcript: {
+            /**
+             * Entries
+             * @description In order: the owner's and the agent's texts, each done edit's change chip, refusals.
+             */
+            entries: (components["schemas"]["Said"] | components["schemas"]["Chip"] | components["schemas"]["Refused"])[];
+            /** @description The conversation's sums, as `done {usage}` gives a turn's. */
+            usage: components["schemas"]["Usage"];
+        };
         /** UiClient */
         UiClient: {
             /** Accent */
@@ -1788,6 +1856,17 @@ export interface components {
             key: string;
             /** Name */
             name: string;
+        };
+        /** Usage */
+        Usage: {
+            /** Cache Creation Input Tokens */
+            cache_creation_input_tokens: number;
+            /** Cache Read Input Tokens */
+            cache_read_input_tokens: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
         };
         /** UserIn */
         UserIn: {
@@ -2772,6 +2851,37 @@ export interface operations {
             };
         };
     };
+    list_conversations_owner_clients__client_id__agent_conversations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationOut"][];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     start_conversation_owner_clients__client_id__agent_conversations_post: {
         parameters: {
             query?: never;
@@ -2794,6 +2904,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_conversation_owner_clients__client_id__agent_conversations__conversation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transcript"];
                 };
             };
             /** @description Problem details (RFC 9457) */
