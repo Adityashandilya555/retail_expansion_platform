@@ -196,6 +196,8 @@ class Stage(_Model):
     after: list[str] = []
     """Stage keys of the same flow that must finish first; several = parallel join."""
     tasks: list[StageItem] = Field(min_length=1)
+    sla_days: Annotated[int, Field(ge=1)] | None = None
+    """Days a case may spend in this stage; longer shows it as overdue (S2-29)."""
 
 
 class CaseCode(_Model):
