@@ -677,6 +677,16 @@ def _newest(versions: Doc) -> Doc:
     return max(versions.values(), key=lambda m: m["version"])
 
 
+def _goes_in(block: str) -> Doc:
+    """`{layout: [region]}`: where a page takes the block, by each layout's `allowed_blocks`, as
+    validation reads them (a manifest's own `regions` name no layout, and only its version's)."""
+    return {
+        name: found
+        for name, layout in catalogue.load()["layouts"].items()
+        if (found := [r["key"] for r in layout["regions"] if block in r["allowed_blocks"]])
+    }
+
+
 async def list_layouts(_ctx: ClientContext, _: NoArgs) -> Result:
     return _ok("Layouts", list(catalogue.load()["layouts"].values()))
 
@@ -687,7 +697,7 @@ async def list_blocks(_ctx: ClientContext, _: NoArgs) -> Result:
             "name": name,
             "versions": sorted(m["version"] for m in versions.values()),
             "description": _newest(versions)["description"],
-            "regions": _newest(versions)["regions"],
+            "goes_in": _goes_in(name),
         }
         for name, versions in catalogue.load()["blocks"].items()
     ]
@@ -698,7 +708,8 @@ async def get_block_manifest(_ctx: ClientContext, a: BlockName) -> Result:
     versions = catalogue.load()["blocks"].get(a.block)
     if not versions:
         raise NotFound(f"No block '{a.block}'")
-    return _ok(f"Block {a.block}", _newest(versions))
+    manifest = {k: v for k, v in _newest(versions).items() if k != "regions"}
+    return _ok(f"Block {a.block}", {**manifest, "goes_in": _goes_in(a.block)})
 
 
 async def validate_draft(ctx: ClientContext, _: NoArgs) -> Result:
@@ -878,13 +889,14 @@ TOOLS: dict[str, Tool] = {
         read=list_layouts,
     ),
     "list_blocks": Tool(
-        "The blocks a page can show: what each is and the regions it goes in; get_block_manifest"
-        " gives its props.",
+        "The blocks a page can show: what each is and where it goes (`goes_in`: each layout's"
+        " regions that take it); get_block_manifest gives its props.",
         NoArgs,
         read=list_blocks,
     ),
     "get_block_manifest": Tool(
-        "One block's manifest: what it shows, its regions and the JSON Schema of its props.",
+        "One block's manifest: what it shows, where it goes (`goes_in`, as list_blocks) and the"
+        " JSON Schema of its props.",
         BlockName,
         read=get_block_manifest,
     ),

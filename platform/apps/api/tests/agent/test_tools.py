@@ -341,16 +341,19 @@ READS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
     ("validate_draft", {}, lambda r: (r["ok"], "errors" in r), (True, False)),
     ("diff_vs_live", {}, lambda r: "site_name" in r["data"]["fields"]["added"], True),
     (
-        "list_blocks",  # #37: the names and versions of the block manifests
-        {},
-        lambda r: {(b["name"], v) for b in r["data"] for v in b["versions"]},
-        manifests("blocks"),
+        "list_blocks",  # #37: the block manifests' names and versions; where a block goes is the
+        {},  # layouts' `allowed_blocks`, as validation reads them
+        lambda r: (
+            {(b["name"], v) for b in r["data"] for v in b["versions"]},
+            next(b["goes_in"] for b in r["data"] if b["name"] == "case_header"),
+        ),
+        (manifests("blocks"), {"case": ["header"]}),
     ),
     (
         "get_block_manifest",
         {"block": "task_inbox"},
-        lambda r: (r["data"]["regions"], r["data"]["props"]["properties"]["scope"]["enum"]),
-        (["main", "aside"], ["mine", "team"]),
+        lambda r: (r["data"]["goes_in"], r["data"]["props"]["properties"]["scope"]["enum"]),
+        ({"standard": ["main", "aside"]}, ["mine", "team"]),
     ),
     (
         "list_layouts",
