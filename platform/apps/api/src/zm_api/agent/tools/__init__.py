@@ -1,8 +1,12 @@
-"""The agent's tools v1 (#36, S2-04a; blueprint §10): read, org, flow, forms and checks.
+"""The agent's tools v1 (#36, S2-04a; blueprint §10): read, org, flow, forms and checks; and
+the UI tools (#39, S2-04b): pages, their blocks and the menu, which the draft's validation checks
+against the layout and block manifests (catalogue.json, #37). The look (theme preset, accent) is
+picked in the owner console, so no tool sets it (D19).
 
 Each tool is a Pydantic model of its arguments, sent to Claude as a JSON schema with no extra
 properties and every property required (null only where it means "none"), and a handler. The
-edits' schemas are strict; the reads' aren't, to stay inside the API's limits. An edit's handler
+edits' schemas are strict, but for the two taking a block's free-form props, which a strict schema
+can't hold; the reads' aren't, to stay inside the API's limits. An edit's handler
 is a pure function from the draft to an RFC 6902 patch: `drafts.apply_change` builds it from the
 locked draft, validates the result and logs it under the tool's name, with undo. An edit names the
 `draft_sha256` its last read or edit returned and is refused when the draft has changed since, so
@@ -25,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from zm_api import drafts, templates
 from zm_api.context import ClientContext
 from zm_api.errors import ApiError, Conflict, NotFound, UnprocessableContent
+from zm_schema import catalogue
 from zm_schema.errors import loc_to_path
 from zm_schema.models import FieldType
 
@@ -266,6 +271,64 @@ class FormLayout(_Edit):
     sections: list[SectionIn]
 
 
+class BlockName(_Args):
+    block: str
+    """From list_blocks."""
+
+
+class PageRef(_Args):
+    page: str
+    """Page key, from get_overview."""
+
+
+class PageIn(_Edit):
+    key: str
+    """A letter, then letters, digits or `_`; an existing page's key changes that page."""
+    layout: str
+    """From list_layouts."""
+    department: str | None
+    """The department the page is for; null = none."""
+    flow: str | None
+    """Flow key, from get_overview; a `case` page needs one. Null = none."""
+
+
+class NewBlock(_Edit):
+    page: str
+    region: str
+    """A region of the page's layout that takes the block (list_layouts)."""
+    block: str
+    """From list_blocks."""
+    props: dict[str, Any]
+    """As get_block_manifest describes them; {} = the block's defaults."""
+    index: int | None
+    """Its place in the region, 0 first; null = at the end."""
+
+
+class BlockAt(_Edit):
+    page: str
+    region: str
+    index: int
+    """The block's place in the region, 0 first, as get_page lists them."""
+
+
+class BlockProps(BlockAt):
+    props: dict[str, Any]
+    """Every prop, as get_block_manifest describes them; replaces the old ones."""
+
+
+class NavItem(_Args):
+    page: str
+    """Page key, from get_overview."""
+    label: str
+    visible_to: list[str]
+    """Department keys, or `["*"]` for everyone."""
+
+
+class Nav(_Edit):
+    items: list[NavItem]
+    """The whole menu, in order."""
+
+
 # --- where things are in the draft --------------------------------------------------------------
 
 
@@ -322,6 +385,19 @@ def _form(doc: Doc, key: str) -> Doc:
     if key not in doc.get("forms", {}):
         raise NotFound(f"No form '{key}'")
     return doc["forms"][key]
+
+
+def _page(doc: Doc, key: str) -> tuple[int, Doc]:
+    pages = doc.get("apps", {}).get("pages", [])
+    i = _index(pages, key, "page")
+    return i, pages[i]
+
+
+def _block(doc: Doc, a: BlockAt) -> str:
+    i, page = _page(doc, a.page)
+    if not 0 <= a.index < len(page.get("regions", {}).get(a.region, [])):
+        raise NotFound(f"No block {a.index} in region '{a.region}' of page '{a.page}'")
+    return _ptr("apps", "pages", i, "regions", a.region, a.index)
 
 
 def _insert_at(doc: Doc, flow: str, stage: str, before: str | None) -> str:
@@ -470,6 +546,38 @@ def arrange_form(doc: Doc, a: FormLayout) -> Patch:
     return [{"op": "add", "path": _ptr("forms", a.form), "value": value}]
 
 
+# ponytail: these take a draft's `apps.pages`/`nav` and a page's `regions` as there (every
+# template has them); without them a change is refused as "the patch doesn't apply".
+def set_page(doc: Doc, a: PageIn) -> Patch:
+    if a.key not in [p["key"] for p in doc.get("apps", {}).get("pages", [])]:
+        page = {**a.model_dump(exclude_none=True), "regions": {}}
+        return [{"op": "add", "path": "/apps/pages/-", "value": page}]
+    i, page = _page(doc, a.key)
+    return _set(_ptr("apps", "pages", i), page, a.model_dump(exclude={"key"}))
+
+
+def place_block(doc: Doc, a: NewBlock) -> Patch:
+    i, page = _page(doc, a.page)
+    placed = [*page.get("regions", {}).get(a.region, [])]
+    at = len(placed) if a.index is None else a.index
+    if not 0 <= at <= len(placed):
+        raise NotFound(f"No position {a.index} in region '{a.region}' of page '{a.page}'")
+    placed.insert(at, {"block": a.block, "props": a.props})
+    return [{"op": "add", "path": _ptr("apps", "pages", i, "regions", a.region), "value": placed}]
+
+
+def update_block(doc: Doc, a: BlockProps) -> Patch:
+    return [{"op": "add", "path": f"{_block(doc, a)}/props", "value": a.props}]
+
+
+def remove_block(doc: Doc, a: BlockAt) -> Patch:
+    return [{"op": "remove", "path": _block(doc, a)}]
+
+
+def set_nav(doc: Doc, a: Nav) -> Patch:
+    return [{"op": "add", "path": "/apps/nav", "value": a.model_dump()["items"]}]
+
+
 # --- reads ---------------------------------------------------------------------------------------
 
 
@@ -480,13 +588,19 @@ async def _draft(ctx: ClientContext) -> tuple[Doc, str]:
 
 
 def overview(doc: Doc) -> Doc:
-    """Departments, every flow's stages and tasks, and the fields: what get_task and get_form
-    then open."""
+    """The pages without their blocks and the menu, first so that a cut overview still names
+    them; departments, every flow's stages and tasks, and the fields. get_page, get_task and
+    get_form then open them."""
 
     def brief(t: Doc) -> Doc:
         return {"id": t["id"], "name": t["name"]}
 
     return {
+        "pages": [
+            {k: v for k, v in p.items() if k != "regions"}
+            for p in doc.get("apps", {}).get("pages", [])
+        ],
+        "nav": doc.get("apps", {}).get("nav", []),
         "departments": [
             {"key": d["key"], "name": d["name"], "levels": [lv["name"] for lv in d["levels"]]}
             for d in doc["org"]["departments"]
@@ -543,6 +657,11 @@ async def get_form(ctx: ClientContext, a: FormRef) -> Result:
     return _ok(f"Form {a.form}", {"form": form, "fields": fields}, draft_sha256=sha)
 
 
+async def get_page(ctx: ClientContext, a: PageRef) -> Result:
+    doc, sha = await _draft(ctx)
+    return _ok(f"Page {a.page}", _page(doc, a.page)[1], draft_sha256=sha)
+
+
 async def list_field_types(_ctx: ClientContext, _: NoArgs) -> Result:
     types = [{"type": t, "v1_renders": t in V1_RENDERS} for t in get_args(FieldType)]
     return _ok("Field types", types)
@@ -551,6 +670,46 @@ async def list_field_types(_ctx: ClientContext, _: NoArgs) -> Result:
 async def list_templates(_ctx: ClientContext, _: NoArgs) -> Result:
     found = [{"key": t.key, "name": t.name} for t in templates.load_templates()]
     return _ok("Templates", found)
+
+
+def _newest(versions: Doc) -> Doc:
+    """A block's newest manifest: a page names no version, and the shell draws the newest."""
+    return max(versions.values(), key=lambda m: m["version"])
+
+
+def _goes_in(block: str) -> Doc:
+    """`{layout: [region]}`: where a page takes the block, by each layout's `allowed_blocks`, as
+    validation reads them (a manifest's own `regions` name no layout, and only its version's)."""
+    return {
+        name: found
+        for name, layout in catalogue.load()["layouts"].items()
+        if (found := [r["key"] for r in layout["regions"] if block in r["allowed_blocks"]])
+    }
+
+
+async def list_layouts(_ctx: ClientContext, _: NoArgs) -> Result:
+    return _ok("Layouts", list(catalogue.load()["layouts"].values()))
+
+
+async def list_blocks(_ctx: ClientContext, _: NoArgs) -> Result:
+    found = [
+        {
+            "name": name,
+            "versions": sorted(m["version"] for m in versions.values()),
+            "description": _newest(versions)["description"],
+            "goes_in": _goes_in(name),
+        }
+        for name, versions in catalogue.load()["blocks"].items()
+    ]
+    return _ok("Blocks", found)
+
+
+async def get_block_manifest(_ctx: ClientContext, a: BlockName) -> Result:
+    versions = catalogue.load()["blocks"].get(a.block)
+    if not versions:
+        raise NotFound(f"No block '{a.block}'")
+    manifest = {k: v for k, v in _newest(versions).items() if k != "regions"}
+    return _ok(f"Block {a.block}", {**manifest, "goes_in": _goes_in(a.block)})
 
 
 async def validate_draft(ctx: ClientContext, _: NoArgs) -> Result:
@@ -578,13 +737,17 @@ class Tool:
     summary: Callable[[Any], str] = lambda _: ""
     """The change chip."""
     read: Callable[[ClientContext, Any], Awaitable[Result]] | None = None
+    strict: bool = True
+    """False for an edit taking a block's props: free-form, which a strict schema can't hold, so
+    the draft's validation checks them against the block's manifest."""
 
 
 TOOLS: dict[str, Tool] = {
     # read
     "get_overview": Tool(
-        "The draft at a glance: departments and levels, each flow's stages (department, `after`)"
-        " with their tasks, every field's type and label, and the form keys.",
+        "The draft at a glance: the pages (layout, department, flow; get_page has their blocks),"
+        " the menu, departments and levels, each flow's stages (department, `after`) with their"
+        " tasks, every field's type and label, and the form keys.",
         NoArgs,
         read=get_overview,
     ),
@@ -718,6 +881,64 @@ TOOLS: dict[str, Tool] = {
         edit=arrange_form,
         summary=lambda a: f"Arranged form: {a.form}",
     ),
+    # pages, blocks and the menu, from the layout and block manifests
+    "list_layouts": Tool(
+        "The page layouts: their regions, the blocks each region takes (and at most how many),"
+        " and what a page of the layout needs (`requires`).",
+        NoArgs,
+        read=list_layouts,
+    ),
+    "list_blocks": Tool(
+        "The blocks a page can show: what each is and where it goes (`goes_in`: each layout's"
+        " regions that take it); get_block_manifest gives its props.",
+        NoArgs,
+        read=list_blocks,
+    ),
+    "get_block_manifest": Tool(
+        "One block's manifest: what it shows, where it goes (`goes_in`, as list_blocks) and the"
+        " JSON Schema of its props.",
+        BlockName,
+        read=get_block_manifest,
+    ),
+    "get_page": Tool(
+        "One page as the draft holds it: its layout, department and flow, and each region's"
+        " blocks in order (0 first) with their props.",
+        PageRef,
+        read=get_page,
+    ),
+    "set_page": Tool(
+        "Add a page, or set a page's layout, department and flow, all of them (start from"
+        " get_overview): a null one clears it. Its blocks stay.",
+        PageIn,
+        edit=set_page,
+        summary=lambda a: f"Page {a.key}: {a.layout}",
+    ),
+    "place_block": Tool(
+        "Put a block, with its props, in a region of a page.",
+        NewBlock,
+        edit=place_block,
+        summary=lambda a: f"Placed {a.block} on {a.page}",
+        strict=False,
+    ),
+    "update_block": Tool(
+        "Set a placed block's props, all of them (start from get_page).",
+        BlockProps,
+        edit=update_block,
+        summary=lambda a: f"Updated a block on {a.page}",
+        strict=False,
+    ),
+    "remove_block": Tool(
+        "Take a block off a page.",
+        BlockAt,
+        edit=remove_block,
+        summary=lambda a: f"Removed a block from {a.page}",
+    ),
+    "set_nav": Tool(
+        "Set the app's menu, replacing it: the pages it opens, in order, and who sees each.",
+        Nav,
+        edit=set_nav,
+        summary=lambda a: "Menu: " + (", ".join(i.label for i in a.items) or "empty"),
+    ),
     # checks
     "validate_draft": Tool(
         "Every problem in the draft, each with its path; ok when there is none.",
@@ -733,15 +954,15 @@ TOOLS: dict[str, Tool] = {
 
 
 def definitions() -> list[Doc]:
-    """The tools as the Messages API takes them. Only the edits are strict: Anthropic caps strict
-    tools and their union and optional parameters per request (test_tools checks the totals), and
-    every call is validated here anyway."""
+    """The tools as the Messages API takes them. Only the edits are strict (but those taking a
+    block's props): Anthropic caps strict tools and their union and optional parameters per
+    request (test_tools checks the totals), and every call is validated here anyway."""
     return [
         {
             "name": name,
             "description": t.description,
             "input_schema": t.args.model_json_schema(),
-            "strict": t.edit is not None,
+            "strict": t.edit is not None and t.strict,
         }
         for name, t in TOOLS.items()
     ]
@@ -761,9 +982,8 @@ def _fit(result: Result) -> Result:
         # no sha for a read the agent couldn't see whole: an edit needs one of a full read
         result = {k: v for k, v in result.items() if k != "draft_sha256"}
         result = {**result, "data": found[:MAX_DATA], "truncated": True}
-        result["summary"] = (
-            f"{result.get('summary', '')} (cut: read the parts with get_task or get_form)".strip()
-        )
+        cut = "(cut: read the parts with get_task, get_form or get_page)"
+        result["summary"] = f"{result.get('summary', '')} {cut}".strip()
     return result
 
 

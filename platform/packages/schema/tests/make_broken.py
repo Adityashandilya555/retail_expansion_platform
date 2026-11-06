@@ -101,7 +101,7 @@ def _bad_group_id(d: Doc) -> None:
 
 
 def _case_page_without_flow(d: Doc) -> None:
-    d["apps"] = {"pages": [{"key": "site", "layout": "case"}]}
+    d["apps"]["pages"].append({"key": "site", "layout": "case"})
 
 
 def _nav_unknown_page(d: Doc) -> None:
@@ -216,9 +216,9 @@ CASES: list[tuple[str, str, Callable[[Doc], None], str, str]] = [
     ),
     (
         "case-page-without-flow",
-        "minimal",
+        "two_flows",  # its pages have a menu
         _case_page_without_flow,
-        "apps.pages[0].flow",
+        "apps.pages[1].flow",
         "layout 'case'",
     ),
     ("nav-unknown-page", "minimal", _nav_unknown_page, "apps.nav[0].page", "unknown page 'sites'"),

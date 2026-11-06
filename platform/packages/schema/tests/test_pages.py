@@ -10,7 +10,9 @@ from zm_schema import catalogue, validate
 
 
 def errors(doc: dict[str, Any], *pages: dict[str, Any]) -> list[str]:
-    doc["apps"] = {"pages": list(pages)}
+    """The problems of `pages`, behind which a page the menu opens (pages need a menu)."""
+    menu = [{"page": "start", "label": "Start", "visible_to": ["*"]}]
+    doc["apps"] = {"pages": [*pages, {"key": "start", "layout": "standard"}], "nav": menu}
     return [str(e) for e in validate(doc)]
 
 
