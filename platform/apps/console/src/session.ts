@@ -14,6 +14,13 @@ let generation = 0;
 
 export const api = createApiClient(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000", () => token);
 
+/** A call's data, or an Error with the API's detail. */
+export async function must<T>(call: Promise<{ data?: T; error?: { detail?: string | null } }>): Promise<T> {
+  const { data, error } = await call;
+  if (data === undefined) throw new Error(error?.detail ?? "Request failed");
+  return data;
+}
+
 function keep(t: TokenOut) {
   token = t.access_token;
   clearTimeout(timer);
