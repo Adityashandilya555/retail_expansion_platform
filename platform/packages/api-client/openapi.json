@@ -874,6 +874,86 @@
         "title": "ClientOut",
         "type": "object"
       },
+      "ClientOverview": {
+        "description": "Counts and status only (PRODUCT.md, owner step 8): never a person's name or email, nor a\nform value. The console names the client from `GET /owner/clients`.",
+        "properties": {
+          "cases_in_progress": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FlowCases"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cases In Progress"
+          },
+          "health": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Health"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastRelease"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "new",
+              "provisioning",
+              "ready",
+              "failed",
+              "suspended"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "users": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "status",
+          "users",
+          "cases_in_progress",
+          "last_release",
+          "health"
+        ],
+        "title": "ClientOverview",
+        "type": "object"
+      },
       "ConversationIn": {
         "additionalProperties": false,
         "properties": {
@@ -1210,6 +1290,24 @@
         "title": "FieldOut",
         "type": "object"
       },
+      "FlowCases": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "flow": {
+            "title": "Flow",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flow",
+          "count"
+        ],
+        "title": "FlowCases",
+        "type": "object"
+      },
       "FormOut": {
         "properties": {
           "layout": {
@@ -1232,6 +1330,22 @@
           "layout"
         ],
         "title": "FormOut",
+        "type": "object"
+      },
+      "Health": {
+        "properties": {
+          "db": {
+            "$ref": "#/components/schemas/Probe"
+          },
+          "operaton": {
+            "$ref": "#/components/schemas/Probe"
+          }
+        },
+        "required": [
+          "operaton",
+          "db"
+        ],
+        "title": "Health",
         "type": "object"
       },
       "InviteAcceptIn": {
@@ -1308,6 +1422,25 @@
           "changed"
         ],
         "title": "KeyChanges",
+        "type": "object"
+      },
+      "LastRelease": {
+        "properties": {
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "published_at"
+        ],
+        "title": "LastRelease",
         "type": "object"
       },
       "Level": {
@@ -1752,6 +1885,31 @@
           }
         },
         "title": "PreferencesIn",
+        "type": "object"
+      },
+      "Probe": {
+        "properties": {
+          "ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ms"
+          },
+          "up": {
+            "title": "Up",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "up",
+          "ms"
+        ],
+        "title": "Probe",
         "type": "object"
       },
       "Problem": {
@@ -2496,6 +2654,29 @@
           "department"
         ],
         "title": "UiStage",
+        "type": "object"
+      },
+      "UserCounts": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "deactivated": {
+            "title": "Deactivated",
+            "type": "integer"
+          },
+          "invited": {
+            "title": "Invited",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active",
+          "invited",
+          "deactivated"
+        ],
+        "title": "UserCounts",
         "type": "object"
       },
       "UserIn": {
@@ -3929,6 +4110,42 @@
           }
         },
         "summary": "Create Client",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/overview": {
+      "get": {
+        "description": "Per client: account counts, cases in progress per flow, the active release, and the health\nof its Operaton and vault. Every client is probed at once, each with PROBE_TIMEOUT, so one\nthat is down never holds up or fails the rest. The answer is kept OVERVIEW_TTL seconds.",
+        "operationId": "clients_overview_owner_clients_overview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ClientOverview"
+                  },
+                  "title": "Response Clients Overview Owner Clients Overview Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Clients Overview",
         "tags": [
           "owner"
         ]
