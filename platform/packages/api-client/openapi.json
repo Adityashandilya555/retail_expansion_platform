@@ -4018,7 +4018,7 @@
     },
     "/owner/clients/{client_id}/agent/conversations/{conversation_id}/messages": {
       "post": {
-        "description": "One turn, streamed: `text_delta {text}`, `tool_call {name}`, `change {change_id, summary}`,\n`refusal {category}` and `error {message}` events, then `done {usage}`.",
+        "description": "One turn, streamed: `text_delta {text}`, `retry {}` (drop the text this call streamed so\nfar), `tool_call {name}`, `change {change_id, summary}`, `refusal {category}` and\n`error {message}` events, then `done {usage}`.",
         "operationId": "send_message_owner_clients__client_id__agent_conversations__conversation_id__messages_post",
         "parameters": [
           {

@@ -1,7 +1,8 @@
 -- 0009: the admin agent's conversations (#38). Each message the model sees is one row, sent back
 -- on every later call exactly as stored: Opus 5.5 checks that earlier turns, thinking blocks
 -- included, were never edited. So both tables are insert-only, like 0005's draft_changes: zm_api
--- may only read and insert, and the trigger below refuses updates and deletes for everyone else.
+-- may only read and insert, and the triggers below refuse updates, deletes and truncate for
+-- everyone else.
 -- `content` is json, not jsonb: jsonb reorders object keys, and a tool call's input sent back in
 -- another order is another prompt.
 
@@ -33,3 +34,8 @@ create trigger agent_conversations_insert_only before update or delete on app.ag
   for each row execute function app.agent_insert_only();
 create trigger agent_messages_insert_only before update or delete on app.agent_messages
   for each row execute function app.agent_insert_only();
+-- truncate fires no row triggers
+create trigger agent_conversations_no_truncate before truncate on app.agent_conversations
+  for each statement execute function app.agent_insert_only();
+create trigger agent_messages_no_truncate before truncate on app.agent_messages
+  for each statement execute function app.agent_insert_only();

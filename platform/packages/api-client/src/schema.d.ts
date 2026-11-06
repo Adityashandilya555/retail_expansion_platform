@@ -527,8 +527,9 @@ export interface paths {
         put?: never;
         /**
          * Send Message
-         * @description One turn, streamed: `text_delta {text}`, `tool_call {name}`, `change {change_id, summary}`,
-         *     `refusal {category}` and `error {message}` events, then `done {usage}`.
+         * @description One turn, streamed: `text_delta {text}`, `retry {}` (drop the text this call streamed so
+         *     far), `tool_call {name}`, `change {change_id, summary}`, `refusal {category}` and
+         *     `error {message}` events, then `done {usage}`.
          */
         post: operations["send_message_owner_clients__client_id__agent_conversations__conversation_id__messages_post"];
         delete?: never;

@@ -10,12 +10,13 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
 import anthropic
+import anyio
 import httpx2
 import jwt
 import psycopg
@@ -25,7 +26,7 @@ from fastapi.testclient import TestClient
 
 from zm_api import drafts
 from zm_api.agent import loop, tools
-from zm_api.context import Resolver
+from zm_api.context import VAULT_POOL, OwnerContext, Resolver
 from zm_api.errors import Conflict, NotFound
 from zm_api.main import create_app
 
@@ -37,9 +38,11 @@ from ..test_publish_unit import FakeRegistry, matrix_retail
 from .test_tools import ARGS, held, sha, task  # noqa: F401 (held: the draft in memory)
 
 Doc = dict[str, Any]
-Reply = Doc | Callable[[Doc], Doc] | Exception
+Reply = Doc | Callable[[Doc], Doc] | Exception | tuple[Doc, Exception]
 OWNER = uuid.uuid4()
+ME = OwnerContext(OWNER)
 FIRE_NOC = "add a Fire NOC upload to Legal licensing with L2 approval"
+REQUEST = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
 
 # --- recorded response shapes -------------------------------------------------------------------
 
@@ -89,11 +92,20 @@ def iteration(kind: str, **more: Any) -> Doc:
     return {"type": kind, "input_tokens": 1200, "output_tokens": 40, **counts, **more}
 
 
-class FakeStream:
-    """What `client.beta.messages.stream(...)` gives inside `async with`."""
+def api_error(
+    kind: type[anthropic.APIStatusError], status: int, error: str, message: str
+) -> anthropic.APIStatusError:
+    """What the SDK raises for an error response; status 200 is an `error` event mid-stream."""
+    body = {"type": "error", "error": {"type": error, "message": message}}
+    return kind(str(body), response=httpx2.Response(status, request=REQUEST, json=body), body=body)
 
-    def __init__(self, message: BetaMessage | Exception) -> None:
-        self.message = message
+
+class FakeStream:
+    """What `client.beta.messages.stream(...)` gives inside `async with`: `message_start`, the
+    text, and `error` raised after them, each event a network wait."""
+
+    def __init__(self, message: BetaMessage | None, error: Exception | None = None) -> None:
+        self.message, self.error = message, error
 
     async def __aenter__(self) -> "FakeStream":
         return self
@@ -102,20 +114,29 @@ class FakeStream:
         return None
 
     async def __aiter__(self) -> AsyncIterator[SimpleNamespace]:
-        if isinstance(self.message, Exception):
-            raise self.message  # as the SDK's stream iterator raises
-        for block in self.message.content:
-            if block.type == "text":
+        for block in [] if self.message is None else [None, *self.message.content]:
+            await asyncio.sleep(0)
+            if block is None:
+                yield SimpleNamespace(type="message_start")
+            elif block.type == "text":
                 yield SimpleNamespace(type="text", text=block.text)
+        if self.error:
+            raise self.error  # as the SDK's stream iterator raises
+
+    @property
+    def current_message_snapshot(self) -> BetaMessage:
+        assert self.message is not None  # as the SDK asserts before message_start
+        return self.message
 
     async def get_final_message(self) -> BetaMessage:
-        assert isinstance(self.message, BetaMessage)
+        assert self.message is not None and self.error is None
         return self.message
 
 
 class Fake:
     """`AsyncAnthropic` as the loop calls it. Each reply is a response body, a function of the
-    request giving one, or an exception the stream raises; every request is kept."""
+    request giving one, an exception the stream raises before anything, or a body and the
+    exception it is cut by; every request is kept."""
 
     def __init__(self, *replies: Reply, tokens: int = 2_000) -> None:
         self.replies, self.tokens = list(replies), tokens
@@ -126,14 +147,22 @@ class Fake:
 
     async def count_tokens(self, **params: Any) -> SimpleNamespace:
         self.counted.append(copy.deepcopy(params))
+        blocks = [
+            b for m in params["messages"] if isinstance(m["content"], list) for b in m["content"]
+        ]
+        if any(b["type"] == "fallback" for b in blocks):  # a beta block, and this isn't the beta
+            raise api_error(anthropic.BadRequestError, 400, "invalid_request_error", "fallback")
         return SimpleNamespace(input_tokens=self.tokens)
 
     def stream(self, **params: Any) -> FakeStream:
         self.requests.append(copy.deepcopy(params))
         found = self.replies.pop(0)
         if isinstance(found, Exception):
-            return FakeStream(found)
-        return FakeStream(BetaMessage.model_validate(found(params) if callable(found) else found))
+            return FakeStream(None, found)
+        found, error = found if isinstance(found, tuple) else (found, None)
+        return FakeStream(
+            BetaMessage.model_validate(found(params) if callable(found) else found), error
+        )
 
 
 # --- reading a request ----------------------------------------------------------------------------
@@ -167,12 +196,18 @@ L2 = {
 
 
 def fire_noc() -> tuple[Reply, ...]:
-    """How the model answers FIRE_NOC: one edit, then the next on the sha the first returned."""
+    """How the model answers FIRE_NOC: a read, an edit on the sha it returned, then the next edit
+    on the sha the first returned."""
     return (
-        lambda r: reply(
+        reply(
             THINKING,
             text("Adding the upload."),
-            tool_use("add_document_slot", {**SLOT, "draft_sha256": state(r)["draft_sha256"]}),
+            tool_use("get_task", {"task_id": "legal_licensing"}),
+            stop="tool_use",
+        ),
+        lambda r: reply(
+            THINKING,
+            tool_use("add_document_slot", {**SLOT, "draft_sha256": last_result(r)["draft_sha256"]}),
             stop="tool_use",
         ),
         lambda r: reply(
@@ -189,8 +224,8 @@ def fire_noc() -> tuple[Reply, ...]:
 
 @pytest.fixture
 def chats(held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> dict[uuid.UUID, Doc]:  # noqa: F811
-    """`{conversation id: {mode, rows}}` for the vault's two tables, and their claims (the vault's
-    advisory locks) as a set; `held.ctx` gets a client."""
+    """`{conversation id: {mode, owner, rows}}` for the vault's two tables, and their claims (the
+    vault's advisory locks) as a set; `held.ctx` gets a client."""
     found: dict[uuid.UUID, Doc] = {}
     busy: set[uuid.UUID] = set()
     held.ctx.client = SimpleNamespace(slug="pilot-local")
@@ -205,12 +240,13 @@ def chats(held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> dict[uuid.U
         finally:
             busy.remove(cid)
 
-    async def stored(_ctx: Any, cid: uuid.UUID) -> tuple[str, list[Doc]]:
-        if cid not in found:
+    async def stored(_ctx: Any, cid: uuid.UUID, owner: uuid.UUID) -> tuple[str, list[Doc]]:
+        if cid not in found or found[cid]["owner"] != owner:
             raise NotFound(loop.NO_CONVERSATION)
         return found[cid]["mode"], copy.deepcopy(found[cid]["rows"])
 
     async def append(_ctx: Any, cid: uuid.UUID, seq: int, rows: list[Doc]) -> None:
+        await asyncio.sleep(0)  # a round trip to the vault
         assert seq == len(found[cid]["rows"])  # right after what the turn read
         found[cid]["rows"] += copy.deepcopy(rows)
 
@@ -222,7 +258,7 @@ def chats(held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> dict[uuid.U
 
 def new(chats: dict[uuid.UUID, Doc], mode: str = "edit") -> uuid.UUID:
     cid = uuid.uuid4()
-    chats[cid] = {"mode": mode, "rows": []}
+    chats[cid] = {"mode": mode, "owner": OWNER, "rows": []}
     return cid
 
 
@@ -230,7 +266,7 @@ def run(client: Any, held: SimpleNamespace, cid: uuid.UUID, said: str) -> list[t
     """One turn of `cid`, as the route runs it: its events."""
 
     async def go() -> list[tuple[str, Doc]]:
-        conversation = await loop.load(held.ctx, cid)
+        conversation = await loop.load(held.ctx, cid, OWNER)
         return [e async for e in loop.turn(client, held.ctx, OWNER, conversation, said)]
 
     return asyncio.run(go())
@@ -255,6 +291,7 @@ def test_a_request_streams_tool_calls_and_changes_and_edits_the_draft(
     events = run(fake, held, cid, FIRE_NOC)
     assert events == [
         ("text_delta", {"text": "Adding the upload."}),
+        ("tool_call", {"name": "get_task"}),
         ("tool_call", {"name": "add_document_slot"}),
         ("change", {"change_id": 1, "summary": "Added: Fire NOC upload"}),
         ("tool_call", {"name": "set_approval_chain"}),
@@ -270,16 +307,17 @@ def test_a_request_streams_tool_calls_and_changes_and_edits_the_draft(
     ]
     # the history only grows: each request is the last one plus its reply, unchanged (thinking
     # blocks too), and the tool results
-    first, second, third = fake.requests
+    first, second, third, fourth = fake.requests
     assert second["messages"][: len(first["messages"])] == first["messages"]
     assert second["messages"][2]["content"][0] == THINKING
     assert third["messages"][: len(second["messages"])] == second["messages"]
+    assert fourth["messages"][: len(third["messages"])] == third["messages"]
     # stored: the message and the state, then each reply (with its usage) and its tool results
-    assert roles(chats, cid) == ["user", "system", *["assistant", "user"] * 2, "assistant"]
+    assert roles(chats, cid) == ["user", "system", *["assistant", "user"] * 3, "assistant"]
     stored = [{"role": r["role"], "content": r["content"]} for r in chats[cid]["rows"]]
-    assert stored[:6] == third["messages"]
+    assert stored[:8] == fourth["messages"]
     usage = [bool(r.get("usage")) for r in chats[cid]["rows"]]
-    assert usage == [False, False, *[True, False] * 2, True]
+    assert usage == [False, False, *[True, False] * 3, True]
     assert first["output_config"] == {"effort": "medium"}  # an edit conversation
 
 
@@ -288,7 +326,7 @@ def test_a_replys_edits_run_in_order_each_on_the_sha_the_one_before_left(
     chats: dict[uuid.UUID, Doc],
 ) -> None:
     def edits(r: Doc) -> Doc:
-        read = state(r)["draft_sha256"]
+        read = last_result(r)["draft_sha256"]
         return reply(
             tool_use("add_field", {**ARGS["add_field"], "draft_sha256": read}),
             tool_use("update_field", {**ARGS["update_field"], "draft_sha256": read}),
@@ -296,30 +334,40 @@ def test_a_replys_edits_run_in_order_each_on_the_sha_the_one_before_left(
             stop="tool_use",
         )
 
-    fake = Fake(edits, reply(text("Done.")))
+    fake = Fake(reply(tool_use("get_overview", {}), stop="tool_use"), edits, reply(text("Done.")))
     run(fake, held, new(chats), "Add a GST number and relabel the site name")
-    results = [json.loads(r["content"]) for r in fake.requests[1]["messages"][-1]["content"]]
+    results = [json.loads(r["content"]) for r in fake.requests[2]["messages"][-1]["content"]]
     assert [r["ok"] for r in results] == [True, True, False]
     assert results[2]["summary"] == drafts.STALE
     assert [c["tool"] for c in held.log] == ["add_field", "update_field"]
     assert results[1]["draft_sha256"] == sha(held.doc)
 
 
-def test_each_turn_tells_the_model_the_drafts_current_sha(
+def test_each_turn_tells_the_model_whether_a_person_changed_the_draft_since_its_last_read(
     held: SimpleNamespace,  # noqa: F811
     chats: dict[uuid.UUID, Doc],
 ) -> None:
-    fake, cid = Fake(*fire_noc(), reply(text("Yes.")), tokens=10), new(chats)
+    fake = Fake(*fire_noc(), reply(text("Yes.")), reply(text("Yes.")), tokens=10)
+    cid = new(chats)
     run(fake, held, cid, FIRE_NOC)
     run(fake, held, cid, "Is that all?")
-    before, after = state(fake.requests[0]), state(fake.requests[3])
-    assert before["draft_sha256"] == sha(matrix_retail())
-    assert after["draft_sha256"] == sha(held.doc) != before["draft_sha256"]
-    assert "legal" in after["departments"] and after["stages"]["store_launch"][0]
+    held.doc = copy.deepcopy(held.doc)  # a person relabels the upload between turns
+    held.doc["fields"]["fire_noc"]["label"] = "Fire NOC certificate"
+    run(fake, held, cid, "Still there?")
+    first, unchanged, changed = (state(fake.requests[i]) for i in (0, 4, 5))
+    assert [first["draft"], unchanged["draft"], changed["draft"]] == [
+        loop.READ_FIRST,
+        loop.UNCHANGED,
+        loop.CHANGED,
+    ]
+    assert "legal" in changed["departments"] and changed["stages"]["store_launch"][0]
+    # no sha to edit with: only the model's own reads and edits give it one
+    notes = [m["content"] for m in fake.requests[5]["messages"] if m["role"] == "system"]
+    assert len(notes) == 3 and not any("draft_sha256" in n or sha(held.doc) in n for n in notes)
     # the first turn's state message is still there, as it was
-    assert [m for m in fake.requests[3]["messages"] if m["role"] == "system"][0] == [
-        m for m in fake.requests[0]["messages"] if m["role"] == "system"
-    ][0]
+    assert (
+        notes[0] == [m for m in fake.requests[0]["messages"] if m["role"] == "system"][0]["content"]
+    )
 
 
 def test_the_second_turn_reads_the_first_from_the_cache(
@@ -378,8 +426,8 @@ def test_a_tool_that_raises_answers_is_error_and_leaves_the_draft(
 
     monkeypatch.setitem(tools.TOOLS, "add_field", replace(tools.TOOLS["add_field"], edit=boom))
     fake = Fake(
-        lambda r: reply(
-            tool_use("add_field", {**ARGS["add_field"], "draft_sha256": state(r)["draft_sha256"]}),
+        reply(
+            tool_use("add_field", {**ARGS["add_field"], "draft_sha256": sha(held.doc)}),  # read
             tool_use("get_task", {"task_id": 5}),  # an input that doesn't fit the schema
             stop="tool_use",
         ),
@@ -399,7 +447,8 @@ def test_past_the_budget_the_turn_stops_without_another_call(
     chats: dict[uuid.UUID, Doc],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGENT_MAX_TOKENS_PER_CONVERSATION", "6000")
+    # room for a whole reply (MAX_TOKENS) and 6000 more
+    monkeypatch.setenv("AGENT_MAX_TOKENS_PER_CONVERSATION", str(loop.MAX_TOKENS + 6000))
     # fresh tokens: 1000 in + 1000 cache writes + 500 out = 2500 a call; cache reads don't count
     usage = {"input_tokens": 1000, "cache_creation_input_tokens": 1000, "output_tokens": 500}
     usage["cache_read_input_tokens"] = 50_000
@@ -452,12 +501,17 @@ def test_after_a_fallback_mid_reply_only_the_serving_models_tool_calls_run(
     fake = Fake(
         reply(THINKING, text("Let me"), declined, FALLBACK, then, served, stop="tool_use"),
         reply(text("Done.")),
+        reply(text("Nothing else.")),
     )
-    events = run(fake, held, new(chats), "What does legal licensing ask for?")
+    cid = new(chats)
+    events = run(fake, held, cid, "What does legal licensing ask for?")
     assert [d for n, d in events if n == "tool_call"] == [{"name": "get_task"}]
     assert held.log == []
-    # sent back: the declined model's text only, then everything from the switch on
-    assert fake.requests[1]["messages"][2]["content"] == [text("Let me"), FALLBACK, then, served]
+    # sent back: the declined model's text only, then everything after the switch but its marker
+    assert fake.requests[1]["messages"][2]["content"] == [text("Let me"), then, served]
+    # and the conversation goes on: count_tokens (no fallback beta) never sees the marker
+    assert names(run(fake, held, cid, "Anything else?")) == ["text_delta", "done"]
+    assert len(fake.counted) == len(fake.requests) == 3
 
 
 def test_a_reply_cut_at_max_tokens_runs_no_tool_and_an_empty_one_isnt_replayed(
@@ -476,20 +530,93 @@ def test_a_reply_cut_at_max_tokens_runs_no_tool_and_an_empty_one_isnt_replayed(
     assert [m["role"] for m in fake.requests[2]["messages"]] == ["user", "system"]
 
 
-def test_unparseable_tool_input_is_asked_again_and_an_api_error_ends_the_turn(
+def test_a_call_that_doesnt_finish_still_counts_and_a_retry_drops_its_text(
     held: SimpleNamespace,  # noqa: F811
     chats: dict[uuid.UUID, Doc],
 ) -> None:
     bad_json = ValueError("Unable to parse tool parameter JSON from model")
-    fake, cid = Fake(bad_json, reply(text("Hi."))), new(chats)
-    assert names(run(fake, held, cid, "Hi")) == ["text_delta", "done"]
-    assert len(fake.requests) == 2
-    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
-    down = Fake(bad_json, bad_json, bad_json, anthropic.APIConnectionError(request=request))
-    other = new(chats)
-    assert names(run(down, held, other, "Hi")) == ["error", "done"]  # three tries
-    assert names(run(down, held, other, "Hi")) == ["error", "done"]  # the API is down
-    assert chats[other]["rows"] == []
+    down = anthropic.APIConnectionError(request=REQUEST)
+    fake, cid = Fake((reply(text("Let me add")), bad_json), reply(text("Hi.")), down), new(chats)
+    events = run(fake, held, cid, "Hi")
+    assert events[:-1] == [
+        ("text_delta", {"text": "Let me add"}),
+        ("retry", {}),  # the console drops "Let me add"
+        ("text_delta", {"text": "Hi."}),
+    ]
+    assert names(run(fake, held, cid, "Hi again")) == ["error", "done"]  # the API is down
+    # each call is stored with its usage, content None for one that didn't finish: as streamed
+    # until the reply couldn't be read, or as counted when nothing came back
+    rows = chats[cid]["rows"]
+    assert [(r["role"], r["content"] is None) for r in rows] == [
+        ("assistant", True),
+        ("user", False),
+        ("system", False),
+        ("assistant", False),
+        ("assistant", True),
+    ]
+    assert [loop._fresh(r["usage"]) for r in rows if r["content"] is None] == [1500, 2000]
+    assert events[-1][1]["usage"]["output_tokens"] == 600  # both calls of the turn
+    three = Fake(bad_json, bad_json, bad_json)
+    assert names(run(three, held, new(chats), "Hi")) == ["retry", "retry", "error", "done"]
+
+
+def test_a_call_the_console_leaves_mid_stream_still_keeps_its_usage(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """The route's stream runs the turn in a task that a disconnect cancels (an anyio cancel
+    scope), or leaves it at a yield to be closed: either way the call's usage is stored."""
+    hello = reply(text("Hel"), text("lo."))
+    fake, cancelled, closed = Fake(hello, hello), new(chats), new(chats)
+
+    async def go() -> None:
+        conversation = await loop.load(held.ctx, cancelled, OWNER)
+        with anyio.CancelScope() as scope:
+            async for _ in loop.turn(fake, held.ctx, OWNER, conversation, "Hi"):
+                scope.cancel()  # gone after the first text
+        conversation = await loop.load(held.ctx, closed, OWNER)
+        stream = loop.turn(fake, held.ctx, OWNER, conversation, "Hi")
+        await anext(stream)
+        await stream.aclose()
+
+    asyncio.run(go())
+    for cid in (cancelled, closed):
+        assert [(r["content"], r["usage"]["output_tokens"]) for r in chats[cid]["rows"]] == [
+            (None, 300)
+        ]
+
+
+def test_an_api_error_says_whether_sending_again_can_help(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    refused = api_error(anthropic.BadRequestError, 400, "invalid_request_error", "prompt too long")
+    passing = [
+        anthropic.APIConnectionError(request=REQUEST),
+        api_error(anthropic.RateLimitError, 429, "rate_limit_error", "Slow down"),
+        api_error(anthropic.OverloadedError, 529, "overloaded_error", "Overloaded"),
+        api_error(anthropic.APIStatusError, 200, "overloaded_error", "Overloaded"),  # mid-stream
+    ]
+    said = [run(Fake(e), held, new(chats), "Hi")[0][1]["message"] for e in [refused, *passing]]
+    assert said[0] == "The request was refused: prompt too long"
+    assert all(s.startswith("The model is unavailable") and "Try again" in s for s in said[1:])
+
+
+def test_a_failure_outside_the_api_still_ends_the_stream_with_an_error_and_done(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def down(*_: Any) -> None:
+        raise OSError("the vault went away")
+
+    monkeypatch.setattr(loop, "_append", down)
+    with caplog.at_level(logging.ERROR, logger="zm_api.agent"):
+        events = run(Fake(reply(text("Hello."))), held, new(chats), "Hi")
+    assert events[1:] == [("error", {"message": loop.FAILED}), ("done", events[-1][1])]
+    [failed] = [r for r in caplog.records if r.getMessage() == "agent turn failed"]
+    assert failed.exc_info and isinstance(failed.exc_info[1], OSError)
 
 
 def test_a_turn_overlapping_one_on_its_conversation_is_refused_before_any_call(
@@ -501,20 +628,42 @@ def test_a_turn_overlapping_one_on_its_conversation_is_refused_before_any_call(
     opened = asynccontextmanager(loop.opened)
 
     async def go() -> tuple[list[tuple[str, Doc]], loop.Conversation]:
-        async with opened(cid, held.ctx) as conversation:
+        async with opened(cid, held.ctx, ME) as conversation:
             stream = loop.turn(fake, held.ctx, OWNER, conversation, FIRE_NOC)
             first = await anext(stream)  # its first call is streaming
             with pytest.raises(Conflict, match="already running"):
-                async with opened(cid, held.ctx):
+                async with opened(cid, held.ctx, ME):
                     pytest.fail("the second turn ran")
             events = [first, *[e async for e in stream]]
-        async with opened(cid, held.ctx) as after:  # let go: the next turn reads all of it
+        async with opened(cid, held.ctx, ME) as after:  # let go: the next turn reads all of it
             return events, after
 
     events, after = asyncio.run(go())
-    assert names(events)[-1] == "done" and len(fake.requests) == len(fake.counted) == 3
+    assert names(events)[-1] == "done" and len(fake.requests) == len(fake.counted) == 4
     assert [c["tool"] for c in held.log] == ["add_document_slot", "set_approval_chain"]
-    assert len(after.rows) == len(chats[cid]["rows"]) == 7
+    assert len(after.rows) == len(chats[cid]["rows"]) == 9
+
+
+def test_past_a_clients_turn_limit_a_turn_is_refused_before_its_claim(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """Each running turn holds a vault connection for its claim and needs one for its work, so a
+    client runs at most VAULT_POOL - 1 at once (per API process)."""
+    opened = asynccontextmanager(loop.opened)
+    cids = [new(chats) for _ in range(VAULT_POOL)]
+
+    async def go() -> None:
+        async with AsyncExitStack() as running:
+            for cid in cids[:-1]:
+                await running.enter_async_context(opened(cid, held.ctx, ME))
+            with pytest.raises(Conflict, match="already running for this client"):
+                async with opened(cids[-1], held.ctx, ME):
+                    pytest.fail("one turn too many ran")
+        async with opened(cids[-1], held.ctx, ME):  # once they've ended
+            pass
+
+    asyncio.run(go())
 
 
 def sse(body: str) -> list[tuple[str, Doc]]:
@@ -537,7 +686,7 @@ def test_the_console_gets_the_turn_as_server_sent_events(
     app.state.anthropic = fake = Fake(*fire_noc())
     cid = new(chats)
     url = f"/owner/clients/{rows['pilot-local'].id}/agent/conversations/{cid}/messages"
-    owner = bearer(token("owner", client=None))
+    owner = bearer(token("owner", client=None, sub=str(OWNER)))
 
     async def meanwhile() -> httpx2.Response:
         async with loop._claimed(held.ctx, cid):  # a turn of cid is running
@@ -548,6 +697,7 @@ def test_the_console_gets_the_turn_as_server_sent_events(
         unknown = api.post(
             url.replace(str(cid), str(uuid.uuid4())), headers=owner, json={"text": "Hi"}
         )
+        stranger = api.post(url, headers=bearer(token("owner", client=None)), json={"text": "Hi"})
         empty = api.post(url, headers=owner, json={"text": ""})
         client = api.post(url, headers=bearer(token("client")), json={"text": "Hi"})
         busy = asyncio.run(meanwhile())
@@ -557,50 +707,67 @@ def test_the_console_gets_the_turn_as_server_sent_events(
     assert names(events) == [
         "text_delta",
         "tool_call",
+        "tool_call",
         "change",
         "tool_call",
         "change",
         "text_delta",
         "done",
     ]
-    assert events[2][1] == {"change_id": 1, "summary": "Added: Fire NOC upload"}
-    assert events[-1][1]["usage"]["output_tokens"] == 900
-    assert unknown.status_code == 404 and unknown.json()["detail"] == loop.NO_CONVERSATION
+    assert events[3][1] == {"change_id": 1, "summary": "Added: Fire NOC upload"}
+    assert events[-1][1]["usage"]["output_tokens"] == 1200
+    # another owner's conversation is as missing as one that doesn't exist
+    for missing in (unknown, stranger):
+        assert missing.status_code == 404 and missing.json()["detail"] == loop.NO_CONVERSATION
     assert empty.status_code == 422 and client.status_code == 403
     assert busy.status_code == 409 and busy.json()["detail"] == loop.BUSY
-    assert len(fake.requests) == len(fake.counted) == 3  # the first turn's; none for the busy one
+    assert len(fake.requests) == len(fake.counted) == 4  # the first turn's; none for the others
 
 
 # --- integration: the pilot vault ---------------------------------------------------------------
 
 
+EMPTY = (
+    "set session_replication_role = replica; truncate app.agent_messages, app.agent_conversations"
+)
+
+
 @pytest.fixture
 def agent_vault(pilot: Clients) -> Iterator[Clients]:  # noqa: F811
-    """pilot's vault with the Matrix Retail draft and no conversations (truncate: the trigger
-    refuses deletes)."""
-    vault_sql("pilot", "truncate app.agent_messages, app.agent_conversations")
+    """pilot's vault with the Matrix Retail draft and no conversations (the triggers refuse
+    deletes and truncate, so they are switched off for the session that empties the tables)."""
+    vault_sql("pilot", EMPTY)
     yield pilot
-    vault_sql("pilot", "truncate app.agent_messages, app.agent_conversations")
+    vault_sql("pilot", EMPTY)
+
+
+def owner_token(owner: uuid.UUID) -> dict[str, str]:
+    claims = {"sub": str(owner), "kind": "owner", "exp": 4102444800}
+    return bearer(jwt.encode(claims, JWT_SECRET, algorithm="HS256"))
 
 
 def agent_api(c: Clients, fake: Fake) -> tuple[TestClient, dict[str, str], str]:
-    owner = jwt.encode(
-        {"sub": str(c.owner), "kind": "owner", "exp": 4102444800}, JWT_SECRET, algorithm="HS256"
-    )
     app = create_app()
     app.state.anthropic = fake
-    return TestClient(app), bearer(owner), f"/owner/clients/{c.ids['pilot']}/agent/conversations"
+    url = f"/owner/clients/{c.ids['pilot']}/agent/conversations"
+    return TestClient(app), owner_token(c.owner), url
 
 
 @pytest.mark.integration
 def test_a_turn_edits_the_vaults_draft_and_stores_the_conversation(
     agent_vault: Clients,
 ) -> None:
-    api, auth, url = agent_api(agent_vault, Fake(*fire_noc()))
+    fake = Fake(*fire_noc())
+    api, auth, url = agent_api(agent_vault, fake)
     with api:
         started = api.post(url, headers=auth, json={"mode": "edit"})
         cid = started.json()["id"]
         response = api.post(f"{url}/{cid}/messages", headers=auth, json={"text": FIRE_NOC})
+        stranger = api.post(
+            f"{url}/{cid}/messages", headers=owner_token(uuid.uuid4()), json={"text": "Hi"}
+        )
+    assert stranger.status_code == 404 and stranger.json()["detail"] == loop.NO_CONVERSATION
+    assert len(fake.requests) == 4  # the owner's turn; nothing for another owner
     assert started.status_code == 201
     assert {k: started.json()[k] for k in ("owner_id", "mode")} == {
         "owner_id": str(agent_vault.owner),
@@ -632,13 +799,15 @@ def test_a_turn_edits_the_vaults_draft_and_stores_the_conversation(
         (4, "assistant", True),
         (5, "user", False),
         (6, "assistant", True),
+        (7, "user", False),
+        (8, "assistant", True),
     ]
     # json, not jsonb: a tool call's input comes back in the order the model wrote it
-    assert '"input": {"task_id": "legal_licensing", "key": "fire_noc"' in stored[2][2]
+    assert '"input": {"task_id": "legal_licensing", "key": "fire_noc"' in stored[4][2]
 
 
 @pytest.mark.integration
-def test_the_conversation_tables_refuse_updates_and_deletes(agent_vault: Clients) -> None:
+def test_the_conversation_tables_refuse_updates_deletes_and_truncate(agent_vault: Clients) -> None:
     api, auth, url = agent_api(agent_vault, Fake(reply(text("Hello."))))
     with api:
         cid = api.post(url, headers=auth, json={"mode": "configure"}).json()["id"]
@@ -648,11 +817,13 @@ def test_the_conversation_tables_refuse_updates_and_deletes(agent_vault: Clients
     for statement in (
         "update app.agent_messages set content = '[]'",
         "delete from app.agent_messages",
+        "truncate app.agent_messages",
         "update app.agent_conversations set mode = 'edit'",
         "delete from app.agent_conversations",
+        "truncate app.agent_conversations cascade",
     ):
         with pytest.raises(psycopg.errors.RaiseException, match="insert-only"):
-            vault_sql("pilot", statement)  # the superuser: the trigger
+            vault_sql("pilot", statement)  # the tables' owner: the triggers
         with (
             psycopg.connect(PILOT_DSN) as conn,
             pytest.raises(psycopg.errors.InsufficientPrivilege),
@@ -705,7 +876,7 @@ def test_live_smoke(held: SimpleNamespace, chats: dict[uuid.UUID, Doc]) -> None:
         client = anthropic.AsyncAnthropic()
         turns = []
         for said in (FIRE_NOC, "Thanks. Is the draft valid now?"):
-            conversation = await loop.load(held.ctx, cid)
+            conversation = await loop.load(held.ctx, cid, OWNER)
             turns.append([e async for e in loop.turn(client, held.ctx, OWNER, conversation, said)])
         return turns
 
