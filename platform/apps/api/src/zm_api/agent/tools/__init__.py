@@ -13,7 +13,7 @@ locked draft, validates the result and logs it under the tool's name, with undo.
 it never overwrites a person's edit it hasn't seen. No tool publishes, migrates, manages people or
 takes a client: the caller passes the ClientContext of the console's client. `call` answers
 `{ok, summary, errors?}`, plus `data` for a read and `draft_sha256`, cut to a size (`truncated`);
-an edit's `summary` is its change chip.
+an edit's `summary` is its change chip, and a done edit adds its `change_id` (the log row).
 """
 
 import json
@@ -1026,4 +1026,9 @@ async def _call(
         return {"ok": False, "summary": e.detail or "Refused", **found}
     if change is None:  # the draft is still the one the agent read
         return {"ok": True, "summary": "Nothing changed", "draft_sha256": a.draft_sha256}
-    return {"ok": True, "summary": tool.summary(a), "draft_sha256": change.after_sha256}
+    return {
+        "ok": True,
+        "summary": tool.summary(a),
+        "draft_sha256": change.after_sha256,
+        "change_id": change.id,
+    }

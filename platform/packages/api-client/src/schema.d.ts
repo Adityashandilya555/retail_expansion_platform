@@ -496,6 +496,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/owner/clients/{client_id}/agent/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Conversation
+         * @description A new conversation with the client's agent.
+         */
+        post: operations["start_conversation_owner_clients__client_id__agent_conversations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/clients/{client_id}/agent/conversations/{conversation_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Message
+         * @description One turn, streamed: `text_delta {text}`, `retry {}` (drop the text this call streamed so
+         *     far), `tool_call {name}`, `change {change_id, summary}`, `refusal {category}` and
+         *     `error {message}` events, then `done {usage}`.
+         */
+        post: operations["send_message_owner_clients__client_id__agent_conversations__conversation_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/owner/clients/{client_id}/client-admin": {
         parameters: {
             query?: never;
@@ -1096,6 +1138,38 @@ export interface components {
             /** Workspace Code */
             workspace_code: string;
         };
+        /** ConversationIn */
+        ConversationIn: {
+            /**
+             * Mode
+             * @description `configure` sets a client up (effort high); `edit` changes it later (effort medium).
+             * @enum {string}
+             */
+            mode: "configure" | "edit";
+        };
+        /** ConversationOut */
+        ConversationOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "configure" | "edit";
+            /**
+             * Owner Id
+             * Format: uuid
+             */
+            owner_id: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+        };
         /** DecisionOut */
         DecisionOut: {
             /**
@@ -1280,6 +1354,11 @@ export interface components {
              * @enum {string}
              */
             scope: "own" | "department" | "all";
+        };
+        /** MessageIn */
+        MessageIn: {
+            /** Text */
+            text: string;
         };
         /** NavItem */
         NavItem: {
@@ -2671,6 +2750,77 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    start_conversation_owner_clients__client_id__agent_conversations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    send_message_owner_clients__client_id__agent_conversations__conversation_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["Problem"];
                 };
             };
         };

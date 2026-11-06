@@ -27,6 +27,7 @@ from zm_api.operaton import OperatonClient
 from zm_api.registry import Client, get_client
 
 SERVICE_ACCOUNT = "zm-service"  # ZM_ADMIN_USER_ID on every client's Operaton (#25)
+VAULT_POOL = 5  # connections per client vault engine, in each API process
 
 
 class Registry(Protocol):
@@ -124,7 +125,9 @@ class Resolver:
             sealed = secrets.unseal(row.secrets)
             ctx = ClientContext(
                 client=row,
-                db=create_async_engine(_asyncpg(sealed["zm_api_dsn"]), pool_size=5, max_overflow=0),
+                db=create_async_engine(
+                    _asyncpg(sealed["zm_api_dsn"]), pool_size=VAULT_POOL, max_overflow=0
+                ),
                 operaton=OperatonClient(
                     row.operaton_url,
                     auth=(SERVICE_ACCOUNT, sealed["service_account_password"]),

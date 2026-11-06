@@ -872,6 +872,60 @@
         "title": "ClientOut",
         "type": "object"
       },
+      "ConversationIn": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "description": "`configure` sets a client up (effort high); `edit` changes it later (effort medium).",
+            "enum": [
+              "configure",
+              "edit"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "ConversationIn",
+        "type": "object"
+      },
+      "ConversationOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "configure",
+              "edit"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "owner_id": {
+            "format": "uuid",
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "mode",
+          "started_at"
+        ],
+        "title": "ConversationOut",
+        "type": "object"
+      },
       "DecisionOut": {
         "properties": {
           "at": {
@@ -1362,6 +1416,22 @@
           "scope"
         ],
         "title": "Membership",
+        "type": "object"
+      },
+      "MessageIn": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "MessageIn",
         "type": "object"
       },
       "NavItem": {
@@ -3887,6 +3957,139 @@
           }
         },
         "summary": "Get Client Detail",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/agent/conversations": {
+      "post": {
+        "description": "A new conversation with the client's agent.",
+        "operationId": "start_conversation_owner_clients__client_id__agent_conversations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Start Conversation",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/agent/conversations/{conversation_id}/messages": {
+      "post": {
+        "description": "One turn, streamed: `text_delta {text}`, `retry {}` (drop the text this call streamed so\nfar), `tool_call {name}`, `change {change_id, summary}`, `refusal {category}` and\n`error {message}` events, then `done {usage}`.",
+        "operationId": "send_message_owner_clients__client_id__agent_conversations__conversation_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "itemSchema": {
+                  "properties": {
+                    "data": {
+                      "type": "string"
+                    },
+                    "event": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "retry": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Send Message",
         "tags": [
           "owner"
         ]
