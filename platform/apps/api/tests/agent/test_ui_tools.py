@@ -11,7 +11,7 @@ import pytest
 from zm_api.agent import tools
 
 from ..test_publish_unit import matrix_retail
-from .test_tools import Doc, call, held, page, sent  # noqa: F401 (held: the fixture)
+from .test_tools import ARGS, Doc, call, held, page, sent  # noqa: F401 (held: the fixture)
 
 INBOX = {
     "page": "home",
@@ -129,6 +129,25 @@ def test_place_block_puts_it_at_its_index(held: SimpleNamespace) -> None:  # noq
         "team",
         "mine",
     ]
+
+
+def test_a_cut_overview_still_names_the_pages_and_get_page_reads_one_whole(
+    held: SimpleNamespace,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    apps = matrix_retail()["apps"]
+    ui = {  # each page without its blocks, and the menu
+        "pages": [{k: v for k, v in p.items() if k != "regions"} for p in apps["pages"]],
+        "nav": apps["nav"],
+    }
+    monkeypatch.setattr(tools, "MAX_DATA", len(json.dumps(ui)))  # the overview no longer fits
+    overview = call(held, "get_overview", {})
+    assert overview["truncated"] is True and "draft_sha256" not in overview
+    assert overview["data"].startswith(json.dumps(ui)[:-1])  # the cut keeps them whole
+    read = call(held, "get_page", {"page": "management"})
+    assert read["data"] == page(matrix_retail(), "management") and "truncated" not in read
+    remove = {**ARGS["remove_block"], "draft_sha256": read["draft_sha256"]}
+    assert call(held, "remove_block", remove)["ok"]
 
 
 def test_no_tool_sets_the_theme_or_accent() -> None:

@@ -329,6 +329,8 @@ READS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
         lambda r: (r["data"]["form"]["sections"][0]["key"], sorted(r["data"]["fields"])),
         ("details", ["loi_file", "loi_signed_on"]),
     ),
+    # whole: its blocks in order, which update_block and remove_block index
+    ("get_page", {"page": "home"}, lambda r: r["data"], page(matrix_retail(), "home")),
     (
         "list_field_types",
         {},
@@ -369,6 +371,7 @@ BAD: Doc = {
     for tool, args in {
         "get_task": {"task_id": "nope"},
         "get_form": {"form": "nope"},
+        "get_page": {"page": "nope"},
         "load_template": {"template": "nope"},
         "add_department": {"key": "legal", "name": "Legal again", "levels": ["Clerk"]},
         "update_department": {"department": "nope", "name": "Nope"},
@@ -685,7 +688,7 @@ def test_a_long_result_is_cut_and_says_so(
     assert overview["truncated"] is True
     assert overview["data"] == json.dumps(tools.overview(matrix_retail()))[:100]
     assert "draft_sha256" not in overview  # no edit may build on a read it couldn't see whole
-    assert overview["summary"].endswith("(cut: read the parts with get_task or get_form)")
+    assert overview["summary"].endswith("(cut: read the parts with get_task, get_form or get_page)")
     empty = call(held, "add_field", sent("add_field", {}))  # five arguments missing
     assert empty["truncated"] is True and len(empty["errors"]) == 2
 

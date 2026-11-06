@@ -276,6 +276,11 @@ class BlockName(_Args):
     """From list_blocks."""
 
 
+class PageRef(_Args):
+    page: str
+    """Page key, from get_overview."""
+
+
 class PageIn(_Edit):
     key: str
     """A letter, then letters, digits or `_`; an existing page's key changes that page."""
@@ -303,7 +308,7 @@ class BlockAt(_Edit):
     page: str
     region: str
     index: int
-    """The block's place in the region, 0 first, as get_overview lists them."""
+    """The block's place in the region, 0 first, as get_page lists them."""
 
 
 class BlockProps(BlockAt):
@@ -583,13 +588,19 @@ async def _draft(ctx: ClientContext) -> tuple[Doc, str]:
 
 
 def overview(doc: Doc) -> Doc:
-    """Departments, every flow's stages and tasks, and the fields: what get_task and get_form
-    then open; the pages with their blocks, and the menu."""
+    """The pages without their blocks and the menu, first so that a cut overview still names
+    them; departments, every flow's stages and tasks, and the fields. get_page, get_task and
+    get_form then open them."""
 
     def brief(t: Doc) -> Doc:
         return {"id": t["id"], "name": t["name"]}
 
     return {
+        "pages": [
+            {k: v for k, v in p.items() if k != "regions"}
+            for p in doc.get("apps", {}).get("pages", [])
+        ],
+        "nav": doc.get("apps", {}).get("nav", []),
         "departments": [
             {"key": d["key"], "name": d["name"], "levels": [lv["name"] for lv in d["levels"]]}
             for d in doc["org"]["departments"]
@@ -621,8 +632,6 @@ def overview(doc: Doc) -> Doc:
             for k, f in doc.get("fields", {}).items()
         },
         "forms": sorted(doc.get("forms", {})),
-        "pages": doc.get("apps", {}).get("pages", []),
-        "nav": doc.get("apps", {}).get("nav", []),
     }
 
 
@@ -646,6 +655,11 @@ async def get_form(ctx: ClientContext, a: FormRef) -> Result:
     used = {c["field"] for s in form["sections"] for row in s["rows"] for c in row}
     fields = {k: f for k, f in doc.get("fields", {}).items() if k in used}
     return _ok(f"Form {a.form}", {"form": form, "fields": fields}, draft_sha256=sha)
+
+
+async def get_page(ctx: ClientContext, a: PageRef) -> Result:
+    doc, sha = await _draft(ctx)
+    return _ok(f"Page {a.page}", _page(doc, a.page)[1], draft_sha256=sha)
 
 
 async def list_field_types(_ctx: ClientContext, _: NoArgs) -> Result:
@@ -720,9 +734,9 @@ class Tool:
 TOOLS: dict[str, Tool] = {
     # read
     "get_overview": Tool(
-        "The draft at a glance: departments and levels, each flow's stages (department, `after`)"
-        " with their tasks, every field's type and label, the form keys, the pages (layout,"
-        " department, flow, and the blocks in each region with their props) and the menu.",
+        "The draft at a glance: the pages (layout, department, flow; get_page has their blocks),"
+        " the menu, departments and levels, each flow's stages (department, `after`) with their"
+        " tasks, every field's type and label, and the form keys.",
         NoArgs,
         read=get_overview,
     ),
@@ -874,6 +888,12 @@ TOOLS: dict[str, Tool] = {
         BlockName,
         read=get_block_manifest,
     ),
+    "get_page": Tool(
+        "One page as the draft holds it: its layout, department and flow, and each region's"
+        " blocks in order (0 first) with their props.",
+        PageRef,
+        read=get_page,
+    ),
     "set_page": Tool(
         "Add a page, or set a page's layout, department and flow, all of them (start from"
         " get_overview): a null one clears it. Its blocks stay.",
@@ -889,7 +909,7 @@ TOOLS: dict[str, Tool] = {
         strict=False,
     ),
     "update_block": Tool(
-        "Set a placed block's props, all of them (start from get_overview).",
+        "Set a placed block's props, all of them (start from get_page).",
         BlockProps,
         edit=update_block,
         summary=lambda a: f"Updated a block on {a.page}",
@@ -950,9 +970,8 @@ def _fit(result: Result) -> Result:
         # no sha for a read the agent couldn't see whole: an edit needs one of a full read
         result = {k: v for k, v in result.items() if k != "draft_sha256"}
         result = {**result, "data": found[:MAX_DATA], "truncated": True}
-        result["summary"] = (
-            f"{result.get('summary', '')} (cut: read the parts with get_task or get_form)".strip()
-        )
+        cut = "(cut: read the parts with get_task, get_form or get_page)"
+        result["summary"] = f"{result.get('summary', '')} {cut}".strip()
     return result
 
 
