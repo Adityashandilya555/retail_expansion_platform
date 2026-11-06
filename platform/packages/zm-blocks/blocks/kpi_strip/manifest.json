@@ -1,0 +1,31 @@
+{
+  "name": "kpi_strip",
+  "version": 1,
+  "description": "2 to 4 count tiles over a flow's cases (`flow`, else the release's first, as case_table), e.g. on a department page:`open_cases`, `in_stage` (needs `stage`), `awaiting_me` (cases with a task for the user), `overdue` (longer in a stage than its `sla_days`) and `done` (completed cases). `stage` narrows a tile to cases in that stage, or for `done` to cases past it; `label` replaces the default label. Picking a tile filters the page's case table to the cases it counts (kept in the URL); picking it again clears it.",
+  "regions": ["hero"],
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["tiles"],
+    "properties": {
+      "flow": { "type": "string" },
+      "tiles": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 4,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["open_cases", "in_stage", "awaiting_me", "overdue", "done"] },
+            "stage": { "type": "string" },
+            "label": { "type": "string" }
+          },
+          "if": { "properties": { "kind": { "const": "in_stage" } } },
+          "then": { "required": ["stage"] }
+        }
+      }
+    }
+  }
+}

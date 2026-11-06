@@ -1,5 +1,6 @@
 // What the case blocks share (#92): one `GET /app/cases/{code}` per page (the code comes from the
-// route), its loading and error states, and how stages, statuses and values read.
+// route), its loading and error states, and how stages, statuses and values read; one
+// `GET /app/cases` per flow, and which cases a KPI tile counts (#94).
 import { Alert, Button, Group, Loader, Text } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
@@ -38,6 +39,60 @@ export function display(value: unknown): string {
   if (Array.isArray(value)) return value.map(display).join(", ");
   if (typeof value === "object") return "name" in value ? String(value.name) : JSON.stringify(value);
   return String(value);
+}
+
+/** A flow's cases (`GET /app/cases`): case_table and kpi_strip on one page share this request. */
+export function useCases(flow: string | undefined) {
+  const api = useBlocksApi();
+  return useQuery({
+    queryKey: ["app", "cases", flow ?? null],
+    queryFn: async () => {
+      const { data, response } = await api.GET("/app/cases", { params: { query: { flow } } });
+      if (!data) throw new Error(`GET /app/cases answered ${response.status}`);
+      return data;
+    },
+  });
+}
+
+/** Whole days since `at`. */
+export const daysSince = (at: string) => Math.floor((Date.now() - Date.parse(at)) / 86_400_000);
+
+/** In an open stage (or in `stage`) for more whole days than its `sla_days` (S2-29), as the
+ * table's "Days in stage" counts them. */
+export function isOverdue(c: CaseRow, flow: Flow, stage?: string): boolean {
+  return c.stages.some((s) => {
+    const sla = flow.stages.find((f) => f.key === s.key)?.sla_days;
+    return s.state === "open" && (!stage || s.key === stage) && !!sla && !!s.started_at && daysSince(s.started_at) > sla;
+  });
+}
+
+export const TILE_KINDS = ["open_cases", "in_stage", "awaiting_me", "overdue", "done"] as const;
+/** A kpi_strip tile (#94), as its manifest allows it. */
+export type Tile = { kind: (typeof TILE_KINDS)[number]; stage?: string; label?: string };
+
+/** A tile in the URL: `?kpi=<kind>` or `?kpi=<kind>.<stage>` (stage keys have no dots). */
+export const tileKey = (t: Tile) => (t.stage ? `${t.kind}.${t.stage}` : t.kind);
+export function tileOf(key: string | null): Tile | null {
+  const [name, stage] = (key ?? "").split(".");
+  const kind = TILE_KINDS.find((k) => k === name);
+  return kind ? { kind, stage } : null;
+}
+
+/** Whether a tile counts the case; case_table shows exactly these cases while the tile is picked.
+ * `stage` narrows a tile to cases in that stage; for `done`, to cases past it. */
+export function inTile(t: Tile, c: CaseRow, flow: Flow): boolean {
+  const at = (state: StageOut["state"]) => c.stages.some((s) => s.key === t.stage && s.state === state);
+  switch (t.kind) {
+    case "open_cases":
+    case "in_stage":
+      return t.stage ? at("open") : c.status === "open";
+    case "awaiting_me":
+      return c.my_tasks > 0 && (!t.stage || at("open"));
+    case "overdue":
+      return isOverdue(c, flow, t.stage);
+    case "done":
+      return t.stage ? at("done") : c.status === "completed";
+  }
 }
 
 /** `/app/cases/:code`'s case: every case block on the page shares this one request. */

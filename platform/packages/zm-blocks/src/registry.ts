@@ -2,6 +2,8 @@
 // configures them per client by their manifests; it never writes code (AGENTS.md, step 3).
 import type { components } from "@zm/api-client";
 import type { ComponentType, ReactNode } from "react";
+import { CaseActivity } from "../blocks/case_activity/Block";
+import caseActivityManifest from "../blocks/case_activity/manifest.json";
 import { CaseFields } from "../blocks/case_fields/Block";
 import caseFieldsManifest from "../blocks/case_fields/manifest.json";
 import { CaseHeader } from "../blocks/case_header/Block";
@@ -10,6 +12,8 @@ import { CaseTable } from "../blocks/case_table/Block";
 import caseTableManifest from "../blocks/case_table/manifest.json";
 import { CaseTasks } from "../blocks/case_tasks/Block";
 import caseTasksManifest from "../blocks/case_tasks/manifest.json";
+import { KpiStrip } from "../blocks/kpi_strip/Block";
+import kpiStripManifest from "../blocks/kpi_strip/manifest.json";
 import { TaskInbox } from "../blocks/task_inbox/Block";
 import taskInboxManifest from "../blocks/task_inbox/manifest.json";
 import { CaseLayout } from "../layouts/case/Layout";
@@ -52,13 +56,15 @@ export type LayoutManifest = {
 export type LayoutProps = { regions: Partial<Record<string, ReactNode>> };
 export type LayoutEntry = { manifest: LayoutManifest; Layout: ComponentType<LayoutProps> };
 
-/** Every block the shell can draw (task_inbox #30; the case blocks #92). */
+/** Every block the shell can draw (task_inbox #30; the case blocks #92; kpi_strip, case_activity #94). */
 export const blocks: BlockRegistry = {
   task_inbox: { 1: { manifest: taskInboxManifest, Block: TaskInbox } },
   case_table: { 1: { manifest: caseTableManifest, Block: CaseTable } },
   case_header: { 1: { manifest: caseHeaderManifest, Block: CaseHeader } },
   case_fields: { 1: { manifest: caseFieldsManifest, Block: CaseFields } },
   case_tasks: { 1: { manifest: caseTasksManifest, Block: CaseTasks } },
+  case_activity: { 1: { manifest: caseActivityManifest, Block: CaseActivity } },
+  kpi_strip: { 1: { manifest: kpiStripManifest, Block: KpiStrip } },
 };
 
 export const layouts: Record<string, LayoutEntry> = {

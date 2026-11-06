@@ -4,7 +4,7 @@ import type { components } from "@zm/api-client";
 import { DataTable, StatusPill, type Column } from "@zm/ui";
 import { useId, type ReactNode } from "react";
 import { useNavigate } from "react-router";
-import { useBlocksApi } from "../../src/api";
+import { tasksQuery, useBlocksApi } from "../../src/api";
 import type { BlockProps } from "../../src/registry";
 
 type TaskItem = components["schemas"]["TaskItem"];
@@ -18,19 +18,7 @@ export function TaskInbox({ props, ui }: BlockProps) {
   const api = useBlocksApi();
   const navigate = useNavigate();
   const headingId = useId();
-  const tasks = useQuery({
-    queryKey: ["app", "tasks", scope, flow ?? null],
-    queryFn: async () => {
-      const ask = (s: "mine" | "team") => api.GET("/app/tasks", { params: { query: { scope: s, flow } } });
-      let shown = scope;
-      let { data, response } = await ask(scope);
-      // team tasks are for level 2 and above (#26), but GET /app/ui sends department pages to
-      // every level: below L2 the page shows the user's own work instead of an error
-      if (scope === "team" && response.status === 403) ({ data, response } = await ask((shown = "mine")));
-      if (!data) throw new Error(`GET /app/tasks answered ${response.status}`);
-      return { scope: shown, rows: data };
-    },
-  });
+  const tasks = useQuery(tasksQuery(api, scope, flow));
 
   // ponytail: no case title in the header until GET /app/tasks sends one (#91 defines it)
   const stageName = (t: TaskItem) =>
