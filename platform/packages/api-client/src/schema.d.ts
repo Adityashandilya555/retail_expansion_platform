@@ -2793,8 +2793,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                conversation_id: string;
                 client_id: string;
+                conversation_id: string;
             };
             cookie?: never;
         };

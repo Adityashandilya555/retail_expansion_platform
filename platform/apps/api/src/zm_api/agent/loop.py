@@ -393,7 +393,7 @@ AGENT = "/clients/{client_id}/agent/conversations"
 
 @routes.post(AGENT, status_code=201)
 async def start_conversation(
-    body: ConversationIn, ctx: OwnedClient, owner: OwnerCtx
+    client_id: UUID, body: ConversationIn, ctx: OwnedClient, owner: OwnerCtx
 ) -> ConversationOut:
     """A new conversation with the client's agent."""
     return ConversationOut(**await _create(ctx, owner.owner_id, body.mode))
@@ -401,6 +401,7 @@ async def start_conversation(
 
 @routes.post(AGENT + "/{conversation_id}/messages", response_class=EventSourceResponse)
 async def send_message(
+    client_id: UUID,
     body: MessageIn,
     conversation: Annotated[Conversation, Depends(opened)],
     ctx: OwnedClient,

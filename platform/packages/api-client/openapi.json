@@ -4023,21 +4023,21 @@
         "parameters": [
           {
             "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
             "name": "client_id",
             "required": true,
             "schema": {
               "format": "uuid",
               "title": "Client Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
               "type": "string"
             }
           }
