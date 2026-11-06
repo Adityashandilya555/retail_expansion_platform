@@ -1,5 +1,5 @@
 {
-  "expected_path": "apps.pages[0].flow",
+  "expected_path": "apps.pages[1].flow",
   "expected_message": "layout 'case'",
   "document": {
     "schema_version": 1,
@@ -12,6 +12,24 @@
             {
               "n": 1,
               "name": "BD Executive"
+            },
+            {
+              "n": 2,
+              "name": "BD Supervisor"
+            }
+          ]
+        },
+        {
+          "key": "legal",
+          "name": "Legal",
+          "levels": [
+            {
+              "n": 1,
+              "name": "Legal Executive"
+            },
+            {
+              "n": 2,
+              "name": "Legal Supervisor"
             }
           ]
         }
@@ -29,7 +47,8 @@
           "performers": [
             {
               "department": "bd",
-              "level": 1
+              "level": 1,
+              "or_above": true
             }
           ],
           "form": "site_start"
@@ -46,7 +65,62 @@
                 "performer": {
                   "initiator": true
                 },
-                "form": "qualify",
+                "form": "qualify"
+              }
+            ]
+          },
+          {
+            "key": "legal_dd",
+            "name": "Legal - Due diligence",
+            "department": "legal",
+            "after": [
+              "bd_qualification"
+            ],
+            "tasks": [
+              {
+                "id": "lg_dd",
+                "name": "Due diligence",
+                "performer": {
+                  "department": "legal",
+                  "level": 1
+                },
+                "show": [
+                  "monthly_rent"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "store_closure",
+        "name": "Store closure",
+        "case_label": "Closure",
+        "case_code": {
+          "pattern": "CL-{seq:3}"
+        },
+        "start": {
+          "performers": [
+            {
+              "department": "bd",
+              "level": 2
+            }
+          ],
+          "form": "site_start"
+        },
+        "stages": [
+          {
+            "key": "closure_review",
+            "name": "Closure review",
+            "department": "legal",
+            "tasks": [
+              {
+                "id": "cl_review",
+                "name": "Review closure",
+                "performer": {
+                  "department": "legal",
+                  "level": 2
+                },
                 "show": [
                   "site_name"
                 ]
@@ -101,7 +175,30 @@
       }
     },
     "apps": {
+      "nav": [
+        {
+          "page": "sites",
+          "label": "Sites",
+          "visible_to": [
+            "*"
+          ]
+        }
+      ],
       "pages": [
+        {
+          "key": "sites",
+          "layout": "standard",
+          "regions": {
+            "main": [
+              {
+                "block": "case_table",
+                "props": {
+                  "flow": "site_launch"
+                }
+              }
+            ]
+          }
+        },
         {
           "key": "site",
           "layout": "case"

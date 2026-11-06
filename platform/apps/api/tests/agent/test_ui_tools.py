@@ -82,9 +82,24 @@ CASES: list[tuple[str, Doc, str | None]] = [
         "apps.pages[0].regions.main: page 'home': layout 'case' has no region 'main'",
     ),
     (
+        "set_page",  # `site` is store_launch's
+        {**NEW_PAGE, "layout": "case", "flow": "store_launch"},
+        "apps.pages[10].flow: page 'store': flow 'store_launch' already has case page 'site'",
+    ),
+    (
         "set_nav",
         {"items": [{"page": "nope", "label": "Nope", "visible_to": ["*"]}]},
         "apps.nav[0].page: unknown page 'nope'",
+    ),
+    (
+        "set_nav",
+        {"items": [{"page": "site", "label": "Site", "visible_to": ["*"]}]},
+        "apps.nav[0].page: page 'site' is a case page: it opens on a case, not from the menu",
+    ),
+    (
+        "set_nav",
+        {"items": []},
+        "apps.nav: the app opens on the menu's first page, so pages need a menu",
     ),
 ]
 

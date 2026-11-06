@@ -248,7 +248,10 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
         err("apps.theme", f"unknown theme preset '{doc.apps.theme}'")
     if doc.apps.accent is not None and doc.apps.accent not in ui["accents"]:
         err("apps.accent", f"unknown accent '{doc.apps.accent}'")
+    # The shell (apps/web Shell.tsx) opens `/app` on the menu's first page, routes a menu item
+    # only to a non-case page, and draws a case on the first case page of its flow.
     page_keys: set[str] = set()
+    case_pages: dict[str, str] = {}  # flow -> its case page
     for pi, page in enumerate(doc.apps.pages):
         pp = join("apps.pages", pi)
         if page.key in page_keys:
@@ -259,6 +262,10 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
         if page.flow is not None and page.flow not in flow_keys:
             err(join(pp, "flow"), f"unknown flow '{page.flow}'")
         on = f"page '{page.key}'"
+        if page.layout == "case" and page.flow is not None:
+            first = case_pages.setdefault(page.flow, page.key)
+            if first != page.key:
+                err(join(pp, "flow"), f"{on}: flow '{page.flow}' already has case page '{first}'")
         layout = ui["layouts"].get(page.layout)
         if layout is None:
             err(join(pp, "layout"), f"{on}: unknown layout '{page.layout}'")
@@ -297,10 +304,17 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
                 for e in Draft202012Validator(newest["props"]).iter_errors(ref.props):
                     at = join(bp, "props", *e.absolute_path)
                     err(at, f"{on}, region '{key}': block '{ref.block}': {e.message}")
+    if doc.apps.pages and not doc.apps.nav:
+        err("apps.nav", "the app opens on the menu's first page, so pages need a menu")
     for ni, nav in enumerate(doc.apps.nav):
         np_ = join("apps.nav", ni)
         if nav.page not in page_keys:
             err(join(np_, "page"), f"unknown page '{nav.page}'")
+        elif any(p.key == nav.page and p.layout == "case" for p in doc.apps.pages):
+            err(
+                join(np_, "page"),
+                f"page '{nav.page}' is a case page: it opens on a case, not from the menu",
+            )
         for vi, v in enumerate(nav.visible_to):
             if v != "*" and v not in levels:
                 err(join(np_, "visible_to", vi), f"unknown department '{v}'")

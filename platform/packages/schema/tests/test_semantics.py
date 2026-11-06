@@ -131,6 +131,33 @@ def test_duplicates_and_layout_checks(two_flows: dict[str, Any]) -> None:
     } <= paths
 
 
+SITE = {"key": "site", "layout": "case", "flow": "site_launch"}
+
+
+def test_the_menu_cant_open_a_case_page(two_flows: dict[str, Any]) -> None:
+    two_flows["apps"]["pages"].append(SITE)
+    two_flows["apps"]["nav"].insert(0, {"page": "site", "label": "Site", "visible_to": ["*"]})
+    assert [str(e) for e in validate(two_flows)] == [
+        "apps.nav[0].page: page 'site' is a case page: it opens on a case, not from the menu"
+    ]
+
+
+def test_pages_need_a_menu(two_flows: dict[str, Any]) -> None:
+    two_flows["apps"]["nav"] = []
+    assert [str(e) for e in validate(two_flows)] == [
+        "apps.nav: the app opens on the menu's first page, so pages need a menu"
+    ]
+    two_flows["apps"]["pages"] = []  # no pages: a draft whose screens aren't built yet
+    assert validate(two_flows) == []
+
+
+def test_a_flow_has_one_case_page(two_flows: dict[str, Any]) -> None:
+    two_flows["apps"]["pages"] += [SITE, {**SITE, "key": "site_again"}]
+    assert [str(e) for e in validate(two_flows)] == [
+        "apps.pages[2].flow: page 'site_again': flow 'site_launch' already has case page 'site'"
+    ]
+
+
 def test_row_span_and_document_rule(minimal: dict[str, Any]) -> None:
     minimal["fields"]["loi"] = {"type": "document", "label": "LOI"}
     row = minimal["forms"]["qualify"]["sections"][0]["rows"][0]
