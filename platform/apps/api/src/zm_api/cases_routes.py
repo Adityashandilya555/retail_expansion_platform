@@ -81,7 +81,8 @@ class DecisionOut(_Model):
 class CaseDetail(CaseRow):
     sections: list[SectionOut]
     """The start form of the newer of the active release and the case's own, as the user sees
-    it, filled with the case's values; a removed field shows while the case has a value for it."""
+    it, filled with the case's values; a removed field shows while the case has a value for it.
+    A value whose field that form no longer places comes last, in the section `_other`."""
     tasks: list[OpenTaskOut]
     history: list[DecisionOut]
     """Committed submissions, oldest first."""

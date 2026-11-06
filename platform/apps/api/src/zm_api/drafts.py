@@ -16,7 +16,9 @@ grant for them. Each row keeps the sha256 of the draft it left. Undo refuses (40
 no longer matches the change it would undo, i.e. something wrote it outside the log since
 (`zm-api seed-draft`, SQL), because the inverse was made for another document. It restores that
 exact earlier state without validating it again, so a state today's rules reject stays reachable;
-`/validate` and publish report it. `diff_vs_live` compares the draft with the active release.
+`/validate` and publish report it. The one exception is a release published since: an undo that
+would delete or retype one of its fields is a 409 too. `diff_vs_live` compares the draft with the
+active release.
 Owners reach all of it under `/owner/clients/{id}/draft`.
 """
 
@@ -344,7 +346,8 @@ async def apply_change(
 
 async def undo(ctx: ClientContext, author: UUID) -> ChangeOut:
     """Undo the newest change not yet undone (undos themselves aren't undone). 409 if there is
-    none, or if the draft was written outside the log since that change."""
+    none, if the draft was written outside the log since that change, or if undoing it would
+    delete or retype a published field."""
     async with ctx.db.begin() as conn:
         doc = await _draft(conn, lock=True)
         result = await conn.execute(
@@ -364,6 +367,12 @@ async def undo(ctx: ClientContext, author: UUID) -> ChangeOut:
                 " edited directly), so it can't be undone"
             )
         after = _apply(doc, last["inverse"])  # exactly the earlier state: not validated again
+        # except against a release published since: every later publish would refuse the draft
+        published = await releases.published_fields(conn)
+        had = versioning.errors(published, doc)
+        brought = [e.message for e in versioning.errors(published, after) if e not in had]
+        if brought:
+            raise Conflict(f"Can't undo {last['summary']!r}: " + "; ".join(brought))
         return await _log(
             conn,
             after,
@@ -460,7 +469,8 @@ async def list_changes(
 
 @routes.post(DRAFT + "/undo")
 async def undo_change(ctx: OwnedClient, owner: OwnerCtx) -> DraftOut:
-    """Undo the newest change not yet undone; 409 when there is none."""
+    """Undo the newest change not yet undone; 409 when there is none or it can't be undone (the
+    draft was written outside the log since, or a published field would be deleted or retyped)."""
     await undo(ctx, owner.owner_id)
     return await _draft_out(ctx)
 

@@ -392,8 +392,21 @@ def sections(
     """A form as the user sees it (`tasks.visible_form`), filled with the case's values and
     labelled from `defs`, its release's fields (S2-25): a renamed field shows its new label, and
     a field hidden since (removed) still shows a value the case has. A field missing from
-    `known`, the case's own release's fields, has `since`: the release that added it."""
+    `known`, the case's own release's fields, has `since`: the release that added it. A value
+    whose field the form no longer places is listed last, in an `_other` section (section keys
+    are ids, so it can't clash with one)."""
     props = form["schema"].get("properties", {})
+
+    def cell(f: str) -> dict[str, Any]:
+        d = defs.get(f, {})  # every published field, unless deleted before S2-25's rules
+        return {
+            "key": f,
+            "label": d.get("label", f),
+            "type": d.get("type"),
+            "value": values.get(f),
+            "since": None if f in known else d.get("since"),
+        }
+
     out = []
     for s in form["layout"]:
         cells = [
@@ -402,22 +415,10 @@ def sections(
             for c in row
             if c["field"] in props or c["field"] in values
         ]
-        out.append(
-            Section(
-                key=s["key"],
-                title=s["title"],
-                fields=[
-                    {
-                        "key": f,
-                        "label": defs[f]["label"],
-                        "type": defs[f]["type"],
-                        "value": values.get(f),
-                        "since": None if f in known else defs[f].get("since"),
-                    }
-                    for f in cells
-                ],
-            )
-        )
+        out.append(Section(key=s["key"], title=s["title"], fields=[cell(f) for f in cells]))
+    placed = {f["key"] for s in out for f in s.fields}
+    if rest := [f for f in values if f not in placed]:
+        out.append(Section(key="_other", title="Other details", fields=[cell(f) for f in rest]))
     return out
 
 

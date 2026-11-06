@@ -10,7 +10,8 @@ import argparse
 import asyncio
 import json
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -23,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from zm_api import cases, drafts, publish, releases, tasks, versioning
 from zm_api.agent import tools
-from zm_api.errors import UnprocessableContent
+from zm_api.errors import Conflict, UnprocessableContent
 from zm_api.main import create_app
 from zm_api.releases import cache_clear
 from zm_api.users import seed_users
@@ -113,6 +114,9 @@ def test_adding_relabelling_hiding_and_requiring_fields_is_allowed() -> None:
     assert doc["fields"]["city"]["label"] == "Town" and "town" not in doc["fields"]
     assert doc["fields"]["address"]["hidden"] is True
     assert {"state", "district"} <= doc["fields"].keys()
+    doc["fields"]["store_model"]["options"].pop(0)  # stored values keep their raw id
+    doc["fields"]["site_photos"]["document"]["accept"] = ["pdf"]  # for new uploads
+    assert versioning.errors(V1, doc) == []
 
 
 def test_a_type_change_needs_a_migration_decision() -> None:
@@ -126,6 +130,10 @@ def test_a_type_change_needs_a_migration_decision() -> None:
         )
     ]
     assert versioning.errors([], doc) == []  # nothing published yet: no rules
+    # a type changed before these rules existed: the newest release that has the key decides
+    legacy = [{"carpet_area": {**LIVE["fields"]["carpet_area"], "type": "text"}}, *V1]
+    assert versioning.errors(legacy, matrix_retail()) == []
+    assert [e.path for e in versioning.errors(legacy, doc)] == ["fields.carpet_area.type"]
 
 
 def test_a_published_field_is_hidden_never_deleted() -> None:
@@ -197,6 +205,47 @@ def test_the_write_path_and_validate_check_the_published_releases(
     assert [e.path for e in problems] == ["fields.carpet_area.type"]
 
 
+class Newest:
+    """`held`'s vault for undo as well: its query finds the newest logged change, still current."""
+
+    def __init__(self, log: list[Doc]) -> None:
+        self.log = log
+
+    @asynccontextmanager
+    async def begin(self) -> AsyncIterator["Newest"]:
+        yield self
+
+    async def execute(self, _sql: Any) -> Any:
+        row = {**self.log[-1], "id": len(self.log), "current": True}
+        return SimpleNamespace(mappings=lambda: SimpleNamespace(one_or_none=lambda: row))
+
+
+def test_undo_cant_delete_a_field_published_since(
+    held: SimpleNamespace,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Add a field, publish it, undo: 409, and the draft and its log are unchanged. Unpublished,
+    the same undo goes through."""
+    published: list[Doc] = []
+
+    async def fields(_conn: Any) -> list[Doc]:
+        return published
+
+    monkeypatch.setattr(releases, "published_fields", fields)
+    held.ctx.db = Newest(held.log)
+    gst = [{"op": "add", "path": "/fields/gst_no", "value": OPTIONAL["gst_no"]}]
+    asyncio.run(drafts.apply_change(held.ctx, OWNER, "add_field", gst, "Added GST no"))
+    added, logged = held.doc, list(held.log)
+    published.append(live(added)["fields"])  # v1
+    with pytest.raises(Conflict) as e:
+        asyncio.run(drafts.undo(held.ctx, OWNER))
+    assert "gst_no is in a published release: hide it instead" in (e.value.detail or "")
+    assert held.doc == added and held.log == logged
+    published.clear()
+    asyncio.run(drafts.undo(held.ctx, OWNER))
+    assert held.doc == matrix_retail()
+
+
 def test_publish_refuses_what_the_rules_refuse() -> None:
     broken, _ = drafts.patched(matrix_retail(), TYPE_CHANGE)
     with pytest.raises(UnprocessableContent, match="can't be published") as e:
@@ -207,8 +256,11 @@ def test_publish_refuses_what_the_rules_refuse() -> None:
 
 def test_publish_stamps_what_a_release_adds_or_makes_required() -> None:
     first = live(matrix_retail())
+    first["fields"]["state"] = {**OPTIONAL["state"], "since": 2}  # e.g. from a template
+    first["fields"]["city"]["required_from_version"] = 2
     versioning.stamp([], first, 1)
-    assert first == LIVE  # the first release is the baseline: nothing to stamp
+    assert without(first, "state") == LIVE  # the first release is the baseline: nothing stamped
+    assert first["fields"]["state"] == OPTIONAL["state"]
     v2 = live(demo_2())
     v2["fields"]["city"]["since"] = 9  # whatever a draft says, publish decides
     versioning.stamp(V1, v2, 2)
@@ -264,6 +316,30 @@ def test_a_v1_site_reads_on_v2s_start_form() -> None:
         ("state", "Karnataka", None),
         ("district", "Bengaluru Urban", None),
     ]
+
+
+def test_a_value_the_form_no_longer_places_still_shows_last() -> None:
+    """arrange_form dropped address from v2's start form: a v1 site's address shows in a last
+    section, under v2's label."""
+    v2 = live(demo_2())
+    v2["fields"]["address"]["label"] = "Street"
+    spec = compile(migrate(demo_2()), "pilot-local").forms["start:store_launch"]
+    rows = [r for r in spec.layout[0]["rows"] if r[0]["field"] != "address"]
+    form = {"schema": spec.schema, "layout": [{**spec.layout[0], "rows": rows}]}
+    old = {"site_name": "Indiranagar", "address": "12th Main"}
+    site, other = cases.sections(form, old, v2["fields"], LIVE["fields"])
+    assert "address" not in [f["key"] for f in site.fields]
+    assert (other.key, other.title) == ("_other", "Other details")
+    assert other.fields == [
+        {
+            "key": "address",
+            "label": "Street",
+            "type": "textarea",
+            "value": "12th Main",
+            "since": None,
+        }
+    ]
+    assert len(cases.sections(form, {"site_name": "Indiranagar"}, v2["fields"], v2["fields"])) == 1
 
 
 # --- integration: demo 2 on the pilot vault ----------------------------------------------------
