@@ -5,7 +5,8 @@ import type { BlockProps } from "../../src/registry";
 /** `props` as manifest.json allows them (the renderer has already validated them). */
 type Props = { sections?: string[] };
 
-/** case_fields v1 (S1-25, #92): the start-form values, read-only, as the API masked them by level. */
+/** case_fields v1 (S1-25, #92): the start-form values, read-only, as the API masked them by level.
+ * A field added after the case's release reads "—" with the release that added it (S2-25). */
 export function CaseFields({ props, ui, page }: BlockProps) {
   const { sections } = props as Props;
   return (
@@ -33,6 +34,11 @@ export function CaseFields({ props, ui, page }: BlockProps) {
                       </Text>
                       <Text component="dd" m={0}>
                         {display(f.value)}
+                        {f.since !== null && (
+                          <Text span size="xs" c="dimmed">
+                            {` added in v${f.since}`}
+                          </Text>
+                        )}
                       </Text>
                     </div>
                   ))}

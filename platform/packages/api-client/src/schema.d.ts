@@ -649,7 +649,8 @@ export interface paths {
         put?: never;
         /**
          * Undo Change
-         * @description Undo the newest change not yet undone; 409 when there is none.
+         * @description Undo the newest change not yet undone; 409 when there is none or it can't be undone (the
+         *     draft was written outside the log since, or a published field would be deleted or retyped).
          */
         post: operations["undo_change_owner_clients__client_id__draft_undo_post"];
         delete?: never;
@@ -850,11 +851,16 @@ export interface components {
             my_tasks: number;
             /** Open Tasks */
             open_tasks: number;
-            /** Release Version */
+            /**
+             * Release Version
+             * @description The release the case started on, which its start values were captured on.
+             */
             release_version: number;
             /**
              * Sections
-             * @description The start form as the user sees it, filled with the case's values.
+             * @description The start form of the newer of the active release and the case's own, as the user sees
+             *     it, filled with the case's values; a removed field shows while the case has a value for it.
+             *     A value whose field that form no longer places comes last, in the section `_other`.
              */
             sections: components["schemas"]["SectionOut"][];
             /** Stages */
@@ -934,7 +940,10 @@ export interface components {
             my_tasks: number;
             /** Open Tasks */
             open_tasks: number;
-            /** Release Version */
+            /**
+             * Release Version
+             * @description The release the case started on, which its start values were captured on.
+             */
             release_version: number;
             /** Stages */
             stages: components["schemas"]["StageOut"][];
@@ -1265,8 +1274,17 @@ export interface components {
         FieldOut: {
             /** Key */
             key: string;
-            /** Label */
+            /**
+             * Label
+             * @description The label in the release the sections follow: a renamed field shows its new one.
+             */
             label: string;
+            /**
+             * Since
+             * @description Set when the case's release didn't have the field: the release that added it (no value;
+             *     the shell shows "added in vN").
+             */
+            since: number | null;
             /** Type */
             type: string | null;
             /** Value */

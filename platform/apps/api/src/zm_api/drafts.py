@@ -6,9 +6,9 @@ an RFC 6902 patch to a copy, validates the result with `zm_schema.validate` (S1-
 transaction holding the draft's row lock, so changes apply one at a time. A change that doesn't
 apply, or brings in problems the draft didn't have, writes nothing and comes back as a 422 listing
 them (problems it already had don't block it). A caller that passes the sha256 of the draft it
-read gets a 409 when the draft has changed since. S2-25's field-versioning rules (#35) aren't
-checked yet: they go in `_change`, which holds the vault connection and can read the active
-release there, so no caller changes.
+read gets a 409 when the draft has changed since. A change is also checked against every
+published release's fields (S2-25, `zm_api.versioning`): a type change or a deleted field is a
+problem like any other, and `/validate` and publish report it too.
 
 `undo` applies the inverse of the newest change not yet undone, as a new row pointing at it
 (`undoes`), so the log only grows: 0005's trigger refuses updates and deletes, and zm_api has no
@@ -16,14 +16,16 @@ grant for them. Each row keeps the sha256 of the draft it left. Undo refuses (40
 no longer matches the change it would undo, i.e. something wrote it outside the log since
 (`zm-api seed-draft`, SQL), because the inverse was made for another document. It restores that
 exact earlier state without validating it again, so a state today's rules reject stays reachable;
-`/validate` and publish report it. `diff_vs_live` compares the draft with the active release.
+`/validate` and publish report it. The one exception is a release published since: an undo that
+would delete or retype one of its fields is a 409 too. `diff_vs_live` compares the draft with the
+active release.
 Owners reach all of it under `/owner/clients/{id}/draft`.
 """
 
 import json
 import re
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import datetime
 from typing import Annotated, Any
@@ -36,7 +38,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from zm_api import releases
+from zm_api import releases, versioning
 from zm_api.context import ClientContext, OwnerCtx, owner_router
 from zm_api.errors import Conflict, FieldError, NotFound, UnprocessableContent
 from zm_api.registry import get_client
@@ -143,17 +145,25 @@ def _apply(doc: dict[str, Any], patch: Patch) -> dict[str, Any]:
         raise _invalid([Error("$", f"the patch doesn't apply: {e}")]) from None
 
 
-def patched(doc: dict[str, Any], patch: Patch) -> tuple[dict[str, Any], Patch]:
+def problems(doc: dict[str, Any], published: Sequence[dict[str, Any]]) -> list[Error]:
+    """The draft's schema problems, then what it does to the published fields (S2-25)."""
+    return validate(doc) + versioning.errors(published, doc)
+
+
+def patched(
+    doc: dict[str, Any], patch: Patch, published: Sequence[dict[str, Any]] = ()
+) -> tuple[dict[str, Any], Patch]:
     """`doc` with `patch` applied, and its inverse. A patch that doesn't apply, or raises the
-    number of any kind of problem `doc` had, is a 422 listing the extra ones: a draft already
-    invalid (an undo restores without validating) still takes a change that adds none. (A change
-    may swap one problem for another of the same kind; validate and publish still report it.)"""
+    number of any kind of problem `doc` had (against `published`, every release's fields), is a
+    422 listing the extra ones: a draft already invalid (an undo restores without validating)
+    still takes a change that adds none. (A change may swap one problem for another of the same
+    kind; validate and publish still report it.)"""
     after = _apply(doc, patch)
-    errors = validate(after)
+    errors = problems(after, published)
     if errors:
         # problems are matched without list positions, counted: a change that moves stages or
         # tasks moves the old problems' paths too (stages[1] → stages[2]), and still adds none
-        old = Counter(_problem(e) for e in validate(doc))
+        old = Counter(_problem(e) for e in problems(doc, published))
         new = []
         for e in errors:
             if old[_problem(e)] > 0:
@@ -200,7 +210,11 @@ def _outline(doc: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "stages": stages,
         "tasks": tasks,
-        "fields": {k: f.model_dump() for k, f in wf.fields.items()},
+        # publish stamps `since` and `required_from_version` (S2-25): not the draft's doing
+        "fields": {
+            k: f.model_dump(exclude={"since", "required_from_version"})
+            for k, f in wf.fields.items()
+        },
         "blocks": {p.key: p.model_dump()["regions"] for p in wf.apps.pages},
         "theme": wf.apps.theme,
         "accent": wf.apps.accent,
@@ -291,7 +305,7 @@ async def _change(
 ) -> ChangeOut | None:
     """Validate and log one change to `doc`, the draft as locked by the caller; None when the
     patch changes nothing (nothing is logged)."""
-    after, undo_patch = patched(doc, change["patch"])
+    after, undo_patch = patched(doc, change["patch"], await releases.published_fields(conn))
     if _canonical(after) == _canonical(doc):
         return None
     return await _log(conn, after, {**change, "inverse": undo_patch})
@@ -332,7 +346,8 @@ async def apply_change(
 
 async def undo(ctx: ClientContext, author: UUID) -> ChangeOut:
     """Undo the newest change not yet undone (undos themselves aren't undone). 409 if there is
-    none, or if the draft was written outside the log since that change."""
+    none, if the draft was written outside the log since that change, or if undoing it would
+    delete or retype a published field."""
     async with ctx.db.begin() as conn:
         doc = await _draft(conn, lock=True)
         result = await conn.execute(
@@ -352,6 +367,12 @@ async def undo(ctx: ClientContext, author: UUID) -> ChangeOut:
                 " edited directly), so it can't be undone"
             )
         after = _apply(doc, last["inverse"])  # exactly the earlier state: not validated again
+        # except against a release published since: every later publish would refuse the draft
+        published = await releases.published_fields(conn)
+        had = versioning.errors(published, doc)
+        brought = [e.message for e in versioning.errors(published, after) if e not in had]
+        if brought:
+            raise Conflict(f"Can't undo {last['summary']!r}: " + "; ".join(brought))
         return await _log(
             conn,
             after,
@@ -369,7 +390,8 @@ async def undo(ctx: ClientContext, author: UUID) -> ChangeOut:
 async def validate_draft(ctx: ClientContext) -> list[FieldError]:
     async with ctx.db.connect() as conn:
         doc = await _draft(conn)
-    return _errors(validate(doc))
+        published = await releases.published_fields(conn)
+    return _errors(problems(doc, published))
 
 
 async def diff_vs_live(ctx: ClientContext) -> DraftDiff:
@@ -447,7 +469,8 @@ async def list_changes(
 
 @routes.post(DRAFT + "/undo")
 async def undo_change(ctx: OwnedClient, owner: OwnerCtx) -> DraftOut:
-    """Undo the newest change not yet undone; 409 when there is none."""
+    """Undo the newest change not yet undone; 409 when there is none or it can't be undone (the
+    draft was written outside the log since, or a published field would be deleted or retyped)."""
     await undo(ctx, owner.owner_id)
     return await _draft_out(ctx)
 

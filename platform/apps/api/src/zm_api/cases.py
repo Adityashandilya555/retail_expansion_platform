@@ -352,7 +352,7 @@ class Section:
     key: str
     title: str
     fields: list[dict[str, Any]]
-    """`{key, label, type, value}` per field, in layout order."""
+    """`{key, label, type, value, since}` per field, in layout order."""
 
 
 @dataclass
@@ -383,33 +383,50 @@ class CaseDetail:
     history: list[Decision] = field(default_factory=list)
 
 
-def sections(form: Mapping[str, Any], values: Mapping[str, Any]) -> list[Section]:
-    """A form as the user sees it (`tasks.visible_form`), filled with the case's values."""
+def sections(
+    form: Mapping[str, Any],
+    values: Mapping[str, Any],
+    defs: Mapping[str, Any],
+    known: Mapping[str, Any],
+) -> list[Section]:
+    """A form as the user sees it (`tasks.visible_form`), filled with the case's values and
+    labelled from `defs`, its release's fields (S2-25): a renamed field shows its new label, and
+    a field hidden since (removed) still shows a value the case has. A field missing from
+    `known`, the case's own release's fields, has `since`: the release that added it. A value
+    whose field the form no longer places is listed last, in an `_other` section (section keys
+    are ids, so it can't clash with one)."""
     props = form["schema"].get("properties", {})
+
+    def cell(f: str) -> dict[str, Any]:
+        d = defs.get(f, {})  # every published field, unless deleted before S2-25's rules
+        return {
+            "key": f,
+            "label": d.get("label", f),
+            "type": d.get("type"),
+            "value": values.get(f),
+            "since": None if f in known else d.get("since"),
+        }
+
     out = []
     for s in form["layout"]:
-        cells = [cell["field"] for row in s["rows"] for cell in row if cell["field"] in props]
-        out.append(
-            Section(
-                key=s["key"],
-                title=s["title"],
-                fields=[
-                    {
-                        "key": f,
-                        "label": props[f].get("title", f),
-                        "type": props[f].get("x-zm-type"),
-                        "value": values.get(f),
-                    }
-                    for f in cells
-                ],
-            )
-        )
+        cells = [
+            c["field"]
+            for row in s["rows"]
+            for c in row
+            if c["field"] in props or c["field"] in values
+        ]
+        out.append(Section(key=s["key"], title=s["title"], fields=[cell(f) for f in cells]))
+    placed = {f["key"] for s in out for f in s.fields}
+    if rest := [f for f in values if f not in placed]:
+        out.append(Section(key="_other", title="Other details", fields=[cell(f) for f in rest]))
     return out
 
 
 async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
     """One case: values by start-form section, stages with times, the open tasks the user can
-    see, and its decisions. Another client's code doesn't exist here: 404, like an unknown one."""
+    see, and its decisions. Another client's code doesn't exist here: 404, like an unknown one.
+    The sections follow the start form of the newer of the active release and the case's own
+    (S2-25): today's labels and fields, with the values the case recorded on its own release."""
     async with ctx.db.connect() as conn:
         me = await tasks.person(conn, user_id)
         case = (await tasks._cases_by_code(conn, [code])).get(code)
@@ -421,6 +438,12 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
                 {"v": case.release_version},
             )
         ).one()
+        newer = (
+            await conn.execute(
+                text("select workflow, forms from app.releases where active and version > :v"),
+                {"v": case.release_version},
+            )
+        ).one_or_none()
         values = (await _start_values(conn, [case.id])).get(case.id, {})
         decisions = (
             await conn.execute(
@@ -441,8 +464,12 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
         await ctx.operaton.history_variables([case.process_instance_id], ["case_status"])
     ).get(case.process_instance_id, {})
     activities = await ctx.operaton.history_activities(case.process_instance_id)
-    start = forms.get(f"start:{case.flow}")
+    key = f"start:{case.flow}"
+    start = forms.get(key)
     shown = masked_start_values(start, values, me.levels)
+    # the active release's start form when it is newer than the case's own (an older one, after
+    # a rollback, lacks fields the case has) and still has the flow; else the case's own
+    now = newer if newer is not None and key in newer.forms else release
     row = CaseRow(
         code=case.code,
         flow=case.flow,
@@ -470,7 +497,14 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
 
     return CaseDetail(
         row=row,
-        sections=sections(tasks.visible_form(start, me.levels), shown) if start else [],
+        sections=sections(
+            tasks.visible_form(now.forms[key], me.levels),
+            shown,
+            now.workflow.get("fields", {}),
+            workflow.get("fields", {}),
+        )
+        if start
+        else [],
         open_tasks=open_tasks,
         history=[
             Decision(

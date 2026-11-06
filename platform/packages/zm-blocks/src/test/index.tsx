@@ -142,8 +142,8 @@ export function sampleCase(over: Partial<CaseDetail> = {}): CaseDetail {
         key: "site",
         title: "Site",
         fields: [
-          { key: "site_name", label: "Site name", type: "text", value: "Indiranagar" },
-          { key: "city", label: "City", type: "text", value: "Bengaluru" },
+          { key: "site_name", label: "Site name", type: "text", value: "Indiranagar", since: null },
+          { key: "city", label: "City", type: "text", value: "Bengaluru", since: null },
         ],
       },
     ],

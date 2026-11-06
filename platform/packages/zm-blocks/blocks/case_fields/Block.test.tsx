@@ -16,9 +16,11 @@ const withDocuments = () =>
         key: "documents",
         title: "Documents",
         fields: [
-          { key: "loi_file", label: "Signed LOI", type: "file", value: { name: "loi-mx-0001.pdf" } },
-          { key: "dd_title_doc", label: "Title document clear", type: "yes_no", value: true },
-          { key: "frontage_ft", label: "Frontage (ft)", type: "number", value: null },
+          { key: "loi_file", label: "Signed LOI", type: "file", value: { name: "loi-mx-0001.pdf" }, since: null },
+          { key: "dd_title_doc", label: "Title document clear", type: "yes_no", value: true, since: null },
+          { key: "frontage_ft", label: "Frontage (ft)", type: "number", value: null, since: null },
+          // added by release 2, after this site started on release 1 (#35)
+          { key: "gst_certificate", label: "GST certificate", type: "document", value: null, since: 2 },
         ],
       },
     ],
@@ -36,6 +38,13 @@ test("Legal L1 sees the sections the API sent, read-only; the one hidden below L
   expect(screen.queryByRole("textbox")).toBeNull(); // values, not inputs
   expect([value("Site name"), value("City")]).toEqual(["Indiranagar", "Bengaluru"]);
   expect([value("Signed LOI"), value("Title document clear"), value("Frontage (ft)")]).toEqual(["loi-mx-0001.pdf", "Yes", "—"]);
+});
+
+test("a field the site's release didn't have reads — with the release that added it", async () => {
+  drawPage(overview(), { path: PATH, routes: { "GET /app/cases/MX-0001": withDocuments } });
+  await screen.findByText("GST certificate");
+  expect(value("GST certificate")).toBe("— added in v2");
+  expect(value("Frontage (ft)")).toBe("—"); // empty, but the site's release had it: no hint
 });
 
 test("`sections` keeps only those sections; no values says so", async () => {

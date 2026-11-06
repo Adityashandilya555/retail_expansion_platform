@@ -273,7 +273,20 @@
             }
           ],
           "default": null,
-          "description": "Release version that added the field (additive versioning, S2-25)."
+          "description": "Release version that added the field (additive versioning, S2-25); publish sets it."
+        },
+        "required_from_version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Release version from which the field is required; publish sets it. Sites started on an\nolder release keep its forms (S2-25)."
         },
         "hidden": {
           "default": false,

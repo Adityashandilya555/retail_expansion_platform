@@ -39,13 +39,18 @@ class CaseRow(_Model):
     my_tasks: int
     created_at: datetime
     release_version: int
+    """The release the case started on, which its start values were captured on."""
 
 
 class FieldOut(_Model):
     key: str
     label: str
+    """The label in the release the sections follow: a renamed field shows its new one."""
     type: str | None
     value: Any
+    since: int | None
+    """Set when the case's release didn't have the field: the release that added it (no value;
+    the shell shows "added in vN")."""
 
 
 class SectionOut(_Model):
@@ -75,7 +80,9 @@ class DecisionOut(_Model):
 
 class CaseDetail(CaseRow):
     sections: list[SectionOut]
-    """The start form as the user sees it, filled with the case's values."""
+    """The start form of the newer of the active release and the case's own, as the user sees
+    it, filled with the case's values; a removed field shows while the case has a value for it.
+    A value whose field that form no longer places comes last, in the section `_other`."""
     tasks: list[OpenTaskOut]
     history: list[DecisionOut]
     """Committed submissions, oldest first."""

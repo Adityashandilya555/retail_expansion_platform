@@ -56,6 +56,16 @@ def test_matrix_retail_apps(matrix_retail: dict) -> None:
     assert stage_depts <= depts
 
 
+def test_optional_fields_can_each_be_enabled(matrix_retail: dict) -> None:
+    """The optional catalogue (S2-25): new keys the draft can take as they are."""
+    optional = json.loads((TEMPLATES / "matrix-retail" / "optional-fields.json").read_text())
+    fields = optional["fields"]
+    assert {"state", "district", "gst_no", "landlord_pan"} <= fields.keys()
+    assert any(f["type"] == "document" for f in fields.values())  # document types too
+    assert not fields.keys() & matrix_retail["fields"].keys()
+    assert validate({**matrix_retail, "fields": {**matrix_retail["fields"], **fields}}) == []
+
+
 def test_demo_users(matrix_retail: dict) -> None:
     users = json.loads((TEMPLATES / "matrix-retail" / "demo-users.json").read_text())["users"]
     assert all(set(u) == {"email", "name", "department", "level"} for u in users)  # no passwords

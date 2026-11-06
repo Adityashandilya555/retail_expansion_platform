@@ -240,7 +240,10 @@ class FieldDef(_Model):
     options: list[Option] | None = None
     document: DocumentRule | None = None
     since: Annotated[int, Field(ge=1)] | None = None
-    """Release version that added the field (additive versioning, S2-25)."""
+    """Release version that added the field (additive versioning, S2-25); publish sets it."""
+    required_from_version: Annotated[int, Field(ge=1)] | None = None
+    """Release version from which the field is required; publish sets it. Sites started on an
+    older release keep its forms (S2-25)."""
     hidden: bool = False
     """Hidden from new forms; stored values are kept."""
 

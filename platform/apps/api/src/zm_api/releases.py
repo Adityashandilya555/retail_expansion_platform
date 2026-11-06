@@ -81,6 +81,15 @@ async def active_release(conn: AsyncConnection) -> ReleaseRow | None:
     return None if mapping is None else _row(mapping)
 
 
+async def published_fields(conn: AsyncConnection) -> list[dict[str, Any]]:
+    """Every release's `fields`, oldest first: what S2-25's rules check a draft against
+    (`zm_api.versioning`), active or not."""
+    result = await conn.execute(
+        text("select coalesce(workflow->'fields', '{}') from app.releases order by version")
+    )
+    return list(result.scalars())
+
+
 async def release_by_deployment(conn: AsyncConnection, deployment_id: str) -> ReleaseRow | None:
     result = await conn.execute(
         text(f"select {_COLUMNS} from app.releases where deployment_id = :d"), {"d": deployment_id}
@@ -89,11 +98,16 @@ async def release_by_deployment(conn: AsyncConnection, deployment_id: str) -> Re
     return None if mapping is None else _row(mapping)
 
 
-async def insert_release(conn: AsyncConnection, values: dict[str, Any]) -> ReleaseRow:
-    """Next version, made the only active one. Run inside the publish lock and transaction."""
-    version = (
+async def next_version(conn: AsyncConnection) -> int:
+    """The version the next release gets. Run inside the publish lock and transaction."""
+    return (
         await conn.execute(text("select coalesce(max(version), 0) + 1 from app.releases"))
     ).scalar_one()
+
+
+async def insert_release(conn: AsyncConnection, values: dict[str, Any]) -> ReleaseRow:
+    """Next version, made the only active one. Run inside the publish lock and transaction."""
+    version = await next_version(conn)
     await conn.execute(text("update app.releases set active = false where active"))
     params = {k: json.dumps(v) if isinstance(v, dict) else v for k, v in values.items()}
     result = await conn.execute(
