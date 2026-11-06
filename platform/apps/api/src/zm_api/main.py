@@ -18,6 +18,7 @@ from zm_api import (
     tasks_routes,
     ui,
 )
+from zm_api.agent import loop
 from zm_api.context import PlatformRegistry, Resolver
 
 
@@ -49,6 +50,7 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         people.routes,
         people.owner_routes,
         change_requests.routes,
+        loop.routes,
     ):
         app.include_router(router)
     # Outermost last: CORS → RequestLog → CrashGuard → routes. CORS headers reach every response,

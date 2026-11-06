@@ -416,7 +416,7 @@ def held(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     async def log(_conn: Any, after: Doc, change: Doc) -> SimpleNamespace:
         state.doc = after
         state.log.append(change)
-        return SimpleNamespace(**change, after_sha256=sha(after))
+        return SimpleNamespace(**change, id=len(state.log), after_sha256=sha(after))
 
     async def none(_conn: Any) -> None:
         return None
