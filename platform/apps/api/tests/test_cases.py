@@ -1,10 +1,12 @@
-"""The cases read API without the stack (#91): stage states from history rows, status, title,
-masking, task names, the routes' guards and the two Operaton history calls. The full flow runs in
-test_cases_integration.py (`-m integration`)."""
+"""The cases read API without the stack (#91): stage states from history rows, the activity
+timeline (#94), status, title, masking, task names, the routes' guards and the two Operaton
+history calls. The full flow runs in test_cases_integration.py (`-m integration`)."""
 
 import asyncio
 import copy
 import json
+import uuid
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -98,6 +100,55 @@ def test_open_stage_from_activities_has_no_end() -> None:
     t = "2026-10-26T10:00:00.000+0000"
     found = cases.stage_states(STAGES, {"case_status": "open"}, [call("bd_qualification", t)])
     assert found[0].state == "open" and found[0].started_at == t and found[0].ended_at is None
+
+
+def test_without_activities_a_stage_starts_when_its_variable_was_first_set() -> None:
+    """The list (S2-29: days in stage, overdue): `m_<stage>`'s history row keeps the createTime
+    of its first value, `in progress`, set when the stage started."""
+    first, later = "2026-10-20T09:00:00.000+0000", "2026-10-26T09:00:00.000+0000"
+    variables = {"case_status": "open", "m_bd_qualification": "done", "m_legal": "in progress"}
+    started = {"case_status": first, "m_bd_qualification": first, "m_legal": later}
+    found = {s.key: s for s in cases.stage_states(STAGES, variables, started=started)}
+    assert found["bd_qualification"].started_at == first and found["legal"].started_at == later
+    assert found["bd_qualification"].ended_at is None  # only the activities' history has ends
+    assert found["design"].started_at is None
+
+
+def test_events_lead_with_created_then_stage_runs_and_submissions_by_time() -> None:
+    """The Activity tab (S2-29). The case row is written once Operaton has started the case, so
+    `created` trails the first stage's start yet leads; a cancelled run ends `stage_closed`."""
+
+    def t(minute: int) -> str:
+        return f"2026-10-26T10:{minute:02d}:00.000+0000"
+
+    by = uuid.uuid4()
+    created = cases.Event("created", datetime.fromisoformat(t(1)), by=by, by_name="Bd2")
+    sent = cases.Event(
+        "submitted",
+        datetime.fromisoformat(t(2)),
+        stage="bd_qualification",
+        task="bd_send_legal",
+        task_name="Send to Legal",
+        by=by,
+        by_name="Bd2",
+    )
+    runs = [
+        call("bd_qualification", t(0), t(3)),
+        call("legal", t(3)),
+        call("finance", t(3), t(4), canceled=True),  # cut short by a close
+    ]
+    found = cases.events(created, runs, [sent])
+    assert [(e.kind, e.stage) for e in found] == [
+        ("created", None),
+        ("stage_started", "bd_qualification"),
+        ("submitted", "bd_qualification"),
+        ("stage_done", "bd_qualification"),
+        ("stage_started", "legal"),
+        ("stage_started", "finance"),
+        ("stage_closed", "finance"),
+    ]
+    assert found[2] is sent and found[3].at == datetime.fromisoformat(t(3))
+    assert cases.events(created, [], []) == [created]
 
 
 def test_case_status() -> None:

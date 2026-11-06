@@ -3,13 +3,15 @@
 Where a case is comes from Operaton's history of its main process, where the compiler sets
 `case_status` (`open`, `closed:<stage>`, `completed`) and one `m_<stage>` per stage (`in progress`
 when the stage's call activity starts, `done` when it ends; compile.py). The list reads those
-variables for every case in one request. Operaton's terminate end also cancels any stage still
+variables for every case in one request, and a stage's start from when its variable was first set
+(S2-29: days in stage, overdue). Operaton's terminate end also cancels any stage still
 running in parallel, and that fires its end listener too (`done`), so a closed case reads its call
 activities' history as well (`canceled`), one request per closed case; the detail always does,
 for the times.
 
-Visibility v1: every user of the client sees every case's header, status and stages; field
-values hide what the user's level can't see (scope rules: #56).
+Visibility v1: every user of the client sees every case's header, status, stages, decisions and
+activity (S2-29, which carries no values); field values hide what the user's level can't see
+(scope rules: #56).
 """
 
 import asyncio
@@ -72,13 +74,15 @@ def stage_states(
     stages: list[Mapping[str, Any]],
     variables: Mapping[str, Any],
     activities: list[Json] | None = None,
+    started: Mapping[str, Any] | None = None,
 ) -> list[Stage]:
     """Each stage's state from the main process's history.
 
     From `m_<stage>`: none → queued, `in progress` → open, `done` → done. `case_status =
     closed:<k>` makes `k` closed and the stages after it queued. With the call activities'
     history (`activities`), cancelled ones are closed (a parallel stage the close ended) and the
-    times are filled in."""
+    times are filled in. Without it, a stage started when its `m_<stage>` was first set: `started`
+    holds each variable's history `createTime`, which updates don't change (S2-29)."""
     status = str(variables.get("case_status") or "")
     closing = status.removeprefix("closed:") if status.startswith("closed:") else None
     later = _after(stages, closing) if closing else set()
@@ -103,13 +107,14 @@ def stage_states(
             state = "closed"
         elif k in later:
             state = "queued"
+        since = None if state == "queued" else (started or {}).get(f"m_{k}")
         out.append(
             Stage(
                 key=k,
                 name=s["name"],
                 department=s["department"],
                 state=state,
-                started_at=a.get("startTime") if a else None,
+                started_at=a.get("startTime") if a else since,
                 ended_at=a.get("endTime") if a else None,
             )
         )
@@ -213,10 +218,11 @@ async def history_variables(ctx: ClientContext, ids: list[str], names: list[str]
     return out
 
 
-def _by_instance(found: list[Json]) -> dict[str, dict[str, Any]]:
+def _by_instance(found: list[Json], key: str = "value") -> dict[str, dict[str, Any]]:
+    """Instance → variable name → the history row's `key`."""
     out: dict[str, dict[str, Any]] = {}
     for v in found:
-        out.setdefault(v["processInstanceId"], {})[v["name"]] = v.get("value")
+        out.setdefault(v["processInstanceId"], {})[v["name"]] = v.get(key)
     return out
 
 
@@ -265,9 +271,8 @@ async def list_cases(
     names = {"case_status"} | {
         f"m_{s['key']}" for wf in workflows.values() for fl in wf["flows"] for s in fl["stages"]
     }
-    history = _by_instance(
-        await history_variables(ctx, [c.process_instance_id for c in cases], sorted(names))
-    )
+    found = await history_variables(ctx, [c.process_instance_id for c in cases], sorted(names))
+    history, created = _by_instance(found), _by_instance(found, "createTime")
     picked = []
     for c in cases:
         variables = history.get(c.process_instance_id, {})
@@ -304,7 +309,10 @@ async def list_cases(
                 title=title(workflow, flow_def, shown) or c.code,
                 status=case_status(variables),
                 stages=stage_states(
-                    flow_def["stages"], variables, activities.get(c.process_instance_id)
+                    flow_def["stages"],
+                    variables,
+                    activities.get(c.process_instance_id),
+                    created.get(c.process_instance_id),
                 ),
                 fields=shown,
                 open_tasks=open_counts.get(c.code, 0),
@@ -375,12 +383,44 @@ class Decision:
     at: datetime
 
 
+EventKind = Literal["created", "stage_started", "stage_done", "stage_closed", "submitted"]
+
+
+@dataclass
+class Event:
+    """One line of the case's activity (S2-29): what, when and who, never a form value."""
+
+    kind: EventKind
+    at: datetime
+    stage: str | None = None
+    task: str | None = None
+    task_name: str | None = None
+    by: UUID | None = None
+    by_name: str | None = None
+
+
+def events(created: Event, activities: list[Json], submitted: Iterable[Event]) -> list[Event]:
+    """`created`, then each stage run's start and end (its call activity's history; a cancelled
+    run, closed or cut short by a close, ends `stage_closed`) and each submission, oldest first.
+    `created` leads: the case row is written once Operaton has started the case, so its time
+    trails the first stage's start."""
+    found = list(submitted)  # a submission completes its task before the stage it ends
+    for a in activities:
+        stage = str(a.get("activityId", "")).removeprefix("call_")
+        found.append(Event("stage_started", datetime.fromisoformat(a["startTime"]), stage=stage))
+        if a.get("endTime"):
+            kind: EventKind = "stage_closed" if a.get("canceled") else "stage_done"
+            found.append(Event(kind, datetime.fromisoformat(a["endTime"]), stage=stage))
+    return [created, *sorted(found, key=lambda e: e.at)]
+
+
 @dataclass
 class CaseDetail:
     row: CaseRow
     sections: list[Section] = field(default_factory=list)
     open_tasks: list[OpenTask] = field(default_factory=list)
     history: list[Decision] = field(default_factory=list)
+    events: list[Event] = field(default_factory=list)
 
 
 def sections(
@@ -424,7 +464,8 @@ def sections(
 
 async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
     """One case: values by start-form section, stages with times, the open tasks the user can
-    see, and its decisions. Another client's code doesn't exist here: 404, like an unknown one.
+    see, its decisions and its activity. Another client's code doesn't exist here: 404, like an
+    unknown one.
     The sections follow the start form of the newer of the active release and the case's own
     (S2-25): today's labels and fields, with the values the case recorded on its own release."""
     async with ctx.db.connect() as conn:
@@ -449,13 +490,22 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
             await conn.execute(
                 text(
                     "select s.task_def_key, s.submitted_by, u.name, s.outcome, s.comment,"
-                    " s.updated_at from app.submissions s left join app.users u"
+                    " s.created_at, s.updated_at from app.submissions s left join app.users u"
                     " on u.id = s.submitted_by where s.case_id = :c and s.status = 'committed'"
                     " order by s.created_at, s.id"
                 ),
                 {"c": case.id},
             )
         ).all()
+        creator = (
+            await conn.execute(
+                text(
+                    "select c.created_by, u.name from app.cases c"
+                    " left join app.users u on u.id = c.created_by where c.id = :c"
+                ),
+                {"c": case.id},
+            )
+        ).one()
     workflow, forms = release.workflow, release.forms
     flow_def = tasks._flow(workflow, case.flow)
     if flow_def is None:
@@ -518,4 +568,20 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
             )
             for d in decisions
         ],
+        events=events(
+            Event("created", case.created_at, by=creator.created_by, by_name=creator.name),
+            activities,
+            [
+                Event(
+                    "submitted",
+                    d.created_at,  # when the user sent it; Operaton took it right after
+                    stage=(tasks.stage_of(workflow, d.task_def_key) or {}).get("key"),
+                    task=d.task_def_key,
+                    task_name=task_name(workflow, d.task_def_key),
+                    by=d.submitted_by,
+                    by_name=d.name,
+                )
+                for d in decisions
+            ],
+        ),
     )
