@@ -10,6 +10,7 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
@@ -25,13 +26,13 @@ from fastapi.testclient import TestClient
 from zm_api import drafts
 from zm_api.agent import loop, tools
 from zm_api.context import Resolver
-from zm_api.errors import NotFound
+from zm_api.errors import Conflict, NotFound
 from zm_api.main import create_app
 
 from ..conftest import bearer, token
 from ..test_auth import PILOT_DSN
 from ..test_draft import pilot  # noqa: F401 (the vault fixture)
-from ..test_publish import JWT_SECRET, Clients, clients, vault_sql  # noqa: F401
+from ..test_publish import JWT_SECRET, Clients, Stack, clients, vault_sql  # noqa: F401
 from ..test_publish_unit import FakeRegistry, matrix_retail
 from .test_tools import ARGS, held, sha, task  # noqa: F401 (held: the draft in memory)
 
@@ -188,9 +189,21 @@ def fire_noc() -> tuple[Reply, ...]:
 
 @pytest.fixture
 def chats(held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> dict[uuid.UUID, Doc]:  # noqa: F811
-    """`{conversation id: {mode, rows}}` for the vault's two tables; `held.ctx` gets a client."""
+    """`{conversation id: {mode, rows}}` for the vault's two tables, and their claims (the vault's
+    advisory locks) as a set; `held.ctx` gets a client."""
     found: dict[uuid.UUID, Doc] = {}
+    busy: set[uuid.UUID] = set()
     held.ctx.client = SimpleNamespace(slug="pilot-local")
+
+    @asynccontextmanager
+    async def claimed(_ctx: Any, cid: uuid.UUID) -> AsyncIterator[None]:
+        if cid in busy:
+            raise Conflict(loop.BUSY)
+        busy.add(cid)
+        try:
+            yield
+        finally:
+            busy.remove(cid)
 
     async def stored(_ctx: Any, cid: uuid.UUID) -> tuple[str, list[Doc]]:
         if cid not in found:
@@ -203,6 +216,7 @@ def chats(held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> dict[uuid.U
 
     monkeypatch.setattr(loop, "_stored", stored)
     monkeypatch.setattr(loop, "_append", append)
+    monkeypatch.setattr(loop, "_claimed", claimed)
     return found
 
 
@@ -478,6 +492,31 @@ def test_unparseable_tool_input_is_asked_again_and_an_api_error_ends_the_turn(
     assert chats[other]["rows"] == []
 
 
+def test_a_turn_overlapping_one_on_its_conversation_is_refused_before_any_call(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """The route claims the conversation (`opened`) before it reads it, until its stream ends."""
+    fake, cid = Fake(*fire_noc()), new(chats)
+    opened = asynccontextmanager(loop.opened)
+
+    async def go() -> tuple[list[tuple[str, Doc]], loop.Conversation]:
+        async with opened(cid, held.ctx) as conversation:
+            stream = loop.turn(fake, held.ctx, OWNER, conversation, FIRE_NOC)
+            first = await anext(stream)  # its first call is streaming
+            with pytest.raises(Conflict, match="already running"):
+                async with opened(cid, held.ctx):
+                    pytest.fail("the second turn ran")
+            events = [first, *[e async for e in stream]]
+        async with opened(cid, held.ctx) as after:  # let go: the next turn reads all of it
+            return events, after
+
+    events, after = asyncio.run(go())
+    assert names(events)[-1] == "done" and len(fake.requests) == len(fake.counted) == 3
+    assert [c["tool"] for c in held.log] == ["add_document_slot", "set_approval_chain"]
+    assert len(after.rows) == len(chats[cid]["rows"]) == 7
+
+
 def sse(body: str) -> list[tuple[str, Doc]]:
     """The events of a text/event-stream body (keep-alive comments skipped)."""
     events = []
@@ -495,10 +534,15 @@ def test_the_console_gets_the_turn_as_server_sent_events(
 ) -> None:
     app = create_app(resolver=Resolver(FakeRegistry(rows)))
     app.dependency_overrides[drafts.owner_client] = lambda: held.ctx
-    app.state.anthropic = Fake(*fire_noc())
+    app.state.anthropic = fake = Fake(*fire_noc())
     cid = new(chats)
     url = f"/owner/clients/{rows['pilot-local'].id}/agent/conversations/{cid}/messages"
     owner = bearer(token("owner", client=None))
+
+    async def meanwhile() -> httpx2.Response:
+        async with loop._claimed(held.ctx, cid):  # a turn of cid is running
+            return await asyncio.to_thread(api.post, url, headers=owner, json={"text": "Hi"})
+
     with TestClient(app) as api:
         response = api.post(url, headers=owner, json={"text": FIRE_NOC})
         unknown = api.post(
@@ -506,6 +550,7 @@ def test_the_console_gets_the_turn_as_server_sent_events(
         )
         empty = api.post(url, headers=owner, json={"text": ""})
         client = api.post(url, headers=bearer(token("client")), json={"text": "Hi"})
+        busy = asyncio.run(meanwhile())
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     events = sse(response.text)
@@ -522,6 +567,8 @@ def test_the_console_gets_the_turn_as_server_sent_events(
     assert events[-1][1]["usage"]["output_tokens"] == 900
     assert unknown.status_code == 404 and unknown.json()["detail"] == loop.NO_CONVERSATION
     assert empty.status_code == 422 and client.status_code == 403
+    assert busy.status_code == 409 and busy.json()["detail"] == loop.BUSY
+    assert len(fake.requests) == len(fake.counted) == 3  # the first turn's; none for the busy one
 
 
 # --- integration: the pilot vault ---------------------------------------------------------------
@@ -612,6 +659,37 @@ def test_the_conversation_tables_refuse_updates_and_deletes(agent_vault: Clients
         ):
             conn.execute(statement)  # zm_api, the API's role: no grant
     assert vault_sql("pilot", "select count(*) from app.agent_messages") == [(3,)]
+
+
+@pytest.mark.integration
+def test_one_turn_at_a_time_per_conversation_and_others_run_meanwhile(
+    agent_vault: Clients,
+) -> None:
+    fake = Fake(reply(text("Hello.")), reply(text("Hi.")))
+    api, auth, url = agent_api(agent_vault, fake)
+
+    def send(cid: str) -> httpx2.Response:
+        return api.post(f"{url}/{cid}/messages", headers=auth, json={"text": "Hi"})
+
+    async def go(cid: str, other: str) -> list[httpx2.Response]:
+        async with Stack(agent_vault) as stack:
+            ctx = await stack.ctx("pilot")
+            async with loop._claimed(ctx, uuid.UUID(cid)):  # a turn of cid is running
+                sent = [await asyncio.to_thread(send, cid), await asyncio.to_thread(send, other)]
+            sent.append(await asyncio.to_thread(send, cid))
+            async with loop._claimed(ctx, uuid.UUID(cid)):  # that turn let go when it ended
+                return sent
+
+    with api:
+        cid, other = (api.post(url, headers=auth, json={"mode": "edit"}).json()["id"] for _ in "ab")
+        busy, meanwhile, after = asyncio.run(go(cid, other))
+    assert busy.status_code == 409 and busy.json()["detail"] == loop.BUSY
+    assert meanwhile.status_code == after.status_code == 200
+    assert len(fake.requests) == len(fake.counted) == 2  # none for the refused turn
+    stored = vault_sql(
+        "pilot", "select conversation_id::text, count(*) from app.agent_messages group by 1"
+    )
+    assert dict(stored) == {cid: 3, other: 3}
 
 
 # --- live: the real API, by hand ----------------------------------------------------------------

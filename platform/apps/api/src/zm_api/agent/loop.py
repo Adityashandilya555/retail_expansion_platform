@@ -17,12 +17,15 @@ replays. A call that stops (refusal, max_tokens) or answers nothing keeps only i
 rest of its turn is dropped. The budget, AGENT_MAX_TOKENS_PER_CONVERSATION, counts what each
 call read fresh or wrote (input, cache writes, output; cache reads, at a twentieth of the price,
 don't). `count_tokens` sizes each call first, and a call that could pass the budget if none of it
-were cached isn't made.
+were cached isn't made. One turn runs at a time per conversation: the route claims it (a session
+advisory lock in the vault) before reading it and lets go when the stream ends, so a turn sent
+meanwhile is a 409 that calls nothing.
 """
 
 import json
 import logging
 from collections.abc import AsyncIterable, AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
@@ -39,7 +42,7 @@ from zm_api import drafts, settings, templates
 from zm_api.agent import tools
 from zm_api.context import ClientContext, OwnerCtx, owner_router
 from zm_api.drafts import OwnedClient
-from zm_api.errors import NotFound
+from zm_api.errors import Conflict, NotFound
 from zm_schema import catalogue
 from zm_schema.models import FieldType
 
@@ -54,6 +57,7 @@ MAX_TOKENS = 64_000  # per call: the reply and its thinking
 JSON_RETRIES = 2
 USAGE = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
 NO_CONVERSATION = "No such conversation"
+BUSY = "A turn is already running in this conversation. Send again when it has finished."
 OVER_BUDGET = (
     "This conversation has used its token budget. Start a new conversation to go on;"
     " the draft keeps every change."
@@ -147,9 +151,31 @@ def _json(value: Any) -> str | None:
     return None if value is None else json.dumps(value)
 
 
+@asynccontextmanager
+async def _claimed(ctx: ClientContext, conversation_id: UUID) -> AsyncIterator[None]:
+    """The conversation for one turn, across API processes: a session advisory lock on its id, on
+    a connection of its own until the turn ends (the tables are insert-only, so no row can say
+    busy); 409 while another turn holds it."""
+    k = f"zm_agent:{conversation_id}"
+    # ponytail: a running turn holds one of the vault engine's 5 connections; past 4 turns at
+    # once per client its tools wait on the pool, so raise pool_size if that ever happens
+    async with ctx.db.connect() as lock:
+        got = (
+            await lock.execute(text("select pg_try_advisory_lock(hashtext(:k))"), {"k": k})
+        ).scalar_one()
+        await lock.commit()
+        if not got:
+            raise Conflict(BUSY)
+        try:
+            yield
+        finally:  # the lock is per session, and the connection goes back to the pool
+            await lock.execute(text("select pg_advisory_unlock(hashtext(:k))"), {"k": k})
+            await lock.commit()
+
+
 async def _append(ctx: ClientContext, conversation_id: UUID, seq: int, rows: list[Doc]) -> None:
-    """Store `rows` after the first `seq`, in one transaction. A turn racing this one on the same
-    conversation fails on the primary key instead of interleaving."""
+    """Store `rows` after the first `seq`, in one transaction. The claim keeps turns on one
+    conversation apart; the primary key is the backstop."""
     async with ctx.db.begin() as conn:
         await conn.execute(
             text(
@@ -354,9 +380,11 @@ def anthropic_client(request: Request) -> anthropic.AsyncAnthropic:
     return request.app.state.anthropic
 
 
-async def opened(conversation_id: UUID, ctx: OwnedClient) -> Conversation:
-    """Loaded before the stream starts, so a missing one is a plain 404."""
-    return await load(ctx, conversation_id)
+async def opened(conversation_id: UUID, ctx: OwnedClient) -> AsyncIterator[Conversation]:
+    """Claimed, then loaded, before the stream starts, so a missing one is a plain 404 and one
+    with a turn running a plain 409; the claim is held until the stream ends."""
+    async with _claimed(ctx, conversation_id):
+        yield await load(ctx, conversation_id)
 
 
 routes = owner_router()
