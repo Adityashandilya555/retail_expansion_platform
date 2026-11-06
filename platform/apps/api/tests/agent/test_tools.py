@@ -421,10 +421,14 @@ def held(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     async def none(_conn: Any) -> None:
         return None
 
+    async def unpublished(_conn: Any) -> list[Doc]:
+        return []
+
     monkeypatch.setattr(drafts, "_draft", draft)
     monkeypatch.setattr(drafts, "read", read)
     monkeypatch.setattr(drafts, "_log", log)
     monkeypatch.setattr(releases, "active_release", none)
+    monkeypatch.setattr(releases, "published_fields", unpublished)
     return state
 
 

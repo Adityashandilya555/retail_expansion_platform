@@ -45,7 +45,7 @@ class CaseRow(_Model):
 class FieldOut(_Model):
     key: str
     label: str
-    """The label in the active release: a renamed field shows its new one."""
+    """The label in the release the sections follow: a renamed field shows its new one."""
     type: str | None
     value: Any
     since: int | None
@@ -80,8 +80,8 @@ class DecisionOut(_Model):
 
 class CaseDetail(CaseRow):
     sections: list[SectionOut]
-    """The active release's start form as the user sees it, filled with the case's values; a
-    removed field shows while the case has a value for it."""
+    """The start form of the newer of the active release and the case's own, as the user sees
+    it, filled with the case's values; a removed field shows while the case has a value for it."""
     tasks: list[OpenTaskOut]
     history: list[DecisionOut]
     """Committed submissions, oldest first."""

@@ -81,6 +81,15 @@ async def active_release(conn: AsyncConnection) -> ReleaseRow | None:
     return None if mapping is None else _row(mapping)
 
 
+async def published_fields(conn: AsyncConnection) -> list[dict[str, Any]]:
+    """Every release's `fields`, oldest first: what S2-25's rules check a draft against
+    (`zm_api.versioning`), active or not."""
+    result = await conn.execute(
+        text("select coalesce(workflow->'fields', '{}') from app.releases order by version")
+    )
+    return list(result.scalars())
+
+
 async def release_by_deployment(conn: AsyncConnection, deployment_id: str) -> ReleaseRow | None:
     result = await conn.execute(
         text(f"select {_COLUMNS} from app.releases where deployment_id = :d"), {"d": deployment_id}

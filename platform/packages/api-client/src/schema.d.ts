@@ -815,8 +815,8 @@ export interface components {
             release_version: number;
             /**
              * Sections
-             * @description The active release's start form as the user sees it, filled with the case's values; a
-             *     removed field shows while the case has a value for it.
+             * @description The start form of the newer of the active release and the case's own, as the user sees
+             *     it, filled with the case's values; a removed field shows while the case has a value for it.
              */
             sections: components["schemas"]["SectionOut"][];
             /** Stages */
@@ -1200,7 +1200,7 @@ export interface components {
             key: string;
             /**
              * Label
-             * @description The label in the active release: a renamed field shows its new one.
+             * @description The label in the release the sections follow: a renamed field shows its new one.
              */
             label: string;
             /**

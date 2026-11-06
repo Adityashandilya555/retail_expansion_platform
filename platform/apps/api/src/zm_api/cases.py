@@ -424,8 +424,8 @@ def sections(
 async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
     """One case: values by start-form section, stages with times, the open tasks the user can
     see, and its decisions. Another client's code doesn't exist here: 404, like an unknown one.
-    The sections follow the active release's start form (S2-25): today's labels and fields, with
-    the values the case recorded on its own release."""
+    The sections follow the start form of the newer of the active release and the case's own
+    (S2-25): today's labels and fields, with the values the case recorded on its own release."""
     async with ctx.db.connect() as conn:
         me = await tasks.person(conn, user_id)
         case = (await tasks._cases_by_code(conn, [code])).get(code)
@@ -437,8 +437,11 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
                 {"v": case.release_version},
             )
         ).one()
-        current = (
-            await conn.execute(text("select workflow, forms from app.releases where active"))
+        newer = (
+            await conn.execute(
+                text("select workflow, forms from app.releases where active and version > :v"),
+                {"v": case.release_version},
+            )
         ).one_or_none()
         values = (await _start_values(conn, [case.id])).get(case.id, {})
         decisions = (
@@ -463,8 +466,9 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
     key = f"start:{case.flow}"
     start = forms.get(key)
     shown = masked_start_values(start, values, me.levels)
-    # the active release's start form, or the case's own if the active release has no such flow
-    now = current if current is not None and key in current.forms else release
+    # the active release's start form when it is newer than the case's own (an older one, after
+    # a rollback, lacks fields the case has) and still has the flow; else the case's own
+    now = newer if newer is not None and key in newer.forms else release
     row = CaseRow(
         code=case.code,
         flow=case.flow,

@@ -1,8 +1,9 @@
 """Field versioning (#35, S2-25): fields and document types change additively, by key.
 
-Unit: the rules (`zm_api.versioning`) against a live release, the draft's write path and publish
-with them, the agent's field tools under them, publish's stamps and the site page's sections.
-Integration (`pytest -m integration` after dev-up.sh): demo 2 on the pilot vault, published twice.
+Unit: the rules (`zm_api.versioning`) against the published releases, the draft's write path and
+publish with them, the agent's field tools under them, publish's stamps and the site page's
+sections. Integration (`pytest -m integration` after dev-up.sh): demo 2 on the pilot vault,
+published twice, then v1 made active again.
 """
 
 import argparse
@@ -41,6 +42,7 @@ OWNER = uuid.uuid4()
 TEMPLATES = Path(__file__).resolve().parents[3] / "packages" / "templates"
 OPTIONAL = json.loads((TEMPLATES / "matrix-retail" / "optional-fields.json").read_text())["fields"]
 LIVE = live(matrix_retail())  # v1, as publish records it
+V1 = [LIVE["fields"]]  # the published releases' fields once v1 is out
 TYPE_CHANGE = [{"op": "replace", "path": "/fields/carpet_area/type", "value": "text"}]
 STORE_MODELS = matrix_retail()["fields"]["store_model"]["options"]
 SITE = ["site_name", "city", "address", "store_model"]
@@ -94,7 +96,7 @@ def demo_2() -> Doc:
     for name, args in DEMO_2:
         t = tools.TOOLS[name]
         assert t.edit is not None
-        doc, _ = drafts.patched(doc, t.edit(doc, t.args.model_validate(sent(name, args))), LIVE)
+        doc, _ = drafts.patched(doc, t.edit(doc, t.args.model_validate(sent(name, args))), V1)
     return doc
 
 
@@ -107,7 +109,7 @@ def without(doc: Doc, key: str) -> Doc:
 
 def test_adding_relabelling_hiding_and_requiring_fields_is_allowed() -> None:
     doc = demo_2()
-    assert versioning.errors(LIVE, doc) == []
+    assert versioning.errors(V1, doc) == []
     assert doc["fields"]["city"]["label"] == "Town" and "town" not in doc["fields"]
     assert doc["fields"]["address"]["hidden"] is True
     assert {"state", "district"} <= doc["fields"].keys()
@@ -116,30 +118,46 @@ def test_adding_relabelling_hiding_and_requiring_fields_is_allowed() -> None:
 def test_a_type_change_needs_a_migration_decision() -> None:
     doc = matrix_retail()
     doc["fields"]["carpet_area"]["type"] = "text"
-    assert versioning.errors(LIVE, doc) == [
+    assert versioning.errors(V1, doc) == [
         Error(
             "fields.carpet_area.type",
-            "carpet_area is a number in the live release: changing its type needs a migration"
+            "carpet_area is a number in a published release: changing its type needs a migration"
             " decision; add a new field instead",
         )
     ]
-    assert versioning.errors(None, doc) == []  # nothing published yet: no rules
+    assert versioning.errors([], doc) == []  # nothing published yet: no rules
 
 
 def test_a_published_field_is_hidden_never_deleted() -> None:
-    assert versioning.errors(LIVE, without(matrix_retail(), "dd_notes")) == [
+    assert versioning.errors(V1, without(matrix_retail(), "dd_notes")) == [
         Error(
             "fields.dd_notes",
-            "dd_notes is in the live release: hide it instead of deleting it, so its stored values"
-            " stay readable",
+            "dd_notes is in a published release: hide it instead of deleting it, so its stored"
+            " values stay readable",
         )
     ]
+
+
+def test_after_a_rollback_a_newer_releases_fields_still_hold() -> None:
+    """v1 reactivated after v2 added state and district: they are still published, so a draft
+    can't delete or retype them, whichever release is active; a new field is still fine."""
+    published = [*V1, live(demo_2())["fields"]]
+    assert [e.path for e in versioning.errors(published, matrix_retail())] == [
+        "fields.state",
+        "fields.district",
+    ]
+    retype = [{"op": "replace", "path": "/fields/state/type", "value": "number"}]
+    with pytest.raises(UnprocessableContent) as e:
+        drafts.patched(demo_2(), retype, published)
+    assert [x.path for x in e.value.errors or []] == ["fields.state.type"]
+    gst = [{"op": "add", "path": "/fields/gst_no", "value": OPTIONAL["gst_no"]}]
+    assert "gst_no" in drafts.patched(demo_2(), gst, published)[0]["fields"]
 
 
 def test_a_type_change_is_refused_and_the_draft_is_unchanged() -> None:
     doc = matrix_retail()
     with pytest.raises(UnprocessableContent) as e:
-        drafts.patched(doc, TYPE_CHANGE, LIVE)
+        drafts.patched(doc, TYPE_CHANGE, V1)
     assert [x.path for x in e.value.errors or []] == ["fields.carpet_area.type"]
     assert "needs a migration decision" in (e.value.errors or [])[0].message
     assert doc == matrix_retail()
@@ -151,22 +169,22 @@ def test_an_old_violation_doesnt_block_an_unrelated_change() -> None:
     change that adds no problem, and publish reports the old one."""
     broken, _ = drafts.patched(matrix_retail(), TYPE_CHANGE)
     after, _ = drafts.patched(
-        broken, [{"op": "replace", "path": "/apps/accent", "value": "copper"}], LIVE
+        broken, [{"op": "replace", "path": "/apps/accent", "value": "copper"}], V1
     )
     assert after["apps"]["accent"] == "copper"
     with pytest.raises(UnprocessableContent) as e:
-        drafts.patched(broken, [{"op": "remove", "path": "/fields/dd_notes"}], LIVE)
+        drafts.patched(broken, [{"op": "remove", "path": "/fields/dd_notes"}], V1)
     assert "fields.dd_notes" in [x.path for x in e.value.errors or []]
 
 
-def test_the_write_path_and_validate_check_the_active_release(
+def test_the_write_path_and_validate_check_the_published_releases(
     held: SimpleNamespace,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def v1(_conn: Any) -> SimpleNamespace:
-        return SimpleNamespace(workflow=LIVE)
+    async def v1(_conn: Any) -> list[Doc]:
+        return V1
 
-    monkeypatch.setattr(releases, "active_release", v1)
+    monkeypatch.setattr(releases, "published_fields", v1)
     results = asyncio.run(agent(held.ctx, OWNER, [(t, sent(t, a)) for t, a in DEMO_2]))
     assert all(r["ok"] for r in results), results
     assert held.doc == demo_2()
@@ -182,18 +200,18 @@ def test_the_write_path_and_validate_check_the_active_release(
 def test_publish_refuses_what_the_rules_refuse() -> None:
     broken, _ = drafts.patched(matrix_retail(), TYPE_CHANGE)
     with pytest.raises(UnprocessableContent, match="can't be published") as e:
-        publish._compile("pilot-local", broken, LIVE)
+        publish._compile("pilot-local", broken, V1)
     assert [x.path for x in e.value.errors or []] == ["fields.carpet_area.type"]
-    publish._compile("pilot-local", broken, None)  # the first release is the baseline
+    publish._compile("pilot-local", broken)  # the first release is the baseline
 
 
 def test_publish_stamps_what_a_release_adds_or_makes_required() -> None:
     first = live(matrix_retail())
-    versioning.stamp(None, first, 1)
+    versioning.stamp([], first, 1)
     assert first == LIVE  # the first release is the baseline: nothing to stamp
     v2 = live(demo_2())
     v2["fields"]["city"]["since"] = 9  # whatever a draft says, publish decides
-    versioning.stamp(LIVE, v2, 2)
+    versioning.stamp(V1, v2, 2)
     f = v2["fields"]
     assert (f["state"]["since"], f["district"]["since"]) == (2, 2)
     assert f["site_photos"]["required_from_version"] == 2
@@ -201,14 +219,14 @@ def test_publish_stamps_what_a_release_adds_or_makes_required() -> None:
     assert "required_from_version" not in f["state"]
     v3 = live(demo_2())
     v3["fields"]["site_photos"]["required"] = False
-    versioning.stamp(v2, v3, 3)
+    versioning.stamp([*V1, v2["fields"]], v3, 3)  # whichever is active: v1 after a rollback
     assert v3["fields"]["state"]["since"] == 2  # kept from the release that added it
     assert "required_from_version" not in v3["fields"]["site_photos"]
 
 
 def test_the_diff_ignores_publishs_stamps() -> None:
     v2 = live(demo_2())
-    versioning.stamp(LIVE, v2, 2)
+    versioning.stamp(V1, v2, 2)
     assert drafts.diff(v2, demo_2()).fields.changed == []
 
 
@@ -217,7 +235,7 @@ def test_the_diff_ignores_publishs_stamps() -> None:
 
 def test_a_v1_site_reads_on_v2s_start_form() -> None:
     v2 = live(demo_2())
-    versioning.stamp(LIVE, v2, 2)
+    versioning.stamp(V1, v2, 2)
     spec = compile(migrate(demo_2()), "pilot-local").forms["start:store_launch"]
     form = tasks.visible_form({"schema": spec.schema, "layout": spec.layout}, {"bd": 1})
     assert "address" not in spec.schema["properties"]  # removed: not on new forms
@@ -315,6 +333,7 @@ def _story(http: TestClient, slug: str) -> SimpleNamespace:
     v2_start = {k: v for k, v in START.items() if k != "address"}  # not on v2's form
     new = _start(w, {**v2_start, "state": "Karnataka", "district": "Bengaluru Urban"})
     return SimpleNamespace(
+        step=step,
         w=w,
         old=old,
         new=new,
@@ -427,3 +446,29 @@ def test_a_field_required_in_v2_binds_v2_sites_only(demo: SimpleNamespace) -> No
     assert refused.status_code == 422
     assert refused.json()["errors"] == [{"path": "/site_photos", "message": "Required"}]
     assert _release(2)["fields"]["site_photos"]["required_from_version"] == 2
+
+
+@pytest.mark.integration
+def test_after_a_rollback_to_v1_a_v2_site_and_v2s_fields_are_kept(
+    demo: SimpleNamespace,
+) -> None:
+    """v1 made active again (`releases.activate`, publish's rollback path): a site started on v2
+    still reads on v2's start form, and the draft still can't retype a field v2 added."""
+
+    def activate(version: int) -> None:
+        async def go(ctx: Any, _: Any) -> None:
+            async with ctx.db.begin() as conn:
+                await releases.activate(conn, version)
+
+        demo.step(go)
+
+    activate(1)
+    try:
+        state = _fields(demo.w.get("bd2", f"/app/cases/{demo.new}"))["state"]
+        assert state == ("State", "Karnataka", None)
+        retype = [{"op": "replace", "path": "/fields/state/type", "value": "number"}]
+        with pytest.raises(UnprocessableContent) as refused:
+            demo.step(lambda ctx, _: drafts.apply_change(ctx, OWNER, "test", retype, "State"))
+        assert [e.path for e in refused.value.errors or []] == ["fields.state.type"]
+    finally:
+        activate(2)

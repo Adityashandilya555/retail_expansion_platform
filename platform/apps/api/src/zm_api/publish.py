@@ -1,6 +1,6 @@
 """Publish (#23): the client's draft → a release on that client's own Operaton.
 
-1. Compile the draft (`zm_compiler.compile`, #19) and check it against the active release's
+1. Compile the draft (`zm_compiler.compile`, #19) and check it against every published release's
    fields (S2-25, `zm_api.versioning`).
 2. Make sure its level groups (`<dept>__L<n>`) exist in the client's Operaton.
 3. Deploy every BPMN resource plus `zm-release.json` as one deployment named `<slug>-release`,
@@ -20,6 +20,7 @@ the deploy is a 503, and publishing again completes it (the deploy is then a dup
 """
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -82,15 +83,15 @@ def blocks_used(ui: dict[str, Any]) -> dict[str, None]:
 
 
 def _compile(
-    slug: str, draft: dict[str, Any], live: dict[str, Any] | None = None
+    slug: str, draft: dict[str, Any], published: Sequence[dict[str, Any]] = ()
 ) -> tuple[Any, Release]:
-    """`live`: the active release's workflow, whose fields the draft may only add to."""
+    """`published`: every release's fields, which the draft may only add to."""
     try:
         wf = migrate(draft)
         release = compile(wf, slug)
     except (SchemaVersionError, ValueError, CompileError) as e:  # ValidationError is a ValueError
         raise UnprocessableContent(f"The draft can't be published: {e}") from None
-    errors = versioning.errors(live, draft)
+    errors = versioning.errors(published, draft)
     if errors:
         raise UnprocessableContent(
             "The draft can't be published: it changes released fields",
@@ -141,8 +142,8 @@ async def publish(
             draft = await releases.get_draft(conn)
             if draft is None:
                 raise Conflict("This client has no draft to publish yet")
-            live = await releases.active_release(conn)
-            wf, release = _compile(slug, draft, live.workflow if live else None)
+            published = await releases.published_fields(conn)
+            wf, release = _compile(slug, draft, published)
 
             await _ensure_groups(ctx, release)
             files = {**release.bpmn, RELEASE_RESOURCE: release_json(release)}
@@ -154,9 +155,7 @@ async def publish(
             if row is None:
                 # the document as published, after any schema migration (D14), stamped (S2-25)
                 workflow = wf.model_dump(mode="json", by_alias=True, exclude_unset=True)
-                versioning.stamp(
-                    live.workflow if live else None, workflow, await releases.next_version(conn)
-                )
+                versioning.stamp(published, workflow, await releases.next_version(conn))
                 row = await releases.insert_release(
                     conn,
                     {
