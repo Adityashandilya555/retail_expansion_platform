@@ -416,6 +416,16 @@ def test_the_second_turn_reads_the_first_from_the_cache(
     assert [c["messages"] for c in fake.counted] == [one["messages"], two["messages"]]
 
 
+def test_the_reference_says_where_a_block_goes_only_by_layout() -> None:
+    # a manifest's `regions` name no layout; validation checks each layout's `allowed_blocks`
+    ref = json.loads(loop.system()[0]["text"].split("Reference: ", 1)[1])
+    assert ref["layouts"]["case"]["regions"][0]["allowed_blocks"] == ["case_header"]
+    header = ref["blocks"]["case_header"]["1"]
+    assert header["props"]["properties"].keys() == {"title_field", "fields"}
+    manifests = [m for versions in ref["blocks"].values() for m in versions.values()]
+    assert manifests and not [m["name"] for m in manifests if "regions" in m]
+
+
 def test_a_tool_that_raises_answers_is_error_and_leaves_the_draft(
     held: SimpleNamespace,  # noqa: F811
     chats: dict[uuid.UUID, Doc],

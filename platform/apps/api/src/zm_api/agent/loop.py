@@ -95,7 +95,11 @@ def system() -> list[Doc]:
     reference = {
         "field_types": {t: {"v1_renders": t in tools.V1_RENDERS} for t in get_args(FieldType)},
         "layouts": ui["layouts"],
-        "blocks": ui["blocks"],
+        # where a block goes is each layout's `allowed_blocks`; a manifest's regions name no layout
+        "blocks": {
+            name: {v: {k: m[k] for k in m if k != "regions"} for v, m in versions.items()}
+            for name, versions in ui["blocks"].items()
+        },
         "templates": {t.key: t.name for t in templates.load_templates()},
     }
     body = f"{RULES}\n\nReference: {json.dumps(reference, sort_keys=True)}"
