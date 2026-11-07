@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { blocks, type AppUi, type UiPage } from "@zm/blocks";
 import { sampleUi, testBlocks } from "@zm/blocks/test";
@@ -92,7 +92,7 @@ test("keyboard only: workspace code, then email and password, then the app", asy
   await user.keyboard("s3cret{Enter}");
 
   expect(await screen.findByRole("region", { name: "task_inbox" })).toBeDefined(); // Home, the first nav item
-  expect(calls).toEqual(["POST /auth/workspace", "POST /auth/login", "GET /app/me", "GET /app/ui"]);
+  await waitFor(() => expect(calls).toEqual(["POST /auth/workspace", "POST /auth/login", "GET /app/me", "GET /app/ui", "GET /app/tasks"]));
 });
 
 test("a wrong password shows the same generic error", async () => {
@@ -203,7 +203,8 @@ test("Legal L1 opens /app/legal: the nav comes from the release, the layout and 
   expect(blockNames()).toEqual(["task_inbox", "case_table"]);
   expect(nav().getAllByRole("button").map((b) => b.textContent)).toEqual(["Home", "Legal"]);
   expect(nav().getByRole("button", { name: "Legal" }).getAttribute("aria-current")).toBe("page");
-  expect(calls).toEqual(["POST /auth/refresh", "GET /app/me", "GET /app/ui"]);
+  // the user's tasks, once, for the nav's count badges
+  await waitFor(() => expect(calls).toEqual(["POST /auth/refresh", "GET /app/me", "GET /app/ui", "GET /app/tasks"]));
 
   await userEvent.setup().click(nav().getByRole("button", { name: "Home" }));
   expect(screen.getByRole("region", { name: "task_inbox" }).textContent).toContain('"scope":"mine"');
@@ -224,6 +225,30 @@ test("v2 published with another block order: a reload draws the new order, with 
   renderAt("/app/legal");
   await screen.findByRole("region", { name: "task_inbox" });
   expect(blockNames()).toEqual(["case_table", "task_inbox"]);
+});
+
+test("2 open Legal tasks: the Legal nav item shows 2, or a dot when the sidebar is collapsed", async () => {
+  const task = (id: string, stage: string) => ({
+    id,
+    name: id,
+    flow: "store_launch",
+    case_code: "MX-0001",
+    stage,
+    created: "2026-10-20T09:00:00Z",
+    assignee: null,
+    form_key: null,
+  });
+  const calls = signedInApi(sampleUi, {
+    "GET /app/tasks": () => json([task("t1", "legal"), task("t2", "legal"), task("t3", "bd_qualification")]),
+  });
+  renderAt("/app/legal");
+  await waitFor(() => expect(nav().getByRole("button", { name: /Legal/ }).textContent).toBe("Legal2"));
+  expect(nav().getByRole("button", { name: "Home" }).textContent).toBe("Home"); // not a department page
+  const dot = (name: string) => nav().getByRole("button", { name }).querySelector(".mantine-Indicator-indicator");
+  await userEvent.setup().click(screen.getByRole("button", { name: "Collapse sidebar" }));
+  expect(dot("Legal, 2 open")).not.toBeNull();
+  expect(dot("Home")).toBeNull();
+  expect(calls.filter((c) => c === "GET /app/tasks")).toHaveLength(1); // one request for every item
 });
 
 test("a BD-only user has no Legal nav item, and /app/legal is not found (the API never sent it)", async () => {
@@ -279,7 +304,7 @@ test("without a case page for the flow, /app/cases/:code draws the built-in one"
   renderAt("/app/cases/MX-0001");
   expect(await screen.findByRole("region", { name: "case_fields" })).toBeDefined();
   expect(screen.getByRole("region", { name: "case_header" }).textContent).toContain("{}");
-  expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Tasks"]);
+  expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Tasks", "Activity"]);
 });
 
 test("a case code no flow uses is not found", async () => {

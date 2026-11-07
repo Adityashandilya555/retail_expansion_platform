@@ -32,7 +32,9 @@
         {
           "key": "activity",
           "description": "Activity tab: what happened on the case.",
-          "allowed_blocks": []
+          "allowed_blocks": [
+            "case_activity"
+          ]
         },
         {
           "key": "documents",
@@ -50,7 +52,9 @@
           "key": "hero",
           "description": "Across the top of the page, e.g. a KPI strip.",
           "max": 1,
-          "allowed_blocks": []
+          "allowed_blocks": [
+            "kpi_strip"
+          ]
         },
         {
           "key": "main",
@@ -71,6 +75,21 @@
     }
   },
   "blocks": {
+    "case_activity": {
+      "1": {
+        "name": "case_activity",
+        "version": 1,
+        "description": "What happened on the case, oldest first: created, each stage started, done or closed, and each submitted task, with who and when. No form values.",
+        "regions": [
+          "activity"
+        ],
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    },
     "case_fields": {
       "1": {
         "name": "case_fields",
@@ -122,7 +141,7 @@
       "1": {
         "name": "case_table",
         "version": 1,
-        "description": "The cases of a flow, e.g. the Sites list: search, stage filter chips kept in the URL, status, days in the current stage and a mini stage tracker. `columns` picks from code, title, the flow's start field keys, stage, status, age, open_tasks and my_tasks; `stages` keeps only cases currently in those stages. A row opens the case page.",
+        "description": "The cases of a flow, e.g. the Sites list: search, stage filter chips kept in the URL, status, days in the current stage and a mini stage tracker. `columns` picks from code, title, the flow's start field keys, stage, status, age, open_tasks and my_tasks; `stages` keeps only cases currently in those stages. Status shows Overdue for a case longer in a stage than its `sla_days`. A kpi_strip tile picked on the page shows the cases it counts instead of the stage filters. A row opens the case page.",
         "regions": [
           "main"
         ],
@@ -161,6 +180,69 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {}
+        }
+      }
+    },
+    "kpi_strip": {
+      "1": {
+        "name": "kpi_strip",
+        "version": 1,
+        "description": "2 to 4 count tiles over a flow's cases (`flow`, else the release's first, as case_table), e.g. on a department page:`open_cases`, `in_stage` (needs `stage`), `awaiting_me` (cases with a task for the user), `overdue` (longer in a stage than its `sla_days`) and `done` (completed cases). `stage` narrows a tile to cases in that stage, or for `done` to cases past it; `label` replaces the default label. Picking a tile filters the page's case table to the cases it counts (kept in the URL); picking it again clears it.",
+        "regions": [
+          "hero"
+        ],
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tiles"
+          ],
+          "properties": {
+            "flow": {
+              "type": "string"
+            },
+            "tiles": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "open_cases",
+                      "in_stage",
+                      "awaiting_me",
+                      "overdue",
+                      "done"
+                    ]
+                  },
+                  "stage": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "in_stage"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "stage"
+                  ]
+                }
+              }
+            }
+          }
         }
       }
     },

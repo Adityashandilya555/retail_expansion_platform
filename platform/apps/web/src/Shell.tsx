@@ -2,7 +2,7 @@
 // pages, already filtered to this user's departments by the API.
 import { Alert, Anchor, Button, Center, Loader, Menu, Stack, Text, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BlocksApi, PageRenderer, defaultCasePage } from "@zm/blocks";
+import { BlocksApi, PageRenderer, defaultCasePage, tasksQuery } from "@zm/blocks";
 import { AppFrame, ZmProvider } from "@zm/ui";
 import { FilePen, LogOut, Users } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router";
@@ -67,6 +67,8 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
   const queries = useQueryClient();
   const me = useQuery({ queryKey: ["me"], queryFn: () => currentUser().then(applyPreferences) });
   const ui = useQuery({ queryKey: ["ui"], queryFn: loadUi, enabled: Boolean(me.data) });
+  // the nav's count badges (#94); the same request as a `mine` task_inbox, so Home shares it
+  const mine = useQuery({ ...tasksQuery(api, "mine"), enabled: Boolean(ui.data) });
   const path = useParams()["*"] ?? "";
   const section = path.split("/")[0] || undefined;
 
@@ -89,7 +91,14 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
     const release = ui.data;
     const home = release?.nav[0]?.page;
     const admin = me.data.is_client_admin;
-    const nav = (release?.nav ?? []).map((n) => ({ key: n.page, label: n.label }));
+    // a department page's badge: the user's open tasks whose stage is in that department
+    const department = (flow: string, stage: string | null) =>
+      release?.flows.find((f) => f.key === flow)?.stages.find((s) => s.key === stage)?.department;
+    const open = (page: string) => {
+      const dept = release?.pages.find((p) => p.key === page)?.department;
+      return dept ? mine.data?.rows.filter((t) => department(t.flow, t.stage) === dept).length : undefined;
+    };
+    const nav = (release?.nav ?? []).map((n) => ({ key: n.page, label: n.label, badge: open(n.page) }));
     body = (
       <AppFrame
         clientName={release?.client.name ?? me.data.client.name}

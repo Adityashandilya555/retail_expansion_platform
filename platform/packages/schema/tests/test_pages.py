@@ -23,6 +23,7 @@ def test_pages_that_fit_their_layouts_are_valid(minimal: dict[str, Any]) -> None
         "regions": {
             "main": [{"block": "task_inbox", "props": {"scope": "team"}}, {"block": "case_table"}],
             "aside": [{"block": "task_inbox"}],
+            "hero": [{"block": "kpi_strip", "props": {"tiles": [{"kind": "done"}] * 2}}],
         },
     }
     site = {
@@ -33,9 +34,21 @@ def test_pages_that_fit_their_layouts_are_valid(minimal: dict[str, Any]) -> None
             "header": [{"block": "case_header", "props": {"title_field": "site_name"}}],
             "overview": [{"block": "case_fields"}],
             "tasks": [{"block": "case_tasks"}],
+            "activity": [{"block": "case_activity"}],
         },
     }
     assert errors(minimal, home, site) == []
+
+
+def test_a_kpi_strip_has_2_to_4_tiles_and_in_stage_names_its_stage(minimal: dict[str, Any]) -> None:
+    """#94: the manifest's rules hold here as in the shell (an `if`/`then` per tile)."""
+    strip = {"block": "kpi_strip", "props": {"tiles": [{"kind": "in_stage"}]}}
+    home = {"key": "home", "layout": "standard", "regions": {"hero": [strip]}}
+    on = "page 'home', region 'hero': block 'kpi_strip'"
+    assert errors(minimal, home) == [
+        f"apps.pages[0].regions.hero[0].props.tiles: {on}: [{{'kind': 'in_stage'}}] is too short",
+        f"apps.pages[0].regions.hero[0].props.tiles[0]: {on}: 'stage' is a required property",
+    ]
 
 
 def test_a_block_its_region_doesnt_take_and_a_full_region(minimal: dict[str, Any]) -> None:

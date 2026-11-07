@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,3 +20,14 @@ def test_valid_documents(path: Path) -> None:
 
 def test_valid_fixtures_present() -> None:
     assert {p.stem for p in VALID} >= {"minimal", "two_flows", "matrix_retail_excerpt"}
+
+
+def test_a_stage_may_set_sla_days_a_positive_whole_number(minimal: dict[str, Any]) -> None:
+    """S2-29: optional and additive (D14), so a document without it stays valid."""
+    stage = minimal["flows"][0]["stages"][0]
+    stage["sla_days"] = 5
+    assert validate(minimal) == []
+    assert migrate(minimal).flows[0].stages[0].sla_days == 5
+    for bad in (0, -1, 1.5, "five"):
+        stage["sla_days"] = bad
+        assert [e.path for e in validate(minimal)] == ["flows[0].stages[0].sla_days"], bad

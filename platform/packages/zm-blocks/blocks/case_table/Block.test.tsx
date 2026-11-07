@@ -2,8 +2,8 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expectNoAxeViolations } from "@zm/ui/test";
 import { afterEach, expect, test, vi } from "vitest";
-import type { UiPage } from "../../src";
-import { problem, sampleCases } from "../../src/test";
+import type { AppUi, UiPage } from "../../src";
+import { problem, sampleCases, sampleUi } from "../../src/test";
 import { drawPage, location } from "../../src/test/render";
 
 const sitesPage = (props: Record<string, unknown>): UiPage => ({
@@ -87,6 +87,29 @@ test("days in stage, my tasks and a closed case", async () => {
     ["MX-0001", "5", "1", "Open"],
     ["MX-0003", "5", "0", "Closed"],
   ]);
+  vi.useRealTimers();
+});
+
+const legalSla5: AppUi = {
+  ...sampleUi,
+  flows: sampleUi.flows.map((f) => ({ ...f, stages: f.stages.map((s) => (s.key === "legal" ? { ...s, sla_days: 5 } : s)) })),
+};
+
+test("sla_days 5 on Legal: a case 6 days in Legal shows an overdue pill", async () => {
+  vi.useFakeTimers({ now: new Date("2026-10-26T09:00:01Z"), toFake: ["Date"] }); // 6 days after the fixtures' stage start
+  drawPage(sitesPage(SITES), { path: "/app/sites", routes, ui: legalSla5 });
+  const table = await screen.findByRole("table", { name: "Sites" });
+  await within(table).findByText("Indiranagar");
+  expect(cells(table).map((row) => row[4])).toEqual(["OpenOverdue", "Open", "Open"]); // MX-0001 only: Design has no SLA
+  vi.useRealTimers();
+});
+
+test("five days in Legal is not overdue", async () => {
+  vi.useFakeTimers({ now: new Date("2026-10-25T09:00:00Z"), toFake: ["Date"] });
+  drawPage(sitesPage(SITES), { path: "/app/sites", routes, ui: legalSla5 });
+  const table = await screen.findByRole("table", { name: "Sites" });
+  await within(table).findByText("Indiranagar");
+  expect(within(table).queryByText("Overdue")).toBeNull();
   vi.useRealTimers();
 });
 

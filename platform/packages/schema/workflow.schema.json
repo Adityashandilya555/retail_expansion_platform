@@ -777,6 +777,19 @@
           },
           "minItems": 1,
           "type": "array"
+        },
+        "sla_days": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Days a case may spend in this stage; longer shows it as overdue (S2-29)."
         }
       },
       "required": [

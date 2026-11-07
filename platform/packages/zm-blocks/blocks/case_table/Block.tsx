@@ -1,50 +1,41 @@
 import { Chip, Code, Group, Stack, Text, TextInput } from "@mantine/core";
-import { useQuery } from "@tanstack/react-query";
 import { DataTable, Num, StageTracker, StatusPill, type Column } from "@zm/ui";
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { useBlocksApi } from "../../src/api";
-import { currentStage, display, flowOf, STATUS, trackerStages, type CaseRow } from "../../src/cases";
+import { currentStage, daysSince, display, flowOf, inTile, isOverdue, STATUS, tileOf, trackerStages, useCases, type CaseRow } from "../../src/cases";
 import type { BlockProps } from "../../src/registry";
 
 /** `props` as manifest.json allows them (the renderer has already validated them). */
 type Props = { flow?: string; columns?: string[]; stages?: string[] };
 
-const DAY = 86_400_000;
 /** Whole days since the case's current stage started. */
 function daysIn(c: CaseRow): number | null {
   const started = currentStage(c.stages)?.started_at;
-  return started ? Math.floor((Date.now() - Date.parse(started)) / DAY) : null;
+  return started ? daysSince(started) : null;
 }
 
-/** case_table v1 (S1-25, #92): a flow's cases, e.g. the Sites list. A row opens the case page. */
+/** case_table v1 (S1-25, #92): a flow's cases, e.g. the Sites list. A row opens the case page.
+ * A kpi_strip tile picked in the URL (`?kpi=`, #94) shows the cases it counts instead of the stage
+ * filters, so the table and the tile agree. */
 export function CaseTable({ props, ui }: BlockProps) {
   const { flow: flowKey, columns = ["code", "title", "stage", "status", "open_tasks"], stages: only } = props as Props;
   const flow = flowOf(ui, flowKey);
-  const api = useBlocksApi();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState("");
-  const cases = useQuery({
-    queryKey: ["app", "cases", flow?.key ?? null],
-    queryFn: async () => {
-      const { data, response } = await api.GET("/app/cases", { params: { query: { flow: flow?.key } } });
-      if (!data) throw new Error(`GET /app/cases answered ${response.status}`);
-      return data;
-    },
-  });
+  const cases = useCases(flow?.key);
   if (!flow) throw new Error("the release has no flow");
 
   const label = flow.case_label;
   const plural = `${label.toLowerCase()}s`;
   const choices = flow.stages.filter((s) => !only || only.includes(s.key));
   const picked = params.getAll("stage");
+  const tile = tileOf(params.get("kpi"));
   const term = search.trim().toLowerCase();
   const rows = (cases.data ?? []).filter((c) => {
     const at = currentStage(c.stages)?.key ?? "";
     return (
-      (!only || only.includes(at)) &&
-      (picked.length === 0 || picked.includes(at)) &&
+      (tile ? inTile(tile, c, flow) : (!only || only.includes(at)) && (picked.length === 0 || picked.includes(at))) &&
       (!term || c.code.toLowerCase().includes(term) || c.title.toLowerCase().includes(term))
     );
   });
@@ -67,7 +58,12 @@ export function CaseTable({ props, ui }: BlockProps) {
     status: {
       key: "status",
       header: "Status",
-      render: (c) => <StatusPill tone={STATUS[c.status][0]}>{STATUS[c.status][1]}</StatusPill>,
+      render: (c) => (
+        <Group gap="xs" wrap="nowrap">
+          <StatusPill tone={STATUS[c.status][0]}>{STATUS[c.status][1]}</StatusPill>
+          {isOverdue(c, flow) && <StatusPill tone="warning">Overdue</StatusPill>}
+        </Group>
+      ),
       sortValue: (c) => c.status,
     },
     age: { key: "age", header: "Days in stage", align: "right", render: (c) => <Num value={daysIn(c)} />, sortValue: (c) => daysIn(c) ?? -1 },
@@ -96,6 +92,7 @@ export function CaseTable({ props, ui }: BlockProps) {
               setParams(
                 (p) => {
                   p.delete("stage");
+                  p.delete("kpi"); // the chips take over from a picked tile
                   for (const key of keys) p.append("stage", key);
                   return p;
                 },

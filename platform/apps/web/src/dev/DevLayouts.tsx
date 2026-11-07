@@ -1,7 +1,7 @@
 // /dev/layouts (dev server only, never in production builds): each layout with each block it takes
 // (#37), drawn by the real blocks from the Sprint 1 demo's fixtures: the Sites list (`standard`) and
 // MX-0001's case page (`case`). No API: requests are answered from fixtures, and submitting the DD
-// checklist moves MX-0001 on, as the API would.
+// checklist moves MX-0001 on (its tasks, history and activity), as the API would.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BlocksApi, PageRenderer, type UiPage } from "@zm/blocks";
 import { fixtureApi, sampleCase, sampleCases, sampleTask, sampleUi } from "@zm/blocks/test";
@@ -13,6 +13,7 @@ const sites: UiPage = {
   key: "sites",
   layout: "standard",
   regions: {
+    hero: [{ block: "kpi_strip", props: { tiles: [{ kind: "open_cases" }, { kind: "in_stage", stage: "legal" }, { kind: "awaiting_me" }] } }],
     main: [{ block: "case_table", props: { flow: "store_launch", columns: ["code", "site_name", "city", "stage", "status", "age", "open_tasks"] } }],
     aside: [{ block: "task_inbox", props: { scope: "mine" } }],
   },
@@ -25,6 +26,7 @@ const site: UiPage = {
     header: [{ block: "case_header", props: { title_field: "site_name", fields: ["city"] } }],
     overview: [{ block: "case_fields", props: {} }],
     tasks: [{ block: "case_tasks", props: {} }],
+    activity: [{ block: "case_activity", props: {} }],
   },
 };
 const VIEWS = { sites: "/app/sites", site: "/app/cases/MX-0001?tab=tasks&task=t-dd" };
@@ -44,7 +46,8 @@ function demoApi() {
     "POST /app/tasks/t-dd/submit": () => {
       const at = new Date().toISOString();
       const done = { task: "legal_dd_checklist", task_name: "Fill DD checklist", by: "u-l1", by_name: "Legal Executive", outcome: null, comment: null, at };
-      mx1 = { ...mx1, tasks: [], open_tasks: 0, my_tasks: 0, history: [...mx1.history, done] };
+      const sent = { kind: "submitted" as const, stage: "legal", task: done.task, task_name: done.task_name, by: done.by, by_name: done.by_name, at };
+      mx1 = { ...mx1, tasks: [], open_tasks: 0, my_tasks: 0, history: [...mx1.history, done], events: [...mx1.events, sent] };
       return { submission_id: "s1", status: "committed", case_id: "c-1", release_version: 1 };
     },
   }).api;
@@ -70,7 +73,7 @@ export default function DevLayouts() {
           >
             <PageHeader
               title="/dev/layouts"
-              description="Each layout with each block it takes: the Sites list with My work beside it, and MX-0001's case page, drawn by the real blocks from fixtures (no API). Switch scheme and accent in the top bar."
+              description="Each layout with each block it takes: the Sites list with its counts above and My work beside it, and MX-0001's case page, drawn by the real blocks from fixtures (no API). Switch scheme and accent in the top bar."
             />
             <MemoryRouter key={view} initialEntries={[VIEWS[view]]}>
               <Routes>
