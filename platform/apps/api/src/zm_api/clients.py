@@ -4,24 +4,36 @@ Creating a client inserts it and its provisioning steps (`pending`, in `seq` ord
 transaction; the provisioning worker (#24, #25) picks the steps up. Provisioning is queued the
 moment the client exists, so the workspace code is editable only in the create form, where the
 console suggests one; after that it never changes. Publishing is `POST /owner/clients/{id}/publish`
-(#23, `zm_api.publish`).
+(#23, `zm_api.publish`). `GET /owner/clients/overview` is the owner dashboard (#47).
 """
 
+import asyncio
 import re
 import secrets
 import string
+import time
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+from cryptography.fernet import InvalidToken
 from fastapi import Request
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from zm_api.context import OwnerCtx, owner_router
-from zm_api.errors import Conflict, FieldError, NotFound, UnprocessableContent
+from zm_api import releases
+from zm_api.context import ClientContext, OwnerCtx, Resolver, owner_router
+from zm_api.errors import (
+    ApiError,
+    Conflict,
+    FieldError,
+    NotFound,
+    ServiceUnavailable,
+    UnprocessableContent,
+)
+from zm_api.registry import Client
 
 STEPS = (
     "supabase_project",  # S2-02a (#24)
@@ -105,6 +117,55 @@ class ClientDetail(ClientOut):
     """Newest first."""
 
 
+class UserCounts(BaseModel):
+    active: int
+    invited: int
+    deactivated: int
+
+
+class FlowCases(BaseModel):
+    flow: str
+    """The flow's key in the active release."""
+    count: int
+    """Its cases still running, whichever release they started on."""
+
+
+class LastRelease(BaseModel):
+    version: int
+    published_at: datetime
+
+
+class Probe(BaseModel):
+    up: bool
+    ms: float | None
+    """How long it took to answer; null when it failed or didn't answer within PROBE_TIMEOUT."""
+
+
+class Health(BaseModel):
+    operaton: Probe
+    """Operaton Run's `GET /health` over the private network."""
+    db: Probe
+    """`select 1` on the client's vault."""
+
+
+class ClientOverview(BaseModel):
+    """Counts and status only (PRODUCT.md, owner step 8): never a person's name or email, nor a
+    form value. The console names the client from `GET /owner/clients`."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    id: UUID
+    slug: str
+    status: ClientStatus
+    """Its provisioning status. Only a ready client is probed; the rest is null until then."""
+    users: UserCounts | None = None
+    cases_in_progress: list[FlowCases] | None = None
+    """Per flow of the active release; null when its vault or engine didn't answer."""
+    last_release: LastRelease | None = None
+    """The active release."""
+    health: Health | None = None
+
+
 # --- queries ---------------------------------------------------------------------------------
 
 _CLIENTS = (
@@ -158,6 +219,77 @@ _TAKEN = {
 """Unique constraints on `platform.clients` → the 409 for the field they guard."""
 
 
+# --- the owner dashboard (#47) ---------------------------------------------------------------
+
+OVERVIEW_TTL = 60.0
+"""Seconds the dashboard's answer is reused: a down engine turns red within this."""
+PROBE_TIMEOUT = 3.0
+"""Seconds a client's vault, then its engine, get to answer."""
+clock = time.monotonic  # tests move it
+
+_USERS = text(
+    "select count(*) filter (where status = 'active') as active,"
+    " count(*) filter (where status = 'invited') as invited,"
+    " count(*) filter (where status = 'deactivated') as deactivated from app.users"
+)
+
+
+def _ms(start: float) -> float:
+    return round((time.perf_counter() - start) * 1000, 1)
+
+
+async def _vault(ctx: ClientContext) -> tuple[Probe, UserCounts | None, releases.ReleaseRow | None]:
+    """`select 1`, then the user counts and the active release."""
+    start = time.perf_counter()
+    try:
+        async with asyncio.timeout(PROBE_TIMEOUT), ctx.db.connect() as conn:
+            await conn.execute(text("select 1"))
+            up = Probe(up=True, ms=_ms(start))
+            users = UserCounts(**(await conn.execute(_USERS)).mappings().one())
+            return up, users, await releases.active_release(conn)
+    except (SQLAlchemyError, OSError, TimeoutError):
+        return Probe(up=False, ms=None), None, None
+
+
+async def _engine(
+    ctx: ClientContext, flows: dict[str, str] | None
+) -> tuple[Probe, list[FlowCases] | None]:
+    """Operaton's /health, then the running instances of each flow's main process (`flows`: flow
+    key → process key; None when the vault didn't answer)."""
+    start = time.perf_counter()
+    try:
+        async with asyncio.timeout(PROBE_TIMEOUT):
+            await ctx.operaton.health()
+            up = Probe(up=True, ms=_ms(start))
+            if flows is None:
+                return up, None
+            return up, [
+                FlowCases(flow=flow, count=await ctx.operaton.count_instances(key))
+                for flow, key in flows.items()
+            ]
+    except (ApiError, TimeoutError):  # OperatonError, or NotFound with /health turned off
+        return Probe(up=False, ms=None), None
+
+
+async def _overview(resolver: Resolver, row: Client) -> ClientOverview:
+    out = ClientOverview(id=row.id, slug=row.slug, status=row.status)
+    try:
+        ctx = await resolver.context(row)
+    except ServiceUnavailable:  # not ready: nothing to probe yet
+        return out
+    except InvalidToken:  # its secrets don't open with this SECRETS_ENCRYPTION_KEY: unreachable
+        down = Probe(up=False, ms=None)
+        out.health = Health(operaton=down, db=down)
+        return out
+    db, out.users, active = await _vault(ctx)
+    flows = None if not db.up else active.process_keys if active else {}
+    operaton, out.cases_in_progress = await _engine(ctx, flows)
+    out.health = Health(operaton=operaton, db=db)
+    if active:
+        out.last_release = LastRelease(version=active.version, published_at=active.published_at)
+    return out
+
+
 # --- routes ----------------------------------------------------------------------------------
 
 routes = owner_router()
@@ -185,6 +317,26 @@ async def list_clients(request: Request) -> list[ClientOut]:
     async with _platform(request).connect() as conn:
         rows = await conn.execute(text(f"{_CLIENTS} order by created_at desc"))
         return [ClientOut(**r) for r in rows.mappings()]
+
+
+@routes.get("/clients/overview")  # before /clients/{client_id}, which would take it for an id
+async def clients_overview(request: Request) -> list[ClientOverview]:
+    """Per client: account counts, cases in progress per flow, the active release, and the health
+    of its Operaton and vault. Every client is probed at once, each with PROBE_TIMEOUT, so one
+    that is down never holds up or fails the rest. The answer is kept OVERVIEW_TTL seconds."""
+    # ponytail: no lock, so two requests after expiry both probe; fine for a few owners
+    now, cached = clock(), getattr(request.app.state, "overview", None)
+    if cached is not None and now - cached[0] < OVERVIEW_TTL:
+        return cached[1]
+    async with _platform(request).connect() as conn:
+        rows = await conn.execute(text("select * from platform.clients order by created_at desc"))
+        found = [Client(**r) for r in rows.mappings()]
+    # ponytail: this opens every ready client's resources; past Resolver's max_clients (32) the
+    # dashboard would churn them, so probe with short-lived ones then
+    resolver = request.app.state.resolver
+    out = list(await asyncio.gather(*(_overview(resolver, row) for row in found)))
+    request.app.state.overview = (now, out)
+    return out
 
 
 @routes.post("/clients", status_code=201)

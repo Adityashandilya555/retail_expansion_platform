@@ -219,6 +219,19 @@ class OperatonClient:
             return []
         return await self.find_instances({"processInstanceIds": ids})
 
+    async def count_instances(self, key: str) -> int:
+        """Running instances of every version of process `key` (`GET /process-instance/count`,
+        ProcessInstanceRestService.java:84-87 at v2.1.5)."""
+        params = {"processDefinitionKey": key}
+        found = await self._call("count_instances", "GET", "process-instance/count", params=params)
+        return found["count"]
+
+    async def health(self) -> Json:
+        """Operaton Run's `GET /health` beside `/engine-rest`, no sign-in: 200 while UP, else 503
+        (run/health/HealthController.java:58-72 at v2.1.5; on with
+        `operaton.run.health.rest-endpoint.enabled`, infra/operaton/default.yml)."""
+        return await self._call("health", "GET", str(self.base_url.join("../health")))
+
     async def delete_process_instance(self, instance_id: str) -> None:
         path = f"process-instance/{_id(instance_id)}"
         params = {"skipCustomListeners": "true"}
