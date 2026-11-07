@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -224,8 +225,8 @@ def fire_noc() -> tuple[Reply, ...]:
 
 @pytest.fixture
 def chats(held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> dict[uuid.UUID, Doc]:  # noqa: F811
-    """`{conversation id: {mode, owner, rows}}` for the vault's two tables, and their claims (the
-    vault's advisory locks) as a set; `held.ctx` gets a client."""
+    """`{conversation id: {mode, owner, started_at, rows}}` for the vault's two tables, and their
+    claims (the vault's advisory locks) as a set; `held.ctx` gets a client."""
     found: dict[uuid.UUID, Doc] = {}
     busy: set[uuid.UUID] = set()
     held.ctx.client = SimpleNamespace(slug="pilot-local")
@@ -250,15 +251,25 @@ def chats(held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> dict[uuid.U
         assert seq == len(found[cid]["rows"])  # right after what the turn read
         found[cid]["rows"] += copy.deepcopy(rows)
 
+    async def mine(_ctx: Any, owner: uuid.UUID) -> list[Doc]:
+        listed = [{"id": cid, "owner_id": c["owner"], **c} for cid, c in found.items()]
+        return [c for c in reversed(listed) if c["owner"] == owner]  # newest first
+
+    async def changes(_ctx: Any, cid: uuid.UUID) -> list[Doc]:  # held.log's ids count from 1
+        log = [{**c, "id": i} for i, c in enumerate(held.log, 1)]
+        return [c for c in log if c["conversation_id"] == cid]
+
     monkeypatch.setattr(loop, "_stored", stored)
     monkeypatch.setattr(loop, "_append", append)
     monkeypatch.setattr(loop, "_claimed", claimed)
+    monkeypatch.setattr(loop, "_mine", mine)
+    monkeypatch.setattr(loop, "_changes", changes)
     return found
 
 
-def new(chats: dict[uuid.UUID, Doc], mode: str = "edit") -> uuid.UUID:
+def new(chats: dict[uuid.UUID, Doc], mode: str = "edit", owner: uuid.UUID = OWNER) -> uuid.UUID:
     cid = uuid.uuid4()
-    chats[cid] = {"mode": mode, "owner": OWNER, "rows": []}
+    chats[cid] = {"mode": mode, "owner": owner, "started_at": datetime.now(UTC), "rows": []}
     return cid
 
 
@@ -734,6 +745,96 @@ def test_the_console_gets_the_turn_as_server_sent_events(
     assert len(fake.requests) == len(fake.counted) == 4  # the first turn's; none for the others
 
 
+def test_the_dock_reads_a_conversation_back_as_it_streamed(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+    rows: dict[str, Any],
+) -> None:
+    """#41: what the dock lists, and shows after a dropped stream or a reload, from the stored
+    rows: the texts, each done edit's chip, refusals and the conversation's usage."""
+    refused = reply(
+        text("Adding"),
+        stop="refusal",
+        stop_details={"type": "refusal", "category": "cyber", "explanation": "Declined."},
+    )
+    older, theirs = new(chats, "configure"), new(chats, owner=uuid.uuid4())
+    fake, cid = Fake(*fire_noc(), refused), new(chats)
+    first, second = run(fake, held, cid, FIRE_NOC), run(fake, held, cid, "Add a GST number")
+    app = create_app(resolver=Resolver(FakeRegistry(rows)))
+    app.dependency_overrides[drafts.owner_client] = lambda: held.ctx
+    listing = f"/owner/clients/{rows['pilot-local'].id}/agent/conversations"
+    url = f"{listing}/{cid}"
+    owner = bearer(token("owner", client=None, sub=str(OWNER)))
+    with TestClient(app) as api:
+        listed = api.get(listing, headers=owner)
+        read = api.get(url, headers=owner)
+        stranger = api.get(url, headers=bearer(token("owner", client=None)))
+        unknown = api.get(url.replace(str(cid), str(uuid.uuid4())), headers=owner)
+        client = api.get(listing, headers=bearer(token("client")))
+    # the owner's own, newest first
+    assert [(c["id"], c["mode"]) for c in listed.json()] == [
+        (str(cid), "edit"),
+        (str(older), "configure"),
+    ]
+    assert str(theirs) not in listed.text and client.status_code == 403
+    assert read.status_code == 200
+    # the refused turn kept only its usage (and why it stopped), not the owner's message
+    assert read.json()["entries"] == [
+        {"kind": "owner", "text": FIRE_NOC},
+        {"kind": "agent", "text": "Adding the upload."},
+        {"kind": "change", "change_id": 1, "summary": "Added: Fire NOC upload"},
+        {"kind": "change", "change_id": 2, "summary": "Approval of legal_licensing: legal L2"},
+        {"kind": "agent", "text": "Done: Fire NOC upload with Legal L2 approval."},
+        {"kind": "refusal", "category": "cyber"},
+    ]
+    turns = first[-1][1]["usage"], second[-1][1]["usage"]
+    assert read.json()["usage"] == {k: sum(u[k] for u in turns) for k in loop.USAGE}
+    for missing in (stranger, unknown):  # another owner's is as missing as none
+        assert missing.status_code == 404 and missing.json()["detail"] == loop.NO_CONVERSATION
+
+
+def test_the_edits_of_a_turn_stopped_mid_reply_read_back_where_they_happened() -> None:
+    """The console leaving stops a turn between its tool runs, before the reply and its results
+    are stored; the edits it made stay in the change log, and read back once each, in time."""
+    t = [datetime(2026, 11, 6, 8, tzinfo=UTC) + timedelta(seconds=s) for s in range(4)]
+
+    def said(role: str, content: Any, at: datetime, usage: Doc | None = None) -> Doc:
+        return {"role": role, "content": content, "usage": usage, "at": at}
+
+    def results(*found: Doc) -> list[Doc]:
+        return [{"type": "tool_result", "content": json.dumps(r)} for r in found]
+
+    used = dict.fromkeys(loop.USAGE, 1)
+    rows = [  # turn 1: a read was stored, then it stopped after edit 1 (t[1])
+        said("user", [text(FIRE_NOC)], t[0]),
+        said("system", "Draft state: {}", t[0]),
+        said("assistant", [text("Adding the upload."), tool_use("get_task", {})], t[0], used),
+        said("user", results({"ok": True, "draft_sha256": "a"}), t[0]),
+        # turn 2: edit 2 (t[2]) stored with its result at t[3]
+        said("user", [text("Add a GST number")], t[3]),
+        said("system", "Draft state: {}", t[3]),
+        said("assistant", [tool_use("add_field", {})], t[3], used),
+        said("user", results({"ok": True, "change_id": 2, "summary": "Added: GST"}), t[3]),
+        said("assistant", [text("Done.")], t[3], used),
+    ]
+    changes = [
+        {"id": 1, "summary": "Added: Fire NOC upload", "at": t[1]},
+        {"id": 2, "summary": "Added: GST", "at": t[2]},
+    ]
+    read = loop.transcript(rows, changes).model_dump()
+    assert read["entries"] == [
+        {"kind": "owner", "text": FIRE_NOC},
+        {"kind": "agent", "text": "Adding the upload."},
+        {"kind": "change", "change_id": 1, "summary": "Added: Fire NOC upload"},
+        {"kind": "owner", "text": "Add a GST number"},
+        {"kind": "change", "change_id": 2, "summary": "Added: GST"},
+        {"kind": "agent", "text": "Done."},
+    ]
+    assert read["usage"] == dict.fromkeys(loop.USAGE, 3)
+    # stopped in the last turn: after everything stored
+    assert loop.transcript(rows[:4], changes[:1]).model_dump()["entries"][-1] == read["entries"][2]
+
+
 # --- integration: the pilot vault ---------------------------------------------------------------
 
 
@@ -871,6 +972,69 @@ def test_one_turn_at_a_time_per_conversation_and_others_run_meanwhile(
         "pilot", "select conversation_id::text, count(*) from app.agent_messages group by 1"
     )
     assert dict(stored) == {cid: 3, other: 3}
+
+
+@pytest.mark.integration
+def test_the_dock_lists_an_owners_conversations_and_reads_one_back(agent_vault: Clients) -> None:
+    api, auth, url = agent_api(agent_vault, Fake(*fire_noc()))
+    stranger = owner_token(uuid.uuid4())
+    with api:
+        older = api.post(url, headers=auth, json={"mode": "configure"}).json()
+        newer = api.post(url, headers=auth, json={"mode": "edit"}).json()
+        theirs = api.post(url, headers=stranger, json={"mode": "edit"}).json()
+        api.post(f"{url}/{newer['id']}/messages", headers=auth, json={"text": FIRE_NOC})
+        listed = [api.get(url, headers=h).json() for h in (auth, stranger)]
+        read = api.get(f"{url}/{newer['id']}", headers=auth)
+        hidden = api.get(f"{url}/{newer['id']}", headers=stranger)
+    assert listed == [[newer, older], [theirs]]  # each owner's own, newest first
+    changes = vault_sql(
+        "pilot",
+        "select id from app.draft_changes where conversation_id = %s order by id",
+        newer["id"],
+    )
+    entries = read.json()["entries"]
+    assert entries[0] == {"kind": "owner", "text": FIRE_NOC}
+    assert [(e["change_id"], e["summary"]) for e in entries if e["kind"] == "change"] == [
+        (changes[0][0], "Added: Fire NOC upload"),
+        (changes[1][0], "Approval of legal_licensing: legal L2"),
+    ]
+    assert read.json()["usage"]["output_tokens"] == 1200
+    assert hidden.status_code == 404 and hidden.json()["detail"] == loop.NO_CONVERSATION
+
+
+@pytest.mark.integration
+def test_the_edit_of_a_turn_stopped_mid_reply_reads_back_where_it_happened(
+    agent_vault: Clients,
+) -> None:
+    """The console going away stops a turn between its tool runs, so its reply and their results
+    aren't stored; the edit it made is in the change log and reads back in its place."""
+    api, auth, url = agent_api(agent_vault, Fake(reply(text("Anything else?"))))
+
+    async def stop(cid: uuid.UUID) -> None:
+        async with Stack(agent_vault) as stack:
+            ctx = await stack.ctx("pilot")
+            conversation = await loop.load(ctx, cid, agent_vault.owner)
+            events = loop.turn(Fake(*fire_noc()), ctx, agent_vault.owner, conversation, FIRE_NOC)
+            async for name, _ in events:
+                if name == "change":
+                    break
+            await events.aclose()  # stopped there, as a console gone away stops it
+
+    with api:
+        cid = api.post(url, headers=auth, json={"mode": "edit"}).json()["id"]
+        asyncio.run(stop(uuid.UUID(cid)))
+        api.post(f"{url}/{cid}/messages", headers=auth, json={"text": "Thanks"})
+        read = api.get(f"{url}/{cid}", headers=auth)
+    [(change,)] = vault_sql(
+        "pilot", "select id from app.draft_changes where conversation_id = %s", cid
+    )
+    assert read.json()["entries"] == [
+        {"kind": "owner", "text": FIRE_NOC},
+        {"kind": "agent", "text": "Adding the upload."},
+        {"kind": "change", "change_id": change, "summary": "Added: Fire NOC upload"},
+        {"kind": "owner", "text": "Thanks"},
+        {"kind": "agent", "text": "Anything else?"},
+    ]
 
 
 # --- live: the real API, by hand ----------------------------------------------------------------
