@@ -1,8 +1,9 @@
 """Owner dashboard (#47): per client, account counts, cases in progress per flow, the active
 release and the health of its Operaton and vault, cached for 60 s.
 
-Unit tests fake each client's vault and answer its Operaton with an httpx MockTransport; the
-`integration` test reads the pilot vault and engine of the local stack (scripts/dev-up.sh).
+Unit tests build each client from its registry row, faking only its vault engine and answering
+its Operaton with an httpx MockTransport; the `integration` test reads the pilot vault and engine
+of the local stack (scripts/dev-up.sh).
 """
 
 import argparse
@@ -17,14 +18,15 @@ from typing import Any
 
 import httpx
 import pytest
+import sqlalchemy
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
+from sqlalchemy.pool import NullPool
 
-from zm_api import clients, secrets
-from zm_api.context import ClientContext
-from zm_api.errors import ServiceUnavailable
+from zm_api import clients, context
+from zm_api.context import Resolver
 from zm_api.main import create_app
 from zm_api.operaton import OperatonClient
 from zm_api.registry import Client
@@ -91,16 +93,34 @@ class Db:
 
 
 @dataclass
+class VaultEngine:
+    """What `context.create_async_engine` hands out here: an engine on a client's fake vault."""
+
+    vault: Db
+    pool: dict[str, Any]
+    disposed: bool = False
+
+    def connect(self) -> Any:
+        return self.vault.connect()
+
+    async def dispose(self) -> None:
+        self.disposed = True
+
+
+@dataclass
 class Engine:
     """A client's Operaton: Operaton Run's /health beside /engine-rest, and instance counts."""
 
     counts: dict[str, int] = field(default_factory=dict)
     up: bool = True
     hang: bool = False
+    breaks: bool = False
     calls: list[str] = field(default_factory=list)
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(f"{request.url.path}?{request.url.query.decode()}")
+        if self.breaks:  # as httpx does on a closed client
+            raise RuntimeError("Cannot send a request, as the client has been closed.")
         if self.hang:
             await asyncio.sleep(5)
         if request.url.path == "/health":
@@ -110,29 +130,6 @@ class Engine:
             key = request.url.params["processDefinitionKey"]
             return httpx.Response(200, json={"count": self.counts[key]})
         return httpx.Response(503, json={"type": "Down", "message": "engine down"})
-
-
-class Resolver:
-    """Stands in for app.state.resolver: each ready client's fake vault and engine."""
-
-    def __init__(self, vaults: dict[str, Db], engines: dict[str, Engine]) -> None:
-        self.vaults = vaults
-        self.operaton = {
-            slug: OperatonClient(
-                f"http://operaton-{slug}.test:8080/engine-rest",
-                auth=("zm-service", "pw"),
-                client=slug,
-                transport=httpx.MockTransport(engine.handle),
-            )
-            for slug, engine in engines.items()
-        }
-
-    async def context(self, row: Client) -> ClientContext:
-        if row.status != "ready":  # as the real one
-            raise ServiceUnavailable("This workspace isn't available yet")
-        secrets.unseal(row.secrets or b"")
-        db: Any = self.vaults[row.slug]
-        return ClientContext(client=row, db=db, operaton=self.operaton[row.slug], bucket=None)
 
 
 def release(version: int, process_keys: dict[str, str]) -> dict[str, Any]:
@@ -161,6 +158,11 @@ class World:
     vaults: dict[str, Db]
     engines: dict[str, Engine]
     now: list[float]
+    resolver: Resolver
+    dbs: list[VaultEngine]
+    """Every vault engine opened, in order."""
+    operatons: list[OperatonClient]
+    """Every Operaton client opened, in order."""
 
     def overview(self) -> dict[str, dict[str, Any]]:
         response = self.api.get(URL, headers=bearer(token("owner", client=None)))
@@ -171,7 +173,8 @@ class World:
 @pytest.fixture
 def world(rows: dict[str, Client], monkeypatch: pytest.MonkeyPatch) -> World:
     """Matrix Retail (pilot-local) with 5 active, 1 invited and 1 deactivated users and v3
-    running two flows; qsr-local with its own; new-local still provisioning."""
+    running two flows; qsr-local with its own; new-local still provisioning. The Resolver keeps
+    one client, fewer than are ready."""
     rows = {
         **rows,
         "new-local": client_row("new-local", "", "new-db", "pw", status="provisioning"),
@@ -191,9 +194,59 @@ def world(rows: dict[str, Client], monkeypatch: pytest.MonkeyPatch) -> World:
     }
     now = [1000.0]
     monkeypatch.setattr(clients, "clock", lambda: now[0])
-    app = create_app(resolver=Resolver(vaults, engines))  # type: ignore[arg-type]
+    dbs: list[VaultEngine] = []
+    operatons: list[OperatonClient] = []
+
+    def create_async_engine(url: sqlalchemy.URL, **pool: Any) -> VaultEngine:
+        # conftest's DSN carries the slug in its password: `zm_api:db-<slug>@…`
+        dbs.append(VaultEngine(vaults[str(url.password).removeprefix("db-")], pool))
+        return dbs[-1]
+
+    def operaton_client(base_url: str, *, auth: tuple[str, str], client: str) -> OperatonClient:
+        transport = httpx.MockTransport(engines[client].handle)
+        operatons.append(OperatonClient(base_url, auth=auth, client=client, transport=transport))
+        return operatons[-1]
+
+    monkeypatch.setattr(context, "create_async_engine", create_async_engine)
+    monkeypatch.setattr(context, "OperatonClient", operaton_client)
+
+    async def lookup(slug: str) -> Client | None:
+        return rows.get(slug)
+
+    resolver = Resolver(lookup, max_clients=1)
+    app = create_app(resolver=resolver)
     app.state.platform = Db(clients=list(rows.values()))
-    return World(TestClient(app), rows, app.state.platform, vaults, engines, now)
+    return World(
+        TestClient(app), rows, app.state.platform, vaults, engines, now, resolver, dbs, operatons
+    )
+
+
+def test_probing_more_clients_than_the_resolver_keeps_leaves_its_clients_alone(
+    world: World,
+) -> None:
+    """A request is using pilot-local's context, the one the Resolver keeps, while the dashboard
+    probes pilot-local and qsr-local: each probe gets its own short-lived vault engine and
+    Operaton client, so the Resolver evicts and closes nothing."""
+    held = asyncio.run(world.resolver.context(world.rows["pilot-local"]))
+    world.overview()
+    assert asyncio.run(world.resolver.context(world.rows["pilot-local"])) is held
+    assert not held.operaton.http.is_closed and not held.db.disposed  # type: ignore[attr-defined]
+    dbs, operatons = world.dbs[1:], world.operatons[1:]  # the probes'
+    assert sorted(db.vault.users for db in dbs) == [(2, 0, 0), (5, 1, 1)]  # qsr, pilot
+    assert all(db.pool == {"poolclass": NullPool} for db in dbs)
+    assert sorted(op.client for op in operatons) == ["pilot-local", "qsr-local"]
+    assert all(db.disposed for db in dbs) and all(op.http.is_closed for op in operatons)
+
+
+def test_a_probe_that_breaks_unexpectedly_turns_only_that_client_red(world: World) -> None:
+    world.engines["pilot-local"].breaks = True
+    found = world.overview()
+    pilot, qsr = found["pilot-local"], found["qsr-local"]
+    assert pilot["health"]["operaton"] == {"up": False, "ms": None}
+    assert pilot["cases_in_progress"] is None
+    assert pilot["health"]["db"]["up"] is True
+    assert qsr["health"]["operaton"]["up"] is True
+    assert qsr["cases_in_progress"] == [{"flow": "qsr_launch", "count": 2}]
 
 
 def test_matrix_retail_shows_5_1_1_its_cases_per_flow_and_its_release(world: World) -> None:
@@ -256,9 +309,17 @@ def test_a_vault_down_turns_only_its_db_red(world: World) -> None:
     assert pilot["cases_in_progress"] is None  # its flows are in the vault
 
 
-def test_a_client_whose_secrets_dont_open_is_red_and_the_rest_answer(world: World) -> None:
-    """Sealed with another SECRETS_ENCRYPTION_KEY: neither its vault nor its engine is reachable."""
-    world.platform.clients[0] = replace(world.rows["pilot-local"], secrets=b"another key's")
+@pytest.mark.parametrize(
+    "change",
+    [{"secrets": b"another key's"}, {"secrets": None}, {"operaton_url": None}],
+    ids=["sealed-with-another-key", "no-secrets", "no-operaton-url"],
+)
+def test_a_client_whose_secrets_dont_open_is_red_and_the_rest_answer(
+    world: World, change: dict[str, Any]
+) -> None:
+    """Sealed with another SECRETS_ENCRYPTION_KEY, or ready without its secrets or Operaton URL:
+    neither its vault nor its engine is reachable."""
+    world.platform.clients[0] = replace(world.rows["pilot-local"], **change)
     found = world.overview()
     assert found["pilot-local"]["health"] == {
         "operaton": {"up": False, "ms": None},

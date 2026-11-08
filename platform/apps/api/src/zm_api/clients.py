@@ -8,6 +8,7 @@ console suggests one; after that it never changes. Publishing is `POST /owner/cl
 """
 
 import asyncio
+import logging
 import re
 import secrets
 import string
@@ -16,23 +17,16 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from cryptography.fernet import InvalidToken
 from fastapi import Request
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.pool import NullPool
 
 from zm_api import releases
-from zm_api.context import ClientContext, OwnerCtx, Resolver, owner_router
-from zm_api.errors import (
-    ApiError,
-    Conflict,
-    FieldError,
-    NotFound,
-    ServiceUnavailable,
-    UnprocessableContent,
-)
+from zm_api.context import ClientContext, OwnerCtx, open_context, owner_router
+from zm_api.errors import Conflict, FieldError, NotFound, UnprocessableContent
 from zm_api.registry import Client
 
 STEPS = (
@@ -52,6 +46,7 @@ Slug = Annotated[str, StringConstraints(pattern=r"^[a-z0-9](?:[a-z0-9-]{0,38}[a-
 WorkspaceCode = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9-]{2,63}$")]
 ClientStatus = Literal["new", "provisioning", "ready", "failed", "suspended"]
 StepStatus = Literal["pending", "running", "done", "failed", "needs_human"]
+_log = logging.getLogger("zm_api.clients")
 
 
 def slugify(name: str) -> str:
@@ -247,7 +242,10 @@ async def _vault(ctx: ClientContext) -> tuple[Probe, UserCounts | None, releases
             up = Probe(up=True, ms=_ms(start))
             users = UserCounts(**(await conn.execute(_USERS)).mappings().one())
             return up, users, await releases.active_release(conn)
-    except (SQLAlchemyError, OSError, TimeoutError):
+    except Exception:  # down, too slow, or anything else: only this client's dot turns red
+        _log.warning(
+            "dashboard: vault probe failed", extra={"client": ctx.client.slug}, exc_info=True
+        )
         return Probe(up=False, ms=None), None, None
 
 
@@ -267,23 +265,32 @@ async def _engine(
                 FlowCases(flow=flow, count=await ctx.operaton.count_instances(key))
                 for flow, key in flows.items()
             ]
-    except (ApiError, TimeoutError):  # OperatonError, or NotFound with /health turned off
+    except Exception:  # OperatonError, NotFound with /health turned off, too slow, or anything else
+        _log.warning(
+            "dashboard: engine probe failed", extra={"client": ctx.client.slug}, exc_info=True
+        )
         return Probe(up=False, ms=None), None
 
 
-async def _overview(resolver: Resolver, row: Client) -> ClientOverview:
+async def _overview(row: Client) -> ClientOverview:
     out = ClientOverview(id=row.id, slug=row.slug, status=row.status)
-    try:
-        ctx = await resolver.context(row)
-    except ServiceUnavailable:  # not ready: nothing to probe yet
+    if row.status != "ready":  # nothing to probe yet
         return out
-    except InvalidToken:  # its secrets don't open with this SECRETS_ENCRYPTION_KEY: unreachable
+    try:
+        # its own vault engine and Operaton client, not the Resolver's: with more clients ready
+        # than the Resolver keeps, it would close the ones other requests are using
+        ctx = open_context(row, poolclass=NullPool)
+    except Exception:  # no secrets or Operaton URL, or sealed with another key: unreachable
+        _log.warning("dashboard: can't open the client", extra={"client": row.slug}, exc_info=True)
         down = Probe(up=False, ms=None)
         out.health = Health(operaton=down, db=down)
         return out
-    db, out.users, active = await _vault(ctx)
-    flows = None if not db.up else active.process_keys if active else {}
-    operaton, out.cases_in_progress = await _engine(ctx, flows)
+    try:
+        db, out.users, active = await _vault(ctx)
+        flows = None if not db.up else active.process_keys if active else {}
+        operaton, out.cases_in_progress = await _engine(ctx, flows)
+    finally:
+        await ctx.aclose()
     out.health = Health(operaton=operaton, db=db)
     if active:
         out.last_release = LastRelease(version=active.version, published_at=active.published_at)
@@ -331,10 +338,8 @@ async def clients_overview(request: Request) -> list[ClientOverview]:
     async with _platform(request).connect() as conn:
         rows = await conn.execute(text("select * from platform.clients order by created_at desc"))
         found = [Client(**r) for r in rows.mappings()]
-    # ponytail: this opens every ready client's resources; past Resolver's max_clients (32) the
-    # dashboard would churn them, so probe with short-lived ones then
-    resolver = request.app.state.resolver
-    out = list(await asyncio.gather(*(_overview(resolver, row) for row in found)))
+    # each probe opens its own vault connection: about one per client a minute per API process
+    out = list(await asyncio.gather(*(_overview(row) for row in found)))
     request.app.state.overview = (now, out)
     return out
 

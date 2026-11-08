@@ -171,7 +171,7 @@ Running cases keep their version: `release_for_task()` resolves a task's forms t
 - the provisioning status;
 - once the client is ready: its users by status (`app.users`), cases in progress per flow of the active release (Operaton `GET /process-instance/count?processDefinitionKey=<main process>`), the active release's version and time, and its health: Operaton Run's `GET /health` beside `/engine-rest` and `select 1` on the vault, each with its time in ms.
 
-Every client is probed at once, the vault and then the engine each within 3 s, so a client that is down turns only its own card red. The answer is kept 60 s per API process, and the console's cards on the clients list refetch it every 15 s.
+Every client is probed at once, the vault and then the engine each within 3 s, with its own short-lived vault connection and Operaton client, so the resolver's cached ones are never evicted under other requests. Any error while opening or probing, a client that is down, or a ready client without its secrets or Operaton URL turns only its own card red and is logged as a warning under `zm_api.clients`. The answer is kept 60 s per API process, so the probes cost about one extra connection per client a minute, and the console's cards on the clients list refetch it every 15 s.
 
 ## Cases and tasks (#26)
 The client app works cases and tasks through `/app` (a client user's token; `zm_api.tasks`):
