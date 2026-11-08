@@ -26,6 +26,7 @@ from alembic.config import Config
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
+from zm_api import cases
 from zm_api.main import create_app
 from zm_api.operaton import OperatonClient
 from zm_api.publish import publish
@@ -300,6 +301,26 @@ def test_a_case_closed_in_legal(world: World) -> None:
     assert rows(world, status="completed") == {}
     assert world.codes["C"] not in rows(world, status="open")
     assert len(rows(world, flow="store_launch")) == 3 and rows(world, flow="nope") == {}
+
+
+def test_past_the_cap_the_list_says_it_is_cut_off(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """More cases than MAX_CASES: the newest ones and `X-Truncated: true`, with or without
+    `?status=`, so kpi_strip's counts never fall short silently."""
+
+    def listed(**params: Any) -> tuple[list[str], str | None]:
+        r = world.http.get("/app/cases", params=params, headers=world.auth("bd1"))
+        assert r.status_code == 200, r.text
+        return [c["code"] for c in r.json()], r.headers.get("x-truncated")
+
+    a, b, c = (world.codes[k] for k in "ABC")
+    assert listed() == ([c, b, a], None)
+    monkeypatch.setattr(cases, "MAX_CASES", 2)
+    assert listed() == ([c, b], "true")
+    assert listed(status="open") == ([b, a], None)
+    monkeypatch.setattr(cases, "MAX_CASES", 1)
+    assert listed(status="open") == ([b], "true")
 
 
 def test_hidden_sections_are_masked_in_both_endpoints(world: World) -> None:

@@ -243,9 +243,10 @@ async def list_cases(
     user_id: UUID,
     flow: str | None = None,
     status: CaseStatus | None = None,
-) -> list[CaseRow]:
-    """Cases, newest first: stages, start values (masked by level) and task counts. `?status=`
-    is applied before the 500-row cap, from the same single history request."""
+) -> tuple[list[CaseRow], bool]:
+    """Cases, newest first: stages, start values (masked by level) and task counts, and whether
+    more matched than the 500-row cap. `?status=` is applied before the cap, from the same single
+    history request."""
     async with ctx.db.connect() as conn:
         me = await tasks.person(conn, user_id)
         rows = (
@@ -256,7 +257,7 @@ async def list_cases(
                         " or flow_key = :f) order by created_at desc, code desc"
                         + ("" if status else " limit :n")
                     ),
-                    {"f": flow, "n": MAX_CASES},
+                    {"f": flow, "n": MAX_CASES + 1},  # one more tells a cut-off list
                 )
             )
             .mappings()
@@ -267,7 +268,7 @@ async def list_cases(
         workflows = await tasks._workflows(conn, versions)
         start_forms = await _start_forms(conn, versions)
     if not cases:
-        return []
+        return [], False
     names = {"case_status"} | {
         f"m_{s['key']}" for wf in workflows.values() for fl in wf["flows"] for s in fl["stages"]
     }
@@ -282,6 +283,7 @@ async def list_cases(
             )
         if status is None or case_status(variables) == status:
             picked.append(c)
+    truncated = len(picked) > MAX_CASES
     picked = picked[:MAX_CASES]
     async with ctx.db.connect() as conn:
         values = await _start_values(conn, [c.id for c in picked])
@@ -321,7 +323,7 @@ async def list_cases(
                 release_version=c.release_version,
             )
         )
-    return out
+    return out, truncated
 
 
 async def _start_forms(

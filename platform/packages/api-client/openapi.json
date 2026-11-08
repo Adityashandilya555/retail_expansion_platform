@@ -3252,7 +3252,12 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Truncated": {
+                "description": "`true`: more than 500 matched."
+              }
+            }
           },
           "default": {
             "content": {

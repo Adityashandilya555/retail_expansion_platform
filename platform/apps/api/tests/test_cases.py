@@ -229,6 +229,22 @@ def test_routes_need_a_client_token(rows: dict[str, Client]) -> None:
         assert http.get("/app/cases/MX-0001", headers=owner).status_code == 403
 
 
+def test_a_cut_off_list_says_so_in_a_header_the_browser_can_read(
+    rows: dict[str, Client], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def capped(*_: Any) -> tuple[list[cases.CaseRow], bool]:
+        return [], True
+
+    web = "https://zm-web.test"
+    monkeypatch.setattr(cases, "list_cases", capped)
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", web)
+    with TestClient(create_app(Resolver(FakeRegistry(rows)))) as http:
+        r = http.get("/app/cases", headers={**bearer(token()), "Origin": web})
+    assert r.status_code == 200 and r.json() == []
+    assert r.headers["x-truncated"] == "true"
+    assert "x-truncated" in r.headers["access-control-expose-headers"].lower()
+
+
 @respx.mock
 def test_the_history_calls() -> None:
     asyncio.run(_history_calls())

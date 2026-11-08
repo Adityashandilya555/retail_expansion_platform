@@ -2169,6 +2169,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description `true`: more than 500 matched. */
+                    "X-Truncated"?: unknown;
                     [name: string]: unknown;
                 };
                 content: {

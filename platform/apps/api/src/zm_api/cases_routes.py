@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
+from fastapi import Response
 from pydantic import BaseModel, ConfigDict
 
 from zm_api import cases
@@ -108,15 +109,24 @@ def _row(row: cases.CaseRow) -> dict[str, Any]:
     return {**row.__dict__, "stages": [s.__dict__ for s in row.stages]}
 
 
-@routes.get("/cases")
+@routes.get(
+    "/cases",
+    responses={
+        200: {"headers": {"X-Truncated": {"description": "`true`: more than 500 matched."}}}
+    },
+)
 async def list_cases(
     ctx: ClientCtx,
     uid: UserId,
+    response: Response,
     flow: str | None = None,
     status: Literal["open", "completed", "closed"] | None = None,
 ) -> list[CaseRow]:
     """Every case of the client (newest first, up to 500) with its stage states."""
-    return [CaseRow(**_row(r)) for r in await cases.list_cases(ctx, uid, flow, status)]
+    found, truncated = await cases.list_cases(ctx, uid, flow, status)
+    if truncated:
+        response.headers["X-Truncated"] = "true"
+    return [CaseRow(**_row(r)) for r in found]
 
 
 @routes.get("/cases/{code}")
