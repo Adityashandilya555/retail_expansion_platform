@@ -55,7 +55,8 @@ function Line({ entry, onOpen }: { entry: Entry; onOpen: (changeId: number) => v
   }
 }
 
-export function Dock({ clientId }: { clientId: string }) {
+/** `onTurn` hears when a turn starts and ends, so the client page's own Publish can wait for it. */
+export function Dock({ clientId, onTurn }: { clientId: string; onTurn?: (turning: boolean) => void }) {
   const queries = useQueryClient();
   const path = { params: { path: { client_id: clientId } } };
   const conversations = useQuery({
@@ -76,7 +77,7 @@ export function Dock({ clientId }: { clientId: string }) {
   const [busy, setBusy] = useState(false);
   const [shown, setShown] = useState<number | null>(null); // the change whose patch is open
   const [confirming, setConfirming] = useState(false);
-  const ids = { preview: useId(), invalid: useId() };
+  const ids = { preview: useId(), invalid: useId(), turning: useId() };
 
   const add = (entry: Entry) => setChat((c) => ({ ...c, open: false, entries: [...c.entries, entry] }));
   const refresh = () => Promise.all(["changes", "validate", "draft"].map((key) => queries.invalidateQueries({ queryKey: [key, clientId] })));
@@ -105,6 +106,7 @@ export function Dock({ clientId }: { clientId: string }) {
     const text = said.trim();
     if (!text || running !== null) return;
     setRunning("");
+    onTurn?.(true);
     let id = current;
     try {
       if (!id) {
@@ -140,6 +142,7 @@ export function Dock({ clientId }: { clientId: string }) {
       }
     } finally {
       setRunning(null);
+      onTurn?.(false);
       void refresh();
     }
   }
@@ -212,7 +215,7 @@ export function Dock({ clientId }: { clientId: string }) {
           <Button variant="default" disabled aria-describedby={ids.preview}>
             Preview
           </Button>
-          <Button disabled={turning || !problems.data || problems.data.length > 0} aria-describedby={first && ids.invalid} onClick={() => setConfirming(true)}>
+          <Button disabled={turning || !problems.data || problems.data.length > 0} aria-describedby={turning ? ids.turning : first && ids.invalid} onClick={() => setConfirming(true)}>
             Publish
           </Button>
         </Group>
@@ -220,6 +223,11 @@ export function Dock({ clientId }: { clientId: string }) {
       <Text id={ids.preview} size="sm">
         Preview comes with #42.
       </Text>
+      {turning && (
+        <Text id={ids.turning} size="sm">
+          Publish waits until the agent's turn ends.
+        </Text>
+      )}
       {first && (
         <Text id={ids.invalid} size="sm">
           The draft can't be published yet: <Code>{first.path}</Code> {first.message}

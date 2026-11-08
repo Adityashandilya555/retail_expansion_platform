@@ -17,7 +17,7 @@ import {
   StatusPill,
   type StatusTone,
 } from "@zm/ui";
-import { useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Dock } from "./agent/Dock";
 import { api, must } from "./session";
@@ -276,6 +276,11 @@ export function ClientPage() {
   });
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  // the dock's turn: each edit commits as it is made, so a publish meanwhile would take a half-done draft.
+  // ponytail: this page's own turn only; one in another tab, or another owner's, can still be published
+  // mid-way. A client-wide lock that turns share and publish takes would close that.
+  const [turning, setTurning] = useState(false);
+  const waiting = useId();
 
   if (client.isPending) return null;
   if (!client.data) {
@@ -381,8 +386,15 @@ export function ClientPage() {
                   <Title order={2} size="h3">
                     Releases
                   </Title>
-                  <Button onClick={() => setConfirming(true)}>Publish draft as v{next}</Button>
+                  <Button disabled={turning} aria-describedby={turning ? waiting : undefined} onClick={() => setConfirming(true)}>
+                    Publish draft as v{next}
+                  </Button>
                 </Group>
+                {turning && (
+                  <Text id={waiting} size="sm">
+                    The agent is changing the draft in Configure. Publish once its turn ends.
+                  </Text>
+                )}
                 <DataTable<ReleaseOut>
                   caption="Releases"
                   rows={c.releases}
@@ -400,7 +412,7 @@ export function ClientPage() {
         </Tabs.Panel>
         {/* the agent dock (#41); kept mounted, so a conversation survives a look at the overview */}
         <Tabs.Panel value="configure" pt="lg">
-          {c.status === "ready" && <Dock clientId={id} />}
+          {c.status === "ready" && <Dock clientId={id} onTurn={setTurning} />}
         </Tabs.Panel>
       </Tabs>
 

@@ -327,7 +327,8 @@ test.each(["light", "dark"] as const)("the dock passes axe in %s", async (scheme
   await expectNoAxeViolations();
 });
 
-test("the client page's Configure tab opens the dock", async () => {
+/** The console on a ready client's page, its API as `dockApi` plus `routes`. */
+function renderClientPage(routes: Record<string, Handler> = {}) {
   const steps = ["supabase_project", "seed_draft"].map((step, i) => ({ step, seq: i + 1, status: "done", attempts: 0, last_error: null, updated_at: AT }));
   dockApi({
     "POST /owner/auth/refresh": () => json({ access_token: "o1", token_type: "bearer", expires_in: 900 }),
@@ -335,16 +336,48 @@ test("the client page's Configure tab opens the dock", async () => {
     [`GET ${CLIENT}`]: () =>
       json({ id: ID, slug: "matrix-retail", name: "Matrix Retail", workspace_code: "MR-1", template_key: "matrix-retail", status: "ready", created_at: AT, last_release: null, steps, releases: [] }),
     [`GET ${CLIENT}/draft`]: () => json({ workflow: { schema_version: 1, apps: { theme: "quartz" } }, template_key: "matrix-retail", base_version: null, updated_at: AT, updated_by: null }),
+    ...routes,
   });
   render(
     <MemoryRouter initialEntries={[`/clients/${ID}`]}>
       <ConsoleApp />
     </MemoryRouter>,
   );
-  const user = userEvent.setup();
+  return userEvent.setup();
+}
+
+const reason = (button: HTMLElement) => document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent;
+
+test("the client page's Configure tab opens the dock", async () => {
+  const user = renderClientPage();
   await user.click(await screen.findByRole("tab", { name: "Configure" }));
   expect(await screen.findByLabelText("Message")).toBeDefined();
   expect(screen.getByRole("button", { name: "Publish" })).toBeDefined();
   await user.click(screen.getByRole("tab", { name: "Overview" }));
   expect(await screen.findByRole("table", { name: "Provisioning" })).toBeDefined();
+});
+
+test("while a turn runs, both Publish buttons wait for it, and it goes on with the Overview showing", async () => {
+  const turn = sse();
+  const user = renderClientPage({ [`POST ${AGENT}/${CID}/messages`]: () => turn.response() });
+  await user.click(await screen.findByRole("tab", { name: "Configure" }));
+  await say(user, "Add a Fire NOC upload");
+  turn.send("tool_call", { name: "add_document_slot" });
+  await screen.findByText("Running add_document_slot…");
+  const docked = screen.getByRole("button", { name: "Publish" });
+  expect(docked.hasAttribute("disabled")).toBe(true);
+  expect(reason(docked)).toBe("Publish waits until the agent's turn ends.");
+
+  await user.click(screen.getByRole("tab", { name: "Overview" }));
+  const publish = await screen.findByRole("button", { name: "Publish draft as v1" });
+  expect(publish.hasAttribute("disabled")).toBe(true);
+  expect(reason(publish)).toBe("The agent is changing the draft in Configure. Publish once its turn ends.");
+  turn.send("change", { change_id: 1, summary: NOC });
+  turn.send("done", { usage: USAGE });
+  turn.end();
+  await waitFor(() => expect(publish.hasAttribute("disabled")).toBe(false));
+
+  await user.click(screen.getByRole("tab", { name: "Configure" }));
+  expect(await log().findByRole("button", { name: NOC })).toBeDefined(); // the dock kept the turn
+  await waitFor(() => expect(screen.getByRole("button", { name: "Publish" }).hasAttribute("disabled")).toBe(false));
 });
