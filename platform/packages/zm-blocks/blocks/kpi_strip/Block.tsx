@@ -12,8 +12,8 @@ type Props = { flow?: string; tiles: Tile[] };
 export function KpiStrip({ props, ui }: BlockProps) {
   const { flow: flowKey, tiles } = props as Props;
   const flow = flowOf(ui, flowKey);
-  // ponytail: counted in the browser from GET /app/cases, the request case_table makes anyway; fine
-  // up to about 1–2k cases, then server-side counts with #55
+  // ponytail: counted in the browser from GET /app/cases, the request case_table makes anyway. It
+  // sends the newest 500, so past that a tile shows "N+" (at least N); exact counts with #55
   const cases = useCases(flow?.key);
   const [params, setParams] = useSearchParams();
   if (!flow) throw new Error("the release has no flow");
@@ -57,7 +57,8 @@ export function KpiStrip({ props, ui }: BlockProps) {
                 {label(t)}
               </Text>
               <Text span display="block" fz="h2" fw={650}>
-                <Num value={cases.data?.filter((c) => inTile(t, c, flow)).length} />
+                <Num value={cases.data?.rows.filter((c) => inTile(t, c, flow)).length} />
+                {cases.data?.truncated && "+"}
               </Text>
             </Paper>
           </UnstyledButton>

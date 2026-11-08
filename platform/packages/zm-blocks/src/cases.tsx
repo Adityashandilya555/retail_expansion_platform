@@ -41,7 +41,8 @@ export function display(value: unknown): string {
   return String(value);
 }
 
-/** A flow's cases (`GET /app/cases`): case_table and kpi_strip on one page share this request. */
+/** A flow's cases (`GET /app/cases`): case_table and kpi_strip on one page share this request.
+ * `truncated`: more matched than the newest 500 the API sends, so counts over `rows` are minimums. */
 export function useCases(flow: string | undefined) {
   const api = useBlocksApi();
   return useQuery({
@@ -49,7 +50,7 @@ export function useCases(flow: string | undefined) {
     queryFn: async () => {
       const { data, response } = await api.GET("/app/cases", { params: { query: { flow } } });
       if (!data) throw new Error(`GET /app/cases answered ${response.status}`);
-      return data;
+      return { rows: data, truncated: response.headers.get("X-Truncated") === "true" };
     },
   });
 }

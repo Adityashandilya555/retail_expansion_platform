@@ -89,6 +89,14 @@ test("sla_days 5 on Legal: a case 6 days in Legal counts as overdue", async () =
   expect(codes()).toEqual(["MX-0001"]);
 });
 
+test("past the API's cap the tiles say at least N, and the table says it shows the newest", async () => {
+  const capped = () => Response.json(sampleCases, { headers: { "X-Truncated": "true" } });
+  drawPage(legalPage(LEGAL), { path: "/app/legal", routes: { "GET /app/cases": capped } });
+  await shows("1+", /^In Legal/);
+  expect(tile(/^Awaiting me/).textContent).toContain("1+");
+  expect(screen.getByText("Showing the newest 3 sites.")).toBeTruthy();
+});
+
 test("in_stage needs its stage, and a strip has 2 to 4 tiles", () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   drawPage(stripOnly([{ kind: "in_stage" }]));

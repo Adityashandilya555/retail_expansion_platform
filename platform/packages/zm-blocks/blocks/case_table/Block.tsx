@@ -32,7 +32,7 @@ export function CaseTable({ props, ui }: BlockProps) {
   const picked = params.getAll("stage");
   const tile = tileOf(params.get("kpi"));
   const term = search.trim().toLowerCase();
-  const rows = (cases.data ?? []).filter((c) => {
+  const rows = (cases.data?.rows ?? []).filter((c) => {
     const at = currentStage(c.stages)?.key ?? "";
     return (
       (tile ? inTile(tile, c, flow) : (!only || only.includes(at)) && (picked.length === 0 || picked.includes(at))) &&
@@ -131,6 +131,11 @@ export function CaseTable({ props, ui }: BlockProps) {
         onRetry={() => void cases.refetch()}
         emptyText={`No ${plural} yet`}
       />
+      {cases.data?.truncated && (
+        <Text size="xs" c="dimmed">
+          {`Showing the newest ${cases.data.rows.length} ${plural}.`}
+        </Text>
+      )}
     </Stack>
   );
 }
