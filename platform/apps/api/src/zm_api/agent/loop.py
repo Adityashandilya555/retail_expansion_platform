@@ -15,9 +15,9 @@ History lives in the client's vault, insert-only (0009): replies go back unchang
 blocks too, since Opus 5.5 checks that earlier turns weren't edited. A reply is stored with the
 messages it answers and, when it called tools, with their results, so the stored history always
 replays. A call that stops (refusal, max_tokens), answers nothing or doesn't finish (an unreadable
-reply asked again, an API error, the console going away) keeps only its usage (with why it
-stopped, if it did), and the rest of its turn is dropped. The console lists an owner's
-conversations and reads one back as its dock shows it (#41). The budget,
+reply asked again, an API error, the console going away, mid-reply or while its tools run) keeps
+only its usage (with why it stopped, if it did), and the rest of its turn is dropped. The console
+lists an owner's conversations and reads one back as its dock shows it (#41). The budget,
 AGENT_MAX_TOKENS_PER_CONVERSATION, counts what each call read fresh or wrote (input, cache
 writes, output; cache reads, at a twentieth of the price, don't).
 `count_tokens` sizes each call first, and a call that could pass the budget if none of it were
@@ -389,11 +389,7 @@ async def turn(
                             if started
                             else dict.fromkeys(USAGE, 0) | {"input_tokens": counted}
                         )
-                        # a console gone mid-stream cancels the turn (or closes it): store anyway
-                        with anyio.CancelScope(shield=True):
-                            await save(
-                                [{"role": "assistant", "content": None, "usage": tally(cut)}]
-                            )
+                        unsaved.append({"role": "assistant", "content": None, "usage": tally(cut)})
             if reply is None:
                 yield "error", {"message": "The model's replies couldn't be read. Try again."}
                 break
@@ -421,6 +417,7 @@ async def turn(
             uses = [b for b in content if b["type"] == "tool_use"]
             if not uses:
                 await save(unsaved)
+                unsaved = []
                 break
             results, ours, latest = [], set(), None
             for block in uses:
@@ -451,6 +448,15 @@ async def turn(
     except Exception:  # the vault, say: the stream still ends with an error and done
         log.exception("agent turn failed", extra={"client": ctx.client.slug})
         yield "error", {"message": FAILED}
+    finally:
+        # each call the turn didn't store keeps its usage alone (a reply can't replay without its
+        # tool results), also when the console going away cancels the turn or closes it
+        if left := [{**r, "content": None} for r in unsaved if r.get("usage")]:
+            try:
+                with anyio.CancelScope(shield=True):
+                    await save(left)
+            except Exception:  # the stream still ends with done
+                log.exception("agent usage not stored", extra={"client": ctx.client.slug})
     yield "done", {"usage": total}
 
 

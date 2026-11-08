@@ -565,13 +565,13 @@ def test_a_call_that_doesnt_finish_still_counts_and_a_retry_drops_its_text(
         ("text_delta", {"text": "Hi."}),
     ]
     assert names(run(fake, held, cid, "Hi again")) == ["error", "done"]  # the API is down
-    # each call is stored with its usage, content None for one that didn't finish: as streamed
-    # until the reply couldn't be read, or as counted when nothing came back
+    # each call is stored with its usage, in order, content None for one that didn't finish: as
+    # streamed until the reply couldn't be read, or as counted when nothing came back
     rows = chats[cid]["rows"]
     assert [(r["role"], r["content"] is None) for r in rows] == [
-        ("assistant", True),
         ("user", False),
         ("system", False),
+        ("assistant", True),
         ("assistant", False),
         ("assistant", True),
     ]
@@ -605,6 +605,42 @@ def test_a_call_the_console_leaves_mid_stream_still_keeps_its_usage(
         assert [(r["content"], r["usage"]["output_tokens"]) for r in chats[cid]["rows"]] == [
             (None, 300)
         ]
+
+
+def test_a_reply_the_console_leaves_between_its_tool_runs_still_keeps_its_usage(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gone while a reply's tools run (cancelled or closed), the turn can't store the reply (each
+    tool call needs its result to replay), but its usage is: the read-back and the next turn's
+    budget count it."""
+    # room for a whole reply (MAX_TOKENS) and 3000 more: one call of 2000, but not after 1500 used
+    monkeypatch.setenv("AGENT_MAX_TOKENS_PER_CONVERSATION", str(loop.MAX_TOKENS + 3000))
+    reads = reply(tool_use("get_overview", {}), tool_use("get_overview", {}), stop="tool_use")
+    fake, cancelled, closed = Fake(reads, reads), new(chats), new(chats)
+
+    async def go() -> list[loop.Transcript]:
+        conversation = await loop.load(held.ctx, cancelled, OWNER)
+        with anyio.CancelScope() as scope:
+            async for name, _ in loop.turn(fake, held.ctx, OWNER, conversation, "Hi"):
+                if name == "tool_call":
+                    scope.cancel()
+        conversation = await loop.load(held.ctx, closed, OWNER)
+        stream = loop.turn(fake, held.ctx, OWNER, conversation, "Hi")
+        assert [await anext(stream), await anext(stream)] == [
+            ("tool_call", {"name": "get_overview"})
+        ] * 2
+        await stream.aclose()  # between the two tool runs
+        client = uuid.uuid4()
+        return [await loop.get_conversation(client, c, held.ctx, ME) for c in (cancelled, closed)]
+
+    for cid, read in zip((cancelled, closed), asyncio.run(go()), strict=True):
+        assert [(r["role"], r["content"]) for r in chats[cid]["rows"]] == [("assistant", None)]
+        assert (read.usage.input_tokens, read.usage.output_tokens) == (1200, 300)
+        again = run(fake, held, cid, "Go on")
+        assert again == [("error", {"message": loop.OVER_BUDGET}), ("done", again[-1][1])]
+    assert len(fake.requests) == 2  # no call past the budget
 
 
 def test_an_api_error_says_whether_sending_again_can_help(
@@ -1007,7 +1043,8 @@ def test_the_edit_of_a_turn_stopped_mid_reply_reads_back_where_it_happened(
     agent_vault: Clients,
 ) -> None:
     """The console going away stops a turn between its tool runs, so its reply and their results
-    aren't stored; the edit it made is in the change log and reads back in its place."""
+    aren't stored (only its usage); the edit it made is in the change log and reads back in its
+    place."""
     api, auth, url = agent_api(agent_vault, Fake(reply(text("Anything else?"))))
 
     async def stop(cid: uuid.UUID) -> None:
@@ -1035,6 +1072,7 @@ def test_the_edit_of_a_turn_stopped_mid_reply_reads_back_where_it_happened(
         {"kind": "owner", "text": "Thanks"},
         {"kind": "agent", "text": "Anything else?"},
     ]
+    assert read.json()["usage"]["output_tokens"] == 900  # the stopped turn's two replies, and one
 
 
 # --- live: the real API, by hand ----------------------------------------------------------------
