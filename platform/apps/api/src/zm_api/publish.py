@@ -32,6 +32,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from zm_api import releases, versioning
+from zm_api.clients import forget_overview
 from zm_api.context import ClientContext, OwnerCtx, owner_router
 from zm_api.errors import (
     Conflict,
@@ -222,4 +223,5 @@ async def publish_client(client_id: UUID, owner: OwnerCtx, request: Request) -> 
         raise NotFound("No such client")
     ctx = await request.app.state.resolver.context(row)
     result = await publish(ctx, platform, owner.owner_id)
+    forget_overview(request)  # the dashboard shows the new release
     return PublishOut(**result.__dict__)

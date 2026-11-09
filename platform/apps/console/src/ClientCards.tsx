@@ -12,7 +12,8 @@ type ClientOut = components["schemas"]["ClientOut"];
 type ClientOverview = components["schemas"]["ClientOverview"];
 type Probe = components["schemas"]["Probe"];
 
-/** The API keeps its answer 60 s, so health is at most 60 s plus this old. */
+/** Keep equal to CONSOLE_POLL in apps/api/src/zm_api/clients.py: the API keeps its answer 30 s
+ * and a probe takes at most 9 s, so a down engine is red here within 30 + 15 + 9 = 54 s (#47). */
 const POLL_MS = 15_000;
 
 function Health({ label, probe }: { label: string; probe: Probe }) {
@@ -100,6 +101,15 @@ export function ClientCards({ clients }: { clients: ClientOut[] }) {
   const names = new Map(clients.map((c) => [c.id, c.name]));
   return (
     <Box mb="xl">
+      {overview.isError && overview.data && (
+        <Box mb="md">
+          <Notice tone="warning" title={`Couldn't refresh — showing data from ${new Date(overview.dataUpdatedAt).toLocaleTimeString()}.`}>
+            <Button mt="sm" variant="default" onClick={() => void overview.refetch()}>
+              Retry
+            </Button>
+          </Notice>
+        </Box>
+      )}
       {overview.data ? (
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
           {overview.data.map((c) => (

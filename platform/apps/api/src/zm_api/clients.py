@@ -13,6 +13,8 @@ import re
 import secrets
 import string
 import time
+from contextlib import AsyncExitStack, suppress
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -216,10 +218,24 @@ _TAKEN = {
 
 # --- the owner dashboard (#47) ---------------------------------------------------------------
 
-OVERVIEW_TTL = 60.0
-"""Seconds the dashboard's answer is reused: a down engine turns red within this."""
 PROBE_TIMEOUT = 3.0
-"""Seconds a client's vault, then its engine, get to answer."""
+"""Seconds a client's vault (`select 1`) and its engine (`/health`) each get to answer; they are
+probed at once. Only these two decide its dots."""
+QUERY_TIMEOUT = 3.0
+"""Seconds the follow-up reads get: the vault's user counts and active release, then the engine's
+running cases per flow. Too slow or failing, they show as null while the dots stay green."""
+PROBE_WORST = PROBE_TIMEOUT + 2 * QUERY_TIMEOUT
+"""Longest a client's probe can take: vault `select 1` then its reads (the engine's /health runs
+beside them), then the engine's counts."""
+OVERVIEW_TTL = 30.0
+"""Seconds the dashboard's answer is reused, counted from when its probe started."""
+CONSOLE_POLL = 15.0
+"""The console's poll (POLL_MS in apps/console/src/ClientCards.tsx; a test keeps them equal).
+
+Red within 60 s (#47): an engine that dies just after a probe is seen by the first probe started
+after the answer expires (OVERVIEW_TTL), which the console asks for within one poll
+(CONSOLE_POLL), and that answer arrives within PROBE_WORST: 30 + 15 + 9 = 54 s <= 60 s."""
+RED_WITHIN = 60.0
 clock = time.monotonic  # tests move it
 
 _USERS = text(
@@ -227,49 +243,78 @@ _USERS = text(
     " count(*) filter (where status = 'invited') as invited,"
     " count(*) filter (where status = 'deactivated') as deactivated from app.users"
 )
+_DOWN = Probe(up=False, ms=None)
 
 
 def _ms(start: float) -> float:
     return round((time.perf_counter() - start) * 1000, 1)
 
 
-async def _vault(ctx: ClientContext) -> tuple[Probe, UserCounts | None, releases.ReleaseRow | None]:
-    """`select 1`, then the user counts and the active release."""
-    start = time.perf_counter()
+@dataclass
+class _Vault:
+    probe: Probe = field(default_factory=lambda: _DOWN)
+    users: UserCounts | None = None
+    active: releases.ReleaseRow | None = None
+    flows: dict[str, str] | None = None
+    """Flow key → its main process key in the active release; None when they couldn't be read."""
+
+
+async def _vault(ctx: ClientContext) -> _Vault:
+    """`select 1` within PROBE_TIMEOUT, then the user counts and the active release within
+    QUERY_TIMEOUT: when only those fail, the vault is still up."""
+    out, start = _Vault(), time.perf_counter()
     try:
-        async with asyncio.timeout(PROBE_TIMEOUT), ctx.db.connect() as conn:
-            await conn.execute(text("select 1"))
-            up = Probe(up=True, ms=_ms(start))
-            users = UserCounts(**(await conn.execute(_USERS)).mappings().one())
-            return up, users, await releases.active_release(conn)
-    except Exception:  # down, too slow, or anything else: only this client's dot turns red
+        async with AsyncExitStack() as stack:
+            async with asyncio.timeout(PROBE_TIMEOUT):
+                conn = await stack.enter_async_context(ctx.db.connect())
+                await conn.execute(text("select 1"))
+            out.probe = Probe(up=True, ms=_ms(start))
+            async with asyncio.timeout(QUERY_TIMEOUT):
+                users = UserCounts(**(await conn.execute(_USERS)).mappings().one())
+                active = await releases.active_release(conn)
+            out.users, out.active = users, active
+            out.flows = active.process_keys if active else {}
+    except Exception:  # down, too slow, or anything else: only this client is affected
+        what = "reads" if out.probe.up else "probe"
         _log.warning(
-            "dashboard: vault probe failed", extra={"client": ctx.client.slug}, exc_info=True
+            f"dashboard: vault {what} failed", extra={"client": ctx.client.slug}, exc_info=True
         )
-        return Probe(up=False, ms=None), None, None
+    return out
 
 
-async def _engine(
-    ctx: ClientContext, flows: dict[str, str] | None
-) -> tuple[Probe, list[FlowCases] | None]:
-    """Operaton's /health, then the running instances of each flow's main process (`flows`: flow
-    key → process key; None when the vault didn't answer)."""
+async def _engine(ctx: ClientContext) -> Probe:
+    """Operaton Run's /health within PROBE_TIMEOUT."""
     start = time.perf_counter()
     try:
         async with asyncio.timeout(PROBE_TIMEOUT):
             await ctx.operaton.health()
-            up = Probe(up=True, ms=_ms(start))
-            if flows is None:
-                return up, None
-            return up, [
-                FlowCases(flow=flow, count=await ctx.operaton.count_instances(key))
-                for flow, key in flows.items()
-            ]
+        return Probe(up=True, ms=_ms(start))
     except Exception:  # OperatonError, NotFound with /health turned off, too slow, or anything else
         _log.warning(
             "dashboard: engine probe failed", extra={"client": ctx.client.slug}, exc_info=True
         )
-        return Probe(up=False, ms=None), None
+        return _DOWN
+
+
+async def _cases(ctx: ClientContext, flows: dict[str, str]) -> list[FlowCases] | None:
+    """The running instances of each flow's main process, all at once, within QUERY_TIMEOUT."""
+    try:
+        async with asyncio.timeout(QUERY_TIMEOUT):
+            counts = await asyncio.gather(
+                *(ctx.operaton.count_instances(k) for k in flows.values())
+            )
+    except Exception:
+        _log.warning(
+            "dashboard: engine counts failed", extra={"client": ctx.client.slug}, exc_info=True
+        )
+        return None
+    return [FlowCases(flow=f, count=n) for f, n in zip(flows, counts, strict=True)]
+
+
+def _unreachable(row: Client) -> ClientOverview:
+    return ClientOverview(
+        id=row.id, slug=row.slug, status=row.status, health=Health(operaton=_DOWN, db=_DOWN)
+    )
 
 
 async def _overview(row: Client) -> ClientOverview:
@@ -282,19 +327,48 @@ async def _overview(row: Client) -> ClientOverview:
         ctx = open_context(row, poolclass=NullPool)
     except Exception:  # no secrets or Operaton URL, or sealed with another key: unreachable
         _log.warning("dashboard: can't open the client", extra={"client": row.slug}, exc_info=True)
-        down = Probe(up=False, ms=None)
-        out.health = Health(operaton=down, db=down)
-        return out
+        return _unreachable(row)
     try:
-        db, out.users, active = await _vault(ctx)
-        flows = None if not db.up else active.process_keys if active else {}
-        operaton, out.cases_in_progress = await _engine(ctx, flows)
+        vault, operaton = await asyncio.gather(_vault(ctx), _engine(ctx))
+        if operaton.up and vault.flows is not None:
+            out.cases_in_progress = await _cases(ctx, vault.flows)
     finally:
-        await ctx.aclose()
-    out.health = Health(operaton=operaton, db=db)
-    if active:
-        out.last_release = LastRelease(version=active.version, published_at=active.published_at)
+        with suppress(Exception):  # closing is best effort; the answer stands
+            await ctx.aclose()
+    out.health = Health(operaton=operaton, db=vault.probe)
+    out.users = vault.users
+    if vault.active:
+        out.last_release = LastRelease(
+            version=vault.active.version, published_at=vault.active.published_at
+        )
     return out
+
+
+@dataclass
+class _Overview:
+    """The dashboard's cached answer on `app.state.overview`, refreshed by one request at a time."""
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    at: float = 0.0
+    answer: list[ClientOverview] | None = None
+    generation: int = 0
+    """Bumped by `forget_overview`, so a probe started before it doesn't store its answer."""
+
+    def fresh(self, now: float) -> list[ClientOverview] | None:
+        return self.answer if self.answer is not None and now - self.at < OVERVIEW_TTL else None
+
+
+def _cache(app: Any) -> _Overview:
+    cache = getattr(app.state, "overview", None)
+    if cache is None:
+        cache = app.state.overview = _Overview()
+    return cache
+
+
+def forget_overview(request: Request) -> None:
+    """Drop the dashboard's cached answer: a client was created, re-queued or published."""
+    cache = _cache(request.app)
+    cache.answer, cache.generation = None, cache.generation + 1
 
 
 # --- routes ----------------------------------------------------------------------------------
@@ -331,17 +405,30 @@ async def clients_overview(request: Request) -> list[ClientOverview]:
     """Per client: account counts, cases in progress per flow, the active release, and the health
     of its Operaton and vault. Every client is probed at once, each with PROBE_TIMEOUT, so one
     that is down never holds up or fails the rest. The answer is kept OVERVIEW_TTL seconds."""
-    # ponytail: no lock, so two requests after expiry both probe; fine for a few owners
-    now, cached = clock(), getattr(request.app.state, "overview", None)
-    if cached is not None and now - cached[0] < OVERVIEW_TTL:
-        return cached[1]
-    async with _platform(request).connect() as conn:
-        rows = await conn.execute(text("select * from platform.clients order by created_at desc"))
-        found = [Client(**r) for r in rows.mappings()]
-    # each probe opens its own vault connection: about one per client a minute per API process
-    out = list(await asyncio.gather(*(_overview(row) for row in found)))
-    request.app.state.overview = (now, out)
-    return out
+    cache = _cache(request.app)
+    if (answer := cache.fresh(clock())) is not None:
+        return answer
+    async with cache.lock:  # one request probes; the others wait for its answer
+        now = clock()
+        if (answer := cache.fresh(now)) is not None:
+            return answer
+        generation = cache.generation
+        async with _platform(request).connect() as conn:
+            rows = await conn.execute(
+                text("select * from platform.clients order by created_at desc")
+            )
+            found = [Client(**r) for r in rows.mappings()]
+        # each probe opens its own vault connection: about two per client a minute per API process
+        probed = await asyncio.gather(*(_overview(row) for row in found), return_exceptions=True)
+        out = []
+        for row, got in zip(found, probed, strict=True):
+            if isinstance(got, BaseException):  # never expected; only that client turns red
+                _log.error("dashboard: probe crashed", extra={"client": row.slug}, exc_info=got)
+                got = _unreachable(row)
+            out.append(got)
+        if cache.generation == generation:
+            cache.at, cache.answer = now, out
+        return out
 
 
 @routes.post("/clients", status_code=201)
@@ -395,7 +482,9 @@ async def create_client(body: ClientIn, owner: OwnerCtx, request: Request) -> Cl
             ),
             {"id": client_id, "steps": list(STEPS)},
         )
-        return await _detail(conn, client_id)
+        detail = await _detail(conn, client_id)
+    forget_overview(request)  # after the commit, so the next probe sees it
+    return detail
 
 
 @routes.get("/clients/{client_id}")
@@ -434,4 +523,6 @@ async def retry_provisioning(client_id: UUID, request: Request) -> ClientDetail:
             ),
             {"id": client_id},
         )
-        return await _detail(conn, client_id)
+        detail = await _detail(conn, client_id)
+    forget_overview(request)
+    return detail

@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from zm_api import clients as clients_mod
 from zm_api import secrets
 from zm_api.context import ClientContext, PlatformRegistry, Resolver
 from zm_api.errors import Conflict
@@ -362,9 +363,11 @@ def test_owner_publishes_through_the_api(clients: Clients) -> None:
     )
     auth = {"Authorization": f"Bearer {owner_token}"}
     with TestClient(create_app()) as api:
+        api.app.state.overview = cache = clients_mod._Overview(at=clients_mod.clock(), answer=[])  # type: ignore[attr-defined]
         response = api.post(f"/owner/clients/{clients.ids['pilot']}/publish", headers=auth)
         draft = api.get(f"/owner/clients/{clients.ids['pilot']}/draft", headers=auth)
     assert response.status_code == 200, response.text
+    assert cache.answer is None  # the owner dashboard (#47) shows the new release
     body = response.json()
     assert (body["version"], body["created"]) == (1, True)
     assert draft.json()["base_version"] == 1  # the draft records the release it was published as

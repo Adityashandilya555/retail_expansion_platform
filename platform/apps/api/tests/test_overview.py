@@ -14,6 +14,8 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -66,6 +68,8 @@ class Db:
     """active, invited, deactivated"""
     release: dict[str, Any] | None = None
     down: bool = False
+    reads_fail: bool = False
+    """`select 1` answers; the user counts fail."""
     queries: int = 0
 
     def engine(self) -> "Db":  # as app.state.platform
@@ -83,6 +87,8 @@ class Db:
         if "platform.clients" in sql:
             return Result([asdict(c) for c in self.clients])
         if "app.users" in sql:
+            if self.reads_fail:
+                raise OSError("canceling statement due to statement timeout")
             return Result(
                 [dict(zip(("active", "invited", "deactivated"), self.users, strict=True))]
             )
@@ -115,6 +121,9 @@ class Engine:
     up: bool = True
     hang: bool = False
     breaks: bool = False
+    counts_fail: bool = False
+    """/health answers; the instance counts fail."""
+    slow_counts: bool = False
     calls: list[str] = field(default_factory=list)
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
@@ -126,6 +135,11 @@ class Engine:
         if request.url.path == "/health":
             status = "UP" if self.up else "DOWN"
             return httpx.Response(200 if self.up else 503, json={"status": status})
+        if request.url.path.endswith("/count"):
+            if self.slow_counts:
+                await asyncio.sleep(5)
+            if self.counts_fail:
+                return httpx.Response(500, json={"type": "Boom", "message": "count failed"})
         if self.up and request.url.path == "/engine-rest/process-instance/count":
             key = request.url.params["processDefinitionKey"]
             return httpx.Response(200, json={"count": self.counts[key]})
@@ -342,15 +356,126 @@ def test_a_client_not_ready_shows_its_provisioning_status_unprobed(world: World)
     }
 
 
-def test_the_answer_is_kept_60_s_so_a_down_engine_is_red_within_60_s(world: World) -> None:
+def test_the_answer_is_kept_30_s(world: World) -> None:
     assert world.overview()["pilot-local"]["health"]["operaton"]["up"] is True
     world.engines["pilot-local"].up = False
-    world.now[0] += 59.9
+    world.now[0] += 29.9
     assert world.overview()["pilot-local"]["health"]["operaton"]["up"] is True  # kept
     assert world.vaults["pilot-local"].queries == 1
     world.now[0] += 0.1
     assert world.overview()["pilot-local"]["health"]["operaton"]["up"] is False
     assert world.vaults["pilot-local"].queries == 2
+
+
+CONSOLE = Path(__file__).parents[2] / "console" / "src" / "ClientCards.tsx"
+
+
+def test_a_down_engine_is_red_on_screen_within_60_s() -> None:
+    """Cache, then the console's next poll, then the slowest probe: within 60 s (#47)."""
+    poll = re.search(r"const POLL_MS = ([\d_]+);", CONSOLE.read_text())
+    assert poll, "POLL_MS not found in ClientCards.tsx"
+    assert int(poll[1].replace("_", "")) / 1000 == clients.CONSOLE_POLL
+    assert clients.PROBE_WORST == clients.PROBE_TIMEOUT + 2 * clients.QUERY_TIMEOUT
+    budget = clients.OVERVIEW_TTL + clients.CONSOLE_POLL + clients.PROBE_WORST
+    assert budget <= clients.RED_WITHIN == 60
+
+
+def test_engine_up_but_its_counts_failing_keeps_it_green(world: World) -> None:
+    world.engines["pilot-local"].counts_fail = True
+    pilot = world.overview()["pilot-local"]
+    assert pilot["health"]["operaton"]["up"] is True
+    assert pilot["cases_in_progress"] is None
+    assert pilot["users"] == {"active": 5, "invited": 1, "deactivated": 1}
+
+
+def test_counts_slower_than_the_query_timeout_keep_the_engine_green(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(clients, "QUERY_TIMEOUT", 0.05)
+    world.engines["pilot-local"].slow_counts = True
+    found = world.overview()
+    assert found["pilot-local"]["health"]["operaton"]["up"] is True
+    assert found["pilot-local"]["cases_in_progress"] is None
+    assert found["qsr-local"]["cases_in_progress"] == [{"flow": "qsr_launch", "count": 2}]
+
+
+def test_vault_up_but_its_reads_failing_keeps_it_green(world: World) -> None:
+    world.vaults["pilot-local"].reads_fail = True
+    pilot = world.overview()["pilot-local"]
+    assert pilot["health"]["db"]["up"] is True and pilot["health"]["db"]["ms"] >= 0
+    assert pilot["users"] is None
+    assert pilot["last_release"] is None
+    assert pilot["cases_in_progress"] is None  # its flows couldn't be read
+    assert pilot["health"]["operaton"]["up"] is True
+
+
+def test_a_failing_close_doesnt_fail_the_answer(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def aclose(self: context.ClientContext) -> None:
+        raise RuntimeError("close failed")
+
+    monkeypatch.setattr(context.ClientContext, "aclose", aclose)
+    found = world.overview()
+    assert found["pilot-local"]["health"]["operaton"]["up"] is True
+    assert found["qsr-local"]["health"]["db"]["up"] is True
+
+
+def test_a_probe_that_crashes_turns_only_that_client_red(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = clients._overview
+
+    async def overview(row: Client) -> clients.ClientOverview:
+        if row.slug == "pilot-local":
+            raise RuntimeError("boom")
+        return await real(row)
+
+    monkeypatch.setattr(clients, "_overview", overview)
+    found = world.overview()
+    assert found["pilot-local"]["health"] == {
+        "operaton": {"up": False, "ms": None},
+        "db": {"up": False, "ms": None},
+    }
+    assert found["qsr-local"]["health"]["operaton"]["up"] is True
+
+
+def test_forgetting_the_answer_probes_again(world: World) -> None:
+    world.overview()
+    world.engines["pilot-local"].up = False
+    clients.forget_overview(SimpleNamespace(app=world.api.app))  # type: ignore[arg-type]
+    assert world.overview()["pilot-local"]["health"]["operaton"]["up"] is False
+    assert world.vaults["pilot-local"].queries == 2
+
+
+def test_an_answer_probed_before_a_forget_isnt_kept(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = clients._overview
+
+    async def overview(row: Client) -> clients.ClientOverview:
+        clients.forget_overview(SimpleNamespace(app=world.api.app))  # type: ignore[arg-type]
+        return await real(row)
+
+    monkeypatch.setattr(clients, "_overview", overview)
+    world.overview()
+    monkeypatch.setattr(clients, "_overview", real)
+    world.overview()
+    assert world.vaults["pilot-local"].queries == 2
+
+
+def test_concurrent_requests_probe_once(world: World) -> None:
+    async def both() -> list[httpx.Response]:
+        transport = httpx.ASGITransport(app=world.api.app)
+        headers = bearer(token("owner", client=None))
+        async with httpx.AsyncClient(transport=transport, base_url="http://api") as api:
+            return list(await asyncio.gather(*(api.get(URL, headers=headers) for _ in range(3))))
+
+    answers = asyncio.run(both())
+    assert [r.status_code for r in answers] == [200, 200, 200]
+    assert answers[0].json() == answers[1].json() == answers[2].json()
+    assert world.vaults["pilot-local"].queries == 1
+    assert world.platform.queries == 1
 
 
 FORBIDDEN = re.compile(r"name|mail|phone|value|field|form|answer|workflow", re.IGNORECASE)
