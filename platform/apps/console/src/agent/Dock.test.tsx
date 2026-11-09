@@ -83,6 +83,7 @@ const log = () => within(screen.getByRole("log", { name: "Chat" }));
 
 afterEach(() => {
   forget();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -218,36 +219,103 @@ test("a valid draft publishes after a confirm, and says when nothing changed", a
   expect(await screen.findByText("Nothing changed since v2.")).toBeDefined();
 });
 
-test("a dropped stream reads the conversation back and shows its final state without duplicate chips", async () => {
+test("a dropped stream keeps the turn locked, reading the conversation back with backoff (offline too) until it ends", async () => {
   const turn = sse();
-  const saved: Transcript = {
+  // what the API keeps of a turn stopped between its tool runs: the owner's message (stored as the
+  // turn started), the done edits' chips from the change log, the stopped reply's usage; not its text
+  const kept: Omit<Transcript, "running"> = {
     entries: [
       { kind: "owner", text: "Add a Fire NOC upload" },
-      { kind: "agent", text: "Adding the upload." },
       { kind: "change", change_id: 1, summary: NOC },
-      { kind: "change", change_id: 2, summary: L2 },
-      { kind: "agent", text: "Done." },
     ],
     usage: { ...USAGE, output_tokens: 900 },
   };
+  const reads: Handler[] = [
+    () => {
+      throw new TypeError("Failed to fetch"); // offline right after the drop
+    },
+    () => json({ ...kept, running: true }), // the turn is still storing what it keeps
+    () => json({ ...kept, running: false }),
+  ];
   const calls = dockApi({
     [`POST ${AGENT}/${CID}/messages`]: () => turn.response(),
-    [`GET ${AGENT}/${CID}`]: () => json(saved),
+    [`GET ${AGENT}/${CID}`]: (r) => reads.shift()?.(r) ?? problem(500),
   });
   const user = renderDock();
   await say(user, "Add a Fire NOC upload");
   turn.send("text_delta", { text: "Adding the upload." });
   turn.send("change", { change_id: 1, summary: NOC });
   await log().findByRole("button", { name: NOC });
+  vi.useFakeTimers({ shouldAdvanceTime: true });
   turn.drop();
 
-  expect(await log().findByText("Done.")).toBeDefined();
+  const reading = () => calls.filter((c) => c === `GET ${AGENT}/${CID}`).length;
+  expect(await screen.findByText("The connection dropped. Waiting for the agent's turn to end…")).toBeDefined();
+  await waitFor(() => expect(reading()).toBe(1));
+  const publish = screen.getByRole("button", { name: "Publish" });
+  expect(publish.hasAttribute("disabled")).toBe(true);
+  await vi.advanceTimersByTimeAsync(1000);
+  await waitFor(() => expect(reading()).toBe(2));
+  expect(publish.hasAttribute("disabled")).toBe(true); // running: still locked
+  await vi.advanceTimersByTimeAsync(2000);
+  await waitFor(() => expect(reading()).toBe(3));
+
+  expect(await log().findByText(/The connection dropped/)).toBeDefined();
+  expect(log().queryByText("Adding the upload.")).toBeNull(); // its reply wasn't kept
   expect(log().getAllByRole("button", { name: NOC })).toHaveLength(1);
-  expect(log().getAllByRole("button", { name: L2 })).toHaveLength(1);
   expect(log().getAllByText("Add a Fire NOC upload")).toHaveLength(1);
-  expect(log().getByText(/The connection dropped/)).toBeDefined();
   expect(screen.getByText(/this conversation 1,200 in, 3,000 cached, 900 out/)).toBeDefined();
-  expect(calls).toContain(`GET ${AGENT}/${CID}`);
+  await waitFor(() => expect(publish.hasAttribute("disabled")).toBe(false));
+  expect(screen.queryByText(/Waiting for the agent's turn/)).toBeNull();
+});
+
+test("a message the API never got says it wasn't sent, not that the connection dropped, and stays to send again", async () => {
+  const calls = dockApi({
+    [`POST ${AGENT}/${CID}/messages`]: () => {
+      throw new TypeError("Failed to fetch");
+    },
+  });
+  const user = renderDock();
+  await say(user, "Add a GST number");
+  expect(await log().findByText(/Your message wasn't sent/)).toBeDefined();
+  expect(log().queryByText(/connection dropped/)).toBeNull();
+  expect(log().queryByText("Add a GST number")).toBeNull();
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Message").value).toBe("Add a GST number");
+  expect(calls).not.toContain(`GET ${AGENT}/${CID}`);
+});
+
+test("Publish waits while the draft is re-validated after a turn", async () => {
+  const turn = sse();
+  let release: (() => void) | undefined;
+  let checks = 0;
+  dockApi({
+    [`POST ${AGENT}/${CID}/messages`]: () => turn.response(),
+    [`GET ${CLIENT}/draft/validate`]: async () => {
+      if (checks++ > 0) await new Promise<void>((r) => (release = r)); // re-validating after the turn
+      return json([]);
+    },
+  });
+  const user = renderDock();
+  const publish = await screen.findByRole("button", { name: "Publish" });
+  await waitFor(() => expect(publish.hasAttribute("disabled")).toBe(false));
+  await say(user, "Add a Fire NOC upload");
+  turn.send("done", { usage: USAGE });
+  turn.end();
+  await waitFor(() => expect(release).toBeDefined());
+  await waitFor(() => expect(screen.queryByText(/Publish waits until the agent's turn ends/)).toBeNull());
+  expect(publish.hasAttribute("disabled")).toBe(true); // the turn ended, but the check hasn't
+  release?.();
+  await waitFor(() => expect(publish.hasAttribute("disabled")).toBe(false));
+});
+
+test("a validation that fails disables Publish and says so", async () => {
+  dockApi({ [`GET ${CLIENT}/draft/validate`]: () => problem(503, "The client's vault is unreachable.") });
+  renderDock();
+  const said = await screen.findByText(/Couldn't check the draft, so it can't be published yet/);
+  expect(said.textContent).toContain("The client's vault is unreachable.");
+  const publish = screen.getByRole("button", { name: "Publish" });
+  expect(publish.hasAttribute("disabled")).toBe(true);
+  expect(publish.getAttribute("aria-describedby")).toBe(said.id);
 });
 
 test("refusals, errors and a busy conversation show in the conversation; the message stays to send again", async () => {

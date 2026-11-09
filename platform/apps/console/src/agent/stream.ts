@@ -29,27 +29,32 @@ export const EMPTY: Chat = {
   last: null,
 };
 
-/** Calls `on` with each event of a text/event-stream body until it ends; rejects if the connection drops. */
+/** Calls `on` with each event of a text/event-stream body until it ends; rejects if the connection
+ * drops, a frame isn't JSON or `on` throws, and then cancels the body so the connection closes. */
 export async function readEvents(body: ReadableStream<Uint8Array>, on: (event: AgentEvent) => void): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return;
-    buffer += decoder.decode(value, { stream: true });
-    const blocks = buffer.split("\n\n");
-    buffer = blocks.pop() ?? ""; // an event cut across chunks waits for the rest
-    for (const block of blocks) {
-      let event = "";
-      let data = "";
-      for (const line of block.split("\n")) {
-        const [, field, rest = ""] = /^(event|data): ?(.*)$/.exec(line) ?? [];
-        if (field === "event") event = rest;
-        else if (field === "data") data += rest;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() ?? ""; // an event cut across chunks waits for the rest
+      for (const block of blocks) {
+        let event = "";
+        let data = "";
+        for (const line of block.split("\n")) {
+          const [, field, rest = ""] = /^(event|data): ?(.*)$/.exec(line) ?? [];
+          if (field === "event") event = rest;
+          else if (field === "data") data += rest;
+        }
+        if (event && data) on({ event, data: JSON.parse(data) } as AgentEvent); // a keep-alive comment has neither
       }
-      if (event && data) on({ event, data: JSON.parse(data) } as AgentEvent); // a keep-alive comment has neither
     }
+  } finally {
+    reader.cancel().catch(() => undefined); // ended or dropped already: nothing to cancel
   }
 }
 
