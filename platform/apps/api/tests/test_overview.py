@@ -9,6 +9,7 @@ of the local stack (scripts/dev-up.sh).
 import argparse
 import asyncio
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -376,8 +377,57 @@ def test_a_down_engine_is_red_on_screen_within_60_s() -> None:
     assert poll, "POLL_MS not found in ClientCards.tsx"
     assert int(poll[1].replace("_", "")) / 1000 == clients.CONSOLE_POLL
     assert clients.PROBE_WORST == clients.PROBE_TIMEOUT + 2 * clients.QUERY_TIMEOUT
-    budget = clients.OVERVIEW_TTL + clients.CONSOLE_POLL + clients.PROBE_WORST
+    assert clients.CLIENT_LIMIT > clients.PROBE_WORST  # the cap never cuts a normal probe short
+    answer_within = clients.REGISTRY_TIMEOUT + clients.CLIENT_LIMIT
+    budget = clients.OVERVIEW_TTL + clients.CONSOLE_POLL + answer_within
     assert budget <= clients.RED_WITHIN == 60
+
+
+def test_a_client_whose_close_hangs_is_red_alone_and_frees_the_lock(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its vault stalls on close: the request still answers within CLIENT_LIMIT, only that client
+    is red, and the next request gets through."""
+    monkeypatch.setattr(clients, "CLIENT_LIMIT", 0.2)
+    real = context.ClientContext.aclose
+
+    async def aclose(self: context.ClientContext) -> None:
+        if self.client.slug == "pilot-local":
+            await asyncio.sleep(30)
+        await real(self)
+
+    monkeypatch.setattr(context.ClientContext, "aclose", aclose)
+    started = time.perf_counter()
+    found = world.overview()
+    assert time.perf_counter() - started < 5
+    assert found["pilot-local"]["health"] == {
+        "operaton": {"up": False, "ms": None},
+        "db": {"up": False, "ms": None},
+    }
+    assert found["qsr-local"]["health"]["operaton"]["up"] is True
+    assert found["qsr-local"]["health"]["db"]["up"] is True
+
+    monkeypatch.setattr(context.ClientContext, "aclose", real)
+    world.now[0] += clients.OVERVIEW_TTL
+    assert world.overview()["pilot-local"]["health"]["db"]["up"] is True  # lock released
+
+
+def test_a_registry_that_doesnt_answer_is_503_and_frees_the_lock(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(clients, "REGISTRY_TIMEOUT", 0.05)
+    real = world.platform.connect
+
+    @asynccontextmanager
+    async def hangs() -> AsyncIterator[Db]:
+        await asyncio.sleep(30)
+        yield world.platform
+
+    monkeypatch.setattr(world.platform, "connect", hangs)
+    response = world.api.get(URL, headers=bearer(token("owner", client=None)))
+    assert response.status_code == 503, response.text
+    monkeypatch.setattr(world.platform, "connect", real)
+    assert world.overview()["pilot-local"]["health"]["db"]["up"] is True
 
 
 def test_engine_up_but_its_counts_failing_keeps_it_green(world: World) -> None:

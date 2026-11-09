@@ -28,7 +28,13 @@ from sqlalchemy.pool import NullPool
 
 from zm_api import releases
 from zm_api.context import ClientContext, OwnerCtx, open_context, owner_router
-from zm_api.errors import Conflict, FieldError, NotFound, UnprocessableContent
+from zm_api.errors import (
+    Conflict,
+    FieldError,
+    NotFound,
+    ServiceUnavailable,
+    UnprocessableContent,
+)
 from zm_api.registry import Client
 
 STEPS = (
@@ -227,6 +233,11 @@ running cases per flow. Too slow or failing, they show as null while the dots st
 PROBE_WORST = PROBE_TIMEOUT + 2 * QUERY_TIMEOUT
 """Longest a client's probe can take: vault `select 1` then its reads (the engine's /health runs
 beside them), then the engine's counts."""
+CLIENT_LIMIT = PROBE_WORST + 1
+"""Hard cap on one client's whole entry, closing its vault engine and Operaton client included:
+past it the client shows as unreachable, so a vault that stalls on close can't hold the lock."""
+REGISTRY_TIMEOUT = 3.0
+"""Seconds the platform registry gets to list the clients; past it the request fails (503)."""
 OVERVIEW_TTL = 30.0
 """Seconds the dashboard's answer is reused, counted from when its probe started."""
 CONSOLE_POLL = 15.0
@@ -234,7 +245,8 @@ CONSOLE_POLL = 15.0
 
 Red within 60 s (#47): an engine that dies just after a probe is seen by the first probe started
 after the answer expires (OVERVIEW_TTL), which the console asks for within one poll
-(CONSOLE_POLL), and that answer arrives within PROBE_WORST: 30 + 15 + 9 = 54 s <= 60 s."""
+(CONSOLE_POLL), and that answer arrives within REGISTRY_TIMEOUT + CLIENT_LIMIT:
+30 + 15 + 3 + 10 = 58 s <= 60 s."""
 RED_WITHIN = 60.0
 clock = time.monotonic  # tests move it
 
@@ -344,6 +356,16 @@ async def _overview(row: Client) -> ClientOverview:
     return out
 
 
+async def _bounded(row: Client) -> ClientOverview:
+    """`_overview` within CLIENT_LIMIT; past it (e.g. a vault stalling on close) unreachable."""
+    try:
+        async with asyncio.timeout(CLIENT_LIMIT):
+            return await _overview(row)
+    except TimeoutError:
+        _log.warning("dashboard: probe exceeded its limit", extra={"client": row.slug})
+        return _unreachable(row)
+
+
 @dataclass
 class _Overview:
     """The dashboard's cached answer on `app.state.overview`, refreshed by one request at a time."""
@@ -413,13 +435,17 @@ async def clients_overview(request: Request) -> list[ClientOverview]:
         if (answer := cache.fresh(now)) is not None:
             return answer
         generation = cache.generation
-        async with _platform(request).connect() as conn:
-            rows = await conn.execute(
-                text("select * from platform.clients order by created_at desc")
-            )
-            found = [Client(**r) for r in rows.mappings()]
+        try:
+            async with asyncio.timeout(REGISTRY_TIMEOUT), _platform(request).connect() as conn:
+                rows = await conn.execute(
+                    text("select * from platform.clients order by created_at desc")
+                )
+                found = [Client(**r) for r in rows.mappings()]
+        except TimeoutError:
+            _log.warning("dashboard: the platform registry didn't answer")
+            raise ServiceUnavailable("The client registry didn't answer; try again") from None
         # each probe opens its own vault connection: about two per client a minute per API process
-        probed = await asyncio.gather(*(_overview(row) for row in found), return_exceptions=True)
+        probed = await asyncio.gather(*(_bounded(row) for row in found), return_exceptions=True)
         out = []
         for row, got in zip(found, probed, strict=True):
             if isinstance(got, BaseException):  # never expected; only that client turns red

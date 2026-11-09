@@ -12,8 +12,9 @@ type ClientOut = components["schemas"]["ClientOut"];
 type ClientOverview = components["schemas"]["ClientOverview"];
 type Probe = components["schemas"]["Probe"];
 
-/** Keep equal to CONSOLE_POLL in apps/api/src/zm_api/clients.py: the API keeps its answer 30 s
- * and a probe takes at most 9 s, so a down engine is red here within 30 + 15 + 9 = 54 s (#47). */
+/** Keep equal to CONSOLE_POLL in apps/api/src/zm_api/clients.py: the API keeps its answer 30 s;
+ * the registry read and a client probe take at most 3 + 10 s, so a down engine is red here within
+ * 30 + 15 + 3 + 10 = 58 s (#47). */
 const POLL_MS = 15_000;
 
 function Health({ label, probe }: { label: string; probe: Probe }) {
