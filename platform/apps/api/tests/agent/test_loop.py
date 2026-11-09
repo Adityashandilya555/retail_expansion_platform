@@ -716,6 +716,8 @@ def test_a_message_nothing_answered_reads_back_unanswered_unless_it_was_refused(
         asked("Hello"),
         {"kind": "agent", "text": "Hi."},
     ]
+    # a conversation with nothing said yet reads back empty
+    assert loop.transcript([], []).entries == []
     # a turn still running hasn't answered yet
     rows = chats[cid]["rows"][:2]
     assert loop.transcript(rows, [], running=True).entries[0].unanswered is False  # type: ignore[union-attr]

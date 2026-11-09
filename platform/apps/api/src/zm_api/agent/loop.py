@@ -594,7 +594,7 @@ def transcript(rows: list[Doc], changes: list[Doc], running: bool = False) -> Tr
     opens = [i for i, r in enumerate(rows) if r["content"] is not None and _opens(r)]
     unanswered = {
         i
-        for i, after in zip(opens, [*opens[1:], len(rows)], strict=True)
+        for i, after in zip(opens, [*opens[1:], len(rows)], strict=False)  # none: nothing said yet
         if not (running and after == len(rows))
         and not any(
             r["role"] == "assistant"
