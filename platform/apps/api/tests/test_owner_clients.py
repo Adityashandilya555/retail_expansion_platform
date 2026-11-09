@@ -130,6 +130,12 @@ def create(api: TestClient, **body: Any) -> Any:
     return api.post("/owner/clients", json={"template_key": "matrix-retail", **body})
 
 
+def cache_overview(api: TestClient) -> Any:
+    """Put an answer in the owner dashboard's cache (#47), to see a change drop it."""
+    cache = api.app.state.overview = clients._Overview(at=clients.clock(), answer=[])  # type: ignore[attr-defined]
+    return cache
+
+
 @pytest.mark.integration
 def test_templates_come_from_the_platform_table(api: TestClient) -> None:
     found = {t["key"]: t["name"] for t in api.get("/owner/templates").json()}
@@ -139,8 +145,10 @@ def test_templates_come_from_the_platform_table(api: TestClient) -> None:
 
 @pytest.mark.integration
 def test_creating_matrix_retail_queues_its_provisioning(api: TestClient) -> None:
+    cache = cache_overview(api)
     response = create(api, name=f"Matrix Retail {RUN}")
     assert response.status_code == 201, response.text
+    assert cache.answer is None  # the dashboard shows the new client at once
     body = response.json()
     assert body["slug"] == f"matrix-retail-{RUN}"
     assert re.fullmatch(rf"MATRIX-RETAIL-{RUN.upper()}-[A-Z0-9]{{4}}", body["workspace_code"])
@@ -227,8 +235,10 @@ def test_retry_requeues_only_the_failed_step(api: TestClient) -> None:
     before = {s["step"]: s for s in api.get(f"/owner/clients/{client['id']}").json()["steps"]}
     assert before["data_api_off"]["last_error"] == "PATCH postgrest: 500"
 
+    cache = cache_overview(api)
     response = api.post(f"/owner/clients/{client['id']}/provisioning/retry")
     assert response.status_code == 200, response.text
+    assert cache.answer is None
     after = {s["step"]: s for s in response.json()["steps"]}
     assert after["data_api_off"] | {"updated_at": None} == {
         **before["data_api_off"],

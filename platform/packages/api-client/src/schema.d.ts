@@ -161,7 +161,7 @@ export interface paths {
         };
         /**
          * Get Case
-         * @description One case: its stages with times, values by section, open tasks and decisions.
+         * @description One case: its stages with times, values by section, open tasks, decisions and activity.
          */
         get: operations["get_case_app_cases__code__get"];
         put?: never;
@@ -470,6 +470,28 @@ export interface paths {
          * @description The client and its provisioning steps, in one transaction; the worker takes it from here.
          */
         post: operations["create_client_owner_clients_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/clients/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Clients Overview
+         * @description Per client: account counts, cases in progress per flow, the active release, and the health
+         *     of its Operaton and vault. Every client is probed at once, each with PROBE_TIMEOUT, so one
+         *     that is down never holds up or fails the rest. The answer is kept OVERVIEW_TTL seconds.
+         */
+        get: operations["clients_overview_owner_clients_overview_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -878,6 +900,12 @@ export interface components {
              */
             created_at: string;
             /**
+             * Events
+             * @description The case's activity (S2-29): created first, then each stage run's start and end and each
+             *     submission, oldest first. No values: only what, which stage or task, who and when.
+             */
+            events: components["schemas"]["EventOut"][];
+            /**
              * Fields
              * @description Start-form values, without fields hidden from the user's level.
              */
@@ -1203,6 +1231,30 @@ export interface components {
             /** Workspace Code */
             workspace_code: string;
         };
+        /**
+         * ClientOverview
+         * @description Counts and status only (PRODUCT.md, owner step 8): never a person's name or email, nor a
+         *     form value. The console names the client from `GET /owner/clients`.
+         */
+        ClientOverview: {
+            /** Cases In Progress */
+            cases_in_progress: components["schemas"]["FlowCases"][] | null;
+            health: components["schemas"]["Health"] | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            last_release: components["schemas"]["LastRelease"] | null;
+            /** Slug */
+            slug: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "new" | "provisioning" | "ready" | "failed" | "suspended";
+            users: components["schemas"]["UserCounts"] | null;
+        };
         /** ConversationIn */
         ConversationIn: {
             /**
@@ -1315,6 +1367,36 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** EventOut */
+        EventOut: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * By
+             * @description Who started the case or submitted the task.
+             */
+            by?: string | null;
+            /** By Name */
+            by_name?: string | null;
+            /**
+             * Kind
+             * @description `stage_closed`: the case was closed in the stage, or the close cut it short.
+             * @enum {string}
+             */
+            kind: "created" | "stage_started" | "stage_done" | "stage_closed" | "submitted";
+            /** Stage */
+            stage?: string | null;
+            /**
+             * Task
+             * @description The submitted task's id.
+             */
+            task?: string | null;
+            /** Task Name */
+            task_name?: string | null;
+        };
         /** FieldError */
         FieldError: {
             /** Message */
@@ -1346,6 +1428,13 @@ export interface components {
             /** Value */
             value: unknown;
         };
+        /** FlowCases */
+        FlowCases: {
+            /** Count */
+            count: number;
+            /** Flow */
+            flow: string;
+        };
         /** FormOut */
         FormOut: {
             /** Layout */
@@ -1359,6 +1448,11 @@ export interface components {
             schema: {
                 [key: string]: unknown;
             };
+        };
+        /** Health */
+        Health: {
+            db: components["schemas"]["Probe"];
+            operaton: components["schemas"]["Probe"];
         };
         /** InviteAcceptIn */
         InviteAcceptIn: {
@@ -1382,6 +1476,16 @@ export interface components {
             changed: string[];
             /** Removed */
             removed: string[];
+        };
+        /** LastRelease */
+        LastRelease: {
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Version */
+            version: number;
         };
         /** Level */
         Level: {
@@ -1539,6 +1643,13 @@ export interface components {
             accent?: string | null;
             /** Color Scheme */
             color_scheme?: ("light" | "dark" | "auto") | null;
+        };
+        /** Probe */
+        Probe: {
+            /** Ms */
+            ms: number | null;
+            /** Up */
+            up: boolean;
         };
         /**
          * Problem
@@ -1766,7 +1877,10 @@ export interface components {
             assignee: string | null;
             /** Case Code */
             case_code: string;
-            /** Created */
+            /**
+             * Created
+             * Format: date-time
+             */
             created: string;
             /** Flow */
             flow: string;
@@ -1879,6 +1993,8 @@ export interface components {
             key: string;
             /** Name */
             name: string;
+            /** Sla Days */
+            sla_days?: number | null;
         };
         /** Usage */
         Usage: {
@@ -1890,6 +2006,15 @@ export interface components {
             input_tokens: number;
             /** Output Tokens */
             output_tokens: number;
+        };
+        /** UserCounts */
+        UserCounts: {
+            /** Active */
+            active: number;
+            /** Deactivated */
+            deactivated: number;
+            /** Invited */
+            invited: number;
         };
         /** UserIn */
         UserIn: {
@@ -2233,6 +2358,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description `true`: more than 500 matched. */
+                    "X-Truncated"?: unknown;
                     [name: string]: unknown;
                 };
                 content: {
@@ -2830,6 +2957,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClientDetail"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    clients_overview_owner_clients_overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientOverview"][];
                 };
             };
             /** @description Problem details (RFC 9457) */

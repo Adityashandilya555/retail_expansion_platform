@@ -104,6 +104,10 @@ export interface Stage {
    * @minItems 1
    */
   tasks: [Task | ParallelGroup, ...(Task | ParallelGroup)[]];
+  /**
+   * Days a case may spend in this stage; longer shows it as overdue (S2-29).
+   */
+  sla_days?: number | null;
 }
 export interface Task {
   id: string;

@@ -18,6 +18,7 @@ import logging
 import re
 import time
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -29,6 +30,16 @@ from zm_api.logs import request_id
 Json = dict[str, Any]
 _log = logging.getLogger("zm_api.operaton")
 _NOT_FOUND = re.compile(r"Cannot find \w+ with id|No \w+ found with id")
+
+
+def time_of(value: str) -> datetime:
+    """An Operaton timestamp (`2026-10-18T09:00:00.000+0000`: no colon in the offset, which some
+    browsers' `Date.parse` rejects) as an aware UTC datetime, so the API sends ISO 8601 with `Z`."""
+    return datetime.fromisoformat(value).astimezone(UTC)
+
+
+def time_or_none(value: str | None) -> datetime | None:
+    return time_of(value) if value else None
 
 
 class OperatonError(ApiError):
@@ -218,6 +229,19 @@ class OperatonClient:
         if not ids:
             return []
         return await self.find_instances({"processInstanceIds": ids})
+
+    async def count_instances(self, key: str) -> int:
+        """Running instances of every version of process `key` (`GET /process-instance/count`,
+        ProcessInstanceRestService.java:84-87 at v2.1.5)."""
+        params = {"processDefinitionKey": key}
+        found = await self._call("count_instances", "GET", "process-instance/count", params=params)
+        return found["count"]
+
+    async def health(self) -> Json:
+        """Operaton Run's `GET /health` beside `/engine-rest`, no sign-in: 200 while UP, else 503
+        (run/health/HealthController.java:58-72 at v2.1.5; on with
+        `operaton.run.health.rest-endpoint.enabled`, infra/operaton/default.yml)."""
+        return await self._call("health", "GET", str(self.base_url.join("../health")))
 
     async def delete_process_instance(self, instance_id: str) -> None:
         path = f"process-instance/{_id(instance_id)}"

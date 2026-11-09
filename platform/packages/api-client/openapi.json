@@ -189,6 +189,14 @@
             "title": "Created At",
             "type": "string"
           },
+          "events": {
+            "description": "The case's activity (S2-29): created first, then each stage run's start and end and each\nsubmission, oldest first. No values: only what, which stage or task, who and when.",
+            "items": {
+              "$ref": "#/components/schemas/EventOut"
+            },
+            "title": "Events",
+            "type": "array"
+          },
           "fields": {
             "additionalProperties": true,
             "description": "Start-form values, without fields hidden from the user's level.",
@@ -270,7 +278,8 @@
           "release_version",
           "sections",
           "tasks",
-          "history"
+          "history",
+          "events"
         ],
         "title": "CaseDetail",
         "type": "object"
@@ -923,6 +932,86 @@
         "title": "ClientOut",
         "type": "object"
       },
+      "ClientOverview": {
+        "description": "Counts and status only (PRODUCT.md, owner step 8): never a person's name or email, nor a\nform value. The console names the client from `GET /owner/clients`.",
+        "properties": {
+          "cases_in_progress": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FlowCases"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cases In Progress"
+          },
+          "health": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Health"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastRelease"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "new",
+              "provisioning",
+              "ready",
+              "failed",
+              "suspended"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "users": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "status",
+          "users",
+          "cases_in_progress",
+          "last_release",
+          "health"
+        ],
+        "title": "ClientOverview",
+        "type": "object"
+      },
       "ConversationIn": {
         "additionalProperties": false,
         "properties": {
@@ -1192,6 +1281,91 @@
         "title": "DraftOut",
         "type": "object"
       },
+      "EventOut": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who started the case or submitted the task.",
+            "title": "By"
+          },
+          "by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By Name"
+          },
+          "kind": {
+            "description": "`stage_closed`: the case was closed in the stage, or the close cut it short.",
+            "enum": [
+              "created",
+              "stage_started",
+              "stage_done",
+              "stage_closed",
+              "submitted"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The submitted task's id.",
+            "title": "Task"
+          },
+          "task_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Name"
+          }
+        },
+        "required": [
+          "kind",
+          "at"
+        ],
+        "title": "EventOut",
+        "type": "object"
+      },
       "FieldError": {
         "properties": {
           "message": {
@@ -1259,6 +1433,24 @@
         "title": "FieldOut",
         "type": "object"
       },
+      "FlowCases": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "flow": {
+            "title": "Flow",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flow",
+          "count"
+        ],
+        "title": "FlowCases",
+        "type": "object"
+      },
       "FormOut": {
         "properties": {
           "layout": {
@@ -1281,6 +1473,22 @@
           "layout"
         ],
         "title": "FormOut",
+        "type": "object"
+      },
+      "Health": {
+        "properties": {
+          "db": {
+            "$ref": "#/components/schemas/Probe"
+          },
+          "operaton": {
+            "$ref": "#/components/schemas/Probe"
+          }
+        },
+        "required": [
+          "operaton",
+          "db"
+        ],
+        "title": "Health",
         "type": "object"
       },
       "InviteAcceptIn": {
@@ -1357,6 +1565,25 @@
           "changed"
         ],
         "title": "KeyChanges",
+        "type": "object"
+      },
+      "LastRelease": {
+        "properties": {
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "published_at"
+        ],
+        "title": "LastRelease",
         "type": "object"
       },
       "Level": {
@@ -1803,6 +2030,31 @@
         "title": "PreferencesIn",
         "type": "object"
       },
+      "Probe": {
+        "properties": {
+          "ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ms"
+          },
+          "up": {
+            "title": "Up",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "up",
+          "ms"
+        ],
+        "title": "Probe",
+        "type": "object"
+      },
       "Problem": {
         "description": "Problem details (RFC 9457), the body of every error response.",
         "properties": {
@@ -2071,6 +2323,7 @@
           "ended_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -2090,6 +2343,7 @@
           "started_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -2332,6 +2586,7 @@
             "type": "string"
           },
           "created": {
+            "format": "date-time",
             "title": "Created",
             "type": "string"
           },
@@ -2623,6 +2878,17 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "sla_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Days"
           }
         },
         "required": [
@@ -2659,6 +2925,29 @@
           "output_tokens"
         ],
         "title": "Usage",
+        "type": "object"
+      },
+      "UserCounts": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "deactivated": {
+            "title": "Deactivated",
+            "type": "integer"
+          },
+          "invited": {
+            "title": "Invited",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active",
+          "invited",
+          "deactivated"
+        ],
+        "title": "UserCounts",
         "type": "object"
       },
       "UserIn": {
@@ -3310,7 +3599,12 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Truncated": {
+                "description": "`true`: more than 500 matched."
+              }
+            }
           },
           "default": {
             "content": {
@@ -3371,7 +3665,7 @@
     },
     "/app/cases/{code}": {
       "get": {
-        "description": "One case: its stages with times, values by section, open tasks and decisions.",
+        "description": "One case: its stages with times, values by section, open tasks, decisions and activity.",
         "operationId": "get_case_app_cases__code__get",
         "parameters": [
           {
@@ -4092,6 +4386,42 @@
           }
         },
         "summary": "Create Client",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/overview": {
+      "get": {
+        "description": "Per client: account counts, cases in progress per flow, the active release, and the health\nof its Operaton and vault. Every client is probed at once, each with PROBE_TIMEOUT, so one\nthat is down never holds up or fails the rest. The answer is kept OVERVIEW_TTL seconds.",
+        "operationId": "clients_overview_owner_clients_overview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ClientOverview"
+                  },
+                  "title": "Response Clients Overview Owner Clients Overview Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Clients Overview",
         "tags": [
           "owner"
         ]

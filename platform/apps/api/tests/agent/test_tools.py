@@ -302,6 +302,13 @@ EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
     ("load_template", {"template": "qsr"}, lambda d: d == qsr(), True),  # the draft is untouched
 ]
 
+# where list_blocks places some blocks (#94's two): by layout, as `allowed_blocks` does
+GOES_IN = {
+    "case_header": {"case": ["header"]},
+    "case_activity": {"case": ["activity"]},
+    "kpi_strip": {"standard": ["hero"]},
+}
+
 # (tool, arguments, where to look in the result, what is there)
 READS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
     (
@@ -345,9 +352,9 @@ READS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
         {},  # layouts' `allowed_blocks`, as validation reads them
         lambda r: (
             {(b["name"], v) for b in r["data"] for v in b["versions"]},
-            next(b["goes_in"] for b in r["data"] if b["name"] == "case_header"),
+            {b["name"]: b["goes_in"] for b in r["data"] if b["name"] in GOES_IN},
         ),
-        (manifests("blocks"), {"case": ["header"]}),
+        (manifests("blocks"), GOES_IN),
     ),
     (
         "get_block_manifest",
