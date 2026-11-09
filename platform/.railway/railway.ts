@@ -52,10 +52,13 @@ export default defineRailway((ctx) => {
     healthcheck: "/healthz",
     // Before each deploy (WORKDIR /app), in order: control-plane migrations (S1-04) on
     // PLATFORM_DATABASE_URL, then every ready client's vault migrations, so this version never
-    // serves a vault without the columns it reads. If either fails, the running version stays.
+    // serves a vault without the columns it reads, then the live-release gate (S2-09, #43): every
+    // client's active release must still validate and compile with this build. If any fails, the
+    // running version stays.
     preDeploy: [
       "alembic -c apps/api/alembic.ini -x db=platform upgrade head",
       "python -m zm_worker vault-migrate --ready",
+      "python -m zm_worker compat-live",
     ],
     replicas: { [REGION]: 1 },
     env: {
