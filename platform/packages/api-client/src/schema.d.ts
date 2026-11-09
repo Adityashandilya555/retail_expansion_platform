@@ -1726,7 +1726,10 @@ export interface components {
             assignee: string | null;
             /** Case Code */
             case_code: string;
-            /** Created */
+            /**
+             * Created
+             * Format: date-time
+             */
             created: string;
             /** Flow */
             flow: string;

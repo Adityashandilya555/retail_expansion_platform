@@ -58,13 +58,12 @@ export function useCases(flow: string | undefined) {
 /** Whole days since `at`. */
 export const daysSince = (at: string) => Math.floor((Date.now() - Date.parse(at)) / 86_400_000);
 
-/** In an open stage (or in `stage`) for more whole days than its `sla_days` (S2-29), as the
- * table's "Days in stage" counts them. */
+/** Longer in its stage than the stage's `sla_days` (S2-29): the case's current stage, the one
+ * case_table's "Days in stage" counts (with parallel stages open, the first), or `stage` when given. */
 export function isOverdue(c: CaseRow, flow: Flow, stage?: string): boolean {
-  return c.stages.some((s) => {
-    const sla = flow.stages.find((f) => f.key === s.key)?.sla_days;
-    return s.state === "open" && (!stage || s.key === stage) && !!sla && !!s.started_at && daysSince(s.started_at) > sla;
-  });
+  const s = stage ? c.stages.find((x) => x.key === stage) : currentStage(c.stages);
+  const sla = flow.stages.find((f) => f.key === s?.key)?.sla_days;
+  return s?.state === "open" && !!sla && !!s.started_at && daysSince(s.started_at) > sla;
 }
 
 export const TILE_KINDS = ["open_cases", "in_stage", "awaiting_me", "overdue", "done"] as const;

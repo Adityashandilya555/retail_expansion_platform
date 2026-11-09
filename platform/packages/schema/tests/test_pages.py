@@ -51,6 +51,30 @@ def test_a_kpi_strip_has_2_to_4_tiles_and_in_stage_names_its_stage(minimal: dict
     ]
 
 
+def test_kpi_tiles_and_case_table_stages_are_stages_of_their_flow(minimal: dict[str, Any]) -> None:
+    """#94: a tile or table scoped to a stage its flow doesn't have would just show nothing."""
+    stages = [s["key"] for s in minimal["flows"][0]["stages"]]
+    tiles = [{"kind": "in_stage", "stage": stages[0]}, {"kind": "done", "stage": "nowhere"}]
+    home = {
+        "key": "home",
+        "layout": "standard",
+        "regions": {
+            "hero": [{"block": "kpi_strip", "props": {"tiles": tiles}}],
+            "main": [{"block": "case_table", "props": {"stages": [stages[0], "gone"]}}],
+        },
+    }
+    flow = minimal["flows"][0]["key"]
+    assert errors(minimal, home) == [
+        "apps.pages[0].regions.hero[0].props.tiles[1].stage: page 'home', region 'hero':"
+        f" block 'kpi_strip': 'nowhere' is not a stage of flow '{flow}'",
+        "apps.pages[0].regions.main[0].props.stages[1]: page 'home', region 'main':"
+        f" block 'case_table': 'gone' is not a stage of flow '{flow}'",
+    ]
+    tiles[1]["stage"] = stages[-1]
+    home["regions"]["main"][0]["props"]["stages"] = stages
+    assert errors(minimal, home) == []
+
+
 def test_a_block_its_region_doesnt_take_and_a_full_region(minimal: dict[str, Any]) -> None:
     home = {
         "key": "home",

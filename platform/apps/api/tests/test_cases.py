@@ -6,7 +6,7 @@ import asyncio
 import copy
 import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -14,10 +14,10 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from zm_api import cases, tasks
+from zm_api import cases, cases_routes, tasks
 from zm_api.context import Resolver
 from zm_api.main import create_app
-from zm_api.operaton import OperatonClient
+from zm_api.operaton import OperatonClient, time_of
 from zm_api.registry import Client
 from zm_api.templates import load_templates
 
@@ -74,6 +74,26 @@ def test_closed_in_legal_from_variables() -> None:
     assert cases.case_status(variables) == "closed"
 
 
+AT = datetime(2026, 10, 26, 10, tzinfo=UTC)  # "2026-10-26T10:00:00.000+0000" as Operaton sends it
+
+
+def test_operaton_times_become_iso_utc() -> None:
+    """Operaton's `+0000` offset has no colon, which Safari's `Date.parse` rejects: the API
+    sends ISO 8601 in UTC instead (a `+0530` engine too)."""
+    assert time_of("2026-10-18T09:00:00.000+0000") == datetime(2026, 10, 18, 9, tzinfo=UTC)
+    assert time_of("2026-10-18T14:30:00.000+0530") == datetime(2026, 10, 18, 9, tzinfo=UTC)
+    stage = cases_routes.StageOut(
+        key="legal",
+        name="Legal",
+        department="legal",
+        state="open",
+        started_at=time_of("2026-10-18T09:00:00.000+0000"),
+        ended_at=None,
+    )
+    sent = json.loads(stage.model_dump_json())
+    assert sent["started_at"] == "2026-10-18T09:00:00Z" and sent["ended_at"] is None
+
+
 def call(stage: str, start: str, end: str | None = None, canceled: bool = False) -> dict:
     return {"activityId": f"call_{stage}", "startTime": start, "endTime": end, "canceled": canceled}
 
@@ -90,7 +110,7 @@ def test_closed_with_activities_tells_cancelled_from_finished() -> None:
     found = cases.stage_states(STAGES, variables, cancelled)
     assert states(found)["finance"] == "closed" and states(found)["legal"] == "closed"
     assert states(found)["bd_loi"] == "done" and states(found)["design"] == "queued"
-    assert found[0].started_at == t and found[0].ended_at == t
+    assert found[0].started_at == found[0].ended_at == AT
 
     finished = [*cancelled[:2], call("legal", t, t, canceled=True), call("finance", t, t)]
     assert states(cases.stage_states(STAGES, variables, finished))["finance"] == "done"
@@ -99,7 +119,7 @@ def test_closed_with_activities_tells_cancelled_from_finished() -> None:
 def test_open_stage_from_activities_has_no_end() -> None:
     t = "2026-10-26T10:00:00.000+0000"
     found = cases.stage_states(STAGES, {"case_status": "open"}, [call("bd_qualification", t)])
-    assert found[0].state == "open" and found[0].started_at == t and found[0].ended_at is None
+    assert found[0].state == "open" and found[0].started_at == AT and found[0].ended_at is None
 
 
 def test_without_activities_a_stage_starts_when_its_variable_was_first_set() -> None:
@@ -109,7 +129,8 @@ def test_without_activities_a_stage_starts_when_its_variable_was_first_set() -> 
     variables = {"case_status": "open", "m_bd_qualification": "done", "m_legal": "in progress"}
     started = {"case_status": first, "m_bd_qualification": first, "m_legal": later}
     found = {s.key: s for s in cases.stage_states(STAGES, variables, started=started)}
-    assert found["bd_qualification"].started_at == first and found["legal"].started_at == later
+    assert found["bd_qualification"].started_at == datetime(2026, 10, 20, 9, tzinfo=UTC)
+    assert found["legal"].started_at == datetime(2026, 10, 26, 9, tzinfo=UTC)
     assert found["bd_qualification"].ended_at is None  # only the activities' history has ends
     assert found["design"].started_at is None
 
@@ -327,8 +348,9 @@ def test_history_is_read_in_chunks_and_a_full_page_is_an_error() -> None:
         (1, 3),
     ]
     one = FakeEngine(1)
-    asyncio.run(cases.history_variables(SimpleNamespace(operaton=one), ids[:500], ["x"]))  # type: ignore[arg-type]
-    assert len(one.calls) == 2  # 400 + 100
+    page = ids[: cases.MAX_CASES + 1]  # a listing reads the newest 500 and one more
+    asyncio.run(cases.history_variables(SimpleNamespace(operaton=one), page, ["x"]))  # type: ignore[arg-type]
+    assert one.calls == [(cases.MAX_CASES + 1, cases.MAX_CASES + 2)]  # a single request
 
     full = SimpleNamespace(operaton=FakeEngine(2))  # more rows than 1 name allows: not trusted
     with pytest.raises(RuntimeError, match="passed"):

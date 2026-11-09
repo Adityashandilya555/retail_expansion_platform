@@ -2071,6 +2071,7 @@
           "ended_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -2090,6 +2091,7 @@
           "started_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -2332,6 +2334,7 @@
             "type": "string"
           },
           "created": {
+            "format": "date-time",
             "title": "Created",
             "type": "string"
           },

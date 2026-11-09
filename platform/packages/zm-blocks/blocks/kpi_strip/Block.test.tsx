@@ -6,7 +6,7 @@ import type { AppUi, UiPage } from "../../src";
 import { problem, sampleCases, sampleUi } from "../../src/test";
 import { drawPage, location } from "../../src/test/render";
 
-/** Legal's page: the strip over a case table (`stages` restricts the table until a tile is picked). */
+/** Legal's page: the strip over a case table (`stages` scopes the table, a picked tile too). */
 const legalPage = (tiles: unknown[], table: Record<string, unknown> = {}): UiPage => ({
   key: "legal",
   layout: "standard",
@@ -49,18 +49,25 @@ test("Legal's page: the counts match the lists, and a tile filters the table and
   expect(codes()).toEqual(["MX-0001", "MX-0002", "MX-0003"]);
 });
 
-test("each kind counts its cases; a tile in the URL replaces the table's stage filter on arrival", async () => {
+test("each kind counts its cases; a tile in the URL filters the table on arrival", async () => {
   const [, , third] = sampleCases;
   if (!third) throw new Error("the fixtures have three sites");
   const done = { ...third, code: "MX-0004", status: "completed" as const, stages: third.stages.map((s) => ({ ...s, state: "done" as const })) };
   const tiles = [{ kind: "open_cases" }, { kind: "done" }, { kind: "done", stage: "legal", label: "Through Legal" }, { kind: "in_stage", stage: "bd_qualification" }];
-  drawPage(legalPage(tiles, { stages: ["legal"] }), { path: "/app/legal?kpi=done.legal", routes: { "GET /app/cases": () => [...sampleCases, done] } });
+  drawPage(legalPage(tiles, { stages: ["legal", "design"] }), { path: "/app/legal?kpi=done.legal", routes: { "GET /app/cases": () => [...sampleCases, done] } });
   await shows("3", /^Open sites/);
   await shows("1", /^Completed/);
   await shows("2", /^Through Legal/);
   await shows("1", /^In BD qualification/);
   expect(tile(/^Through Legal/).getAttribute("aria-pressed")).toBe("true");
-  expect(codes()).toEqual(["MX-0003", "MX-0004"]); // past Legal, though the table keeps to Legal otherwise
+  expect(codes()).toEqual(["MX-0003", "MX-0004"]); // past Legal
+});
+
+test("a picked tile keeps the table's own `stages`: the tile's cases in those stages", async () => {
+  drawPage(legalPage([{ kind: "open_cases" }, { kind: "awaiting_me" }], { stages: ["legal"] }), { path: "/app/legal?kpi=open_cases", routes });
+  await shows("3", /^Open sites/); // the strip counts the flow's cases
+  expect(tile(/^Open sites/).getAttribute("aria-pressed")).toBe("true");
+  expect(codes()).toEqual(["MX-0001"]); // the table still shows only the cases at Legal
 });
 
 test("a tile and the table's stage chips replace each other in the URL", async () => {

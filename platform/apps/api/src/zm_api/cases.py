@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from zm_api import tasks
 from zm_api.context import ClientContext
 from zm_api.errors import NotFound
-from zm_api.operaton import Json
+from zm_api.operaton import Json, time_of, time_or_none
 
 _log = logging.getLogger("zm_api.cases")
 CLOSED_READS = 8  # closed cases' activity histories read at once (no batch query exists)
@@ -43,8 +43,8 @@ class Stage:
     name: str
     department: str
     state: StageState
-    started_at: str | None = None
-    ended_at: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
 
 
 # --- derivation (pure) -----------------------------------------------------------------------
@@ -114,8 +114,8 @@ def stage_states(
                 name=s["name"],
                 department=s["department"],
                 state=state,
-                started_at=a.get("startTime") if a else since,
-                ended_at=a.get("endTime") if a else None,
+                started_at=time_or_none(a.get("startTime") if a else since),
+                ended_at=time_or_none(a.get("endTime") if a else None),
             )
         )
     return out
@@ -199,12 +199,13 @@ async def _start_values(conn: AsyncConnection, case_ids: Iterable[UUID]) -> dict
     return out
 
 
-HISTORY_CHUNK = 400  # process instances per history request; at most 500 when listing
+HISTORY_CHUNK = MAX_CASES + 1  # instances per history request: a listing's 500 + 1 in one call
 
 
 async def history_variables(ctx: ClientContext, ids: list[str], names: list[str]) -> list[Json]:
     """The variables of many process instances: one request per HISTORY_CHUNK instances (a
-    single one for any list of up to 500 cases; more only for `?status=` over every case). More
+    single one for any listing without `?status=`, which reads at most 500 + 1 cases; more only
+    for `?status=` over every case). More
     rows than the chunk can hold would mean a cut-off answer, so that is an error."""
     out: list[Json] = []
     for i in range(0, len(ids), HISTORY_CHUNK):
@@ -409,10 +410,10 @@ def events(created: Event, activities: list[Json], submitted: Iterable[Event]) -
     found = list(submitted)  # a submission completes its task before the stage it ends
     for a in activities:
         stage = str(a.get("activityId", "")).removeprefix("call_")
-        found.append(Event("stage_started", datetime.fromisoformat(a["startTime"]), stage=stage))
+        found.append(Event("stage_started", time_of(a["startTime"]), stage=stage))
         if a.get("endTime"):
             kind: EventKind = "stage_closed" if a.get("canceled") else "stage_done"
-            found.append(Event(kind, datetime.fromisoformat(a["endTime"]), stage=stage))
+            found.append(Event(kind, time_of(a["endTime"]), stage=stage))
     return [created, *sorted(found, key=lambda e: e.at)]
 
 

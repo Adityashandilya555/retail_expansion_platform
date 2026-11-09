@@ -16,7 +16,7 @@ function daysIn(c: CaseRow): number | null {
 
 /** case_table v1 (S1-25, #92): a flow's cases, e.g. the Sites list. A row opens the case page.
  * A kpi_strip tile picked in the URL (`?kpi=`, #94) shows the cases it counts instead of the stage
- * filters, so the table and the tile agree. */
+ * chips, so the table and the tile agree; the table's own `stages` still apply. */
 export function CaseTable({ props, ui }: BlockProps) {
   const { flow: flowKey, columns = ["code", "title", "stage", "status", "open_tasks"], stages: only } = props as Props;
   const flow = flowOf(ui, flowKey);
@@ -35,7 +35,8 @@ export function CaseTable({ props, ui }: BlockProps) {
   const rows = (cases.data?.rows ?? []).filter((c) => {
     const at = currentStage(c.stages)?.key ?? "";
     return (
-      (tile ? inTile(tile, c, flow) : (!only || only.includes(at)) && (picked.length === 0 || picked.includes(at))) &&
+      (!only || only.includes(at)) &&
+      (tile ? inTile(tile, c, flow) : picked.length === 0 || picked.includes(at)) &&
       (!term || c.code.toLowerCase().includes(term) || c.title.toLowerCase().includes(term))
     );
   });

@@ -23,8 +23,8 @@ class StageOut(_Model):
     department: str
     state: Literal["queued", "open", "done", "closed"]
     """`closed`: the case was closed in this stage, or the close cancelled it while it ran."""
-    started_at: str | None
-    ended_at: str | None
+    started_at: datetime | None
+    ended_at: datetime | None
 
 
 class CaseRow(_Model):
