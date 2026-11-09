@@ -3,10 +3,12 @@
 // that answers from fixtures.
 import { createApiClient, type ApiClient, type components } from "@zm/api-client";
 import { sampleDdChecklist } from "@zm/forms/samples";
+import caseActivityManifest from "../../blocks/case_activity/manifest.json";
 import caseFieldsManifest from "../../blocks/case_fields/manifest.json";
 import caseHeaderManifest from "../../blocks/case_header/manifest.json";
 import caseTableManifest from "../../blocks/case_table/manifest.json";
 import caseTasksManifest from "../../blocks/case_tasks/manifest.json";
+import kpiStripManifest from "../../blocks/kpi_strip/manifest.json";
 import taskInboxManifest from "../../blocks/task_inbox/manifest.json";
 import type { AppUi, BlockEntry, BlockManifest, BlockRegistry } from "../registry";
 
@@ -93,6 +95,8 @@ export const testBlocks: BlockRegistry = {
   case_header: { 1: standIn(caseHeaderManifest) },
   case_fields: { 1: standIn(caseFieldsManifest) },
   case_tasks: { 1: standIn(caseTasksManifest) },
+  case_activity: { 1: standIn(caseActivityManifest) },
+  kpi_strip: { 1: standIn(kpiStripManifest) },
   kpi_tile: { 1: stub("kpi_tile", ["hero"]) },
 };
 
@@ -150,6 +154,13 @@ export function sampleCase(over: Partial<CaseDetail> = {}): CaseDetail {
     tasks: [{ id: "t-dd", name: "Fill DD checklist", stage: "legal", assignee: null, can_act: true }],
     history: [
       { task: "bd_send_legal", task_name: "Send to Legal", by: "u-bd2", by_name: "BD Manager", outcome: null, comment: null, at: AT },
+    ],
+    events: [
+      { kind: "created", at: "2026-10-18T09:00:00Z", by: "u-bd2", by_name: "BD Manager" },
+      { kind: "stage_started", at: "2026-10-18T09:00:00Z", stage: "bd_qualification" },
+      { kind: "submitted", at: "2026-10-20T08:59:00Z", stage: "bd_qualification", task: "bd_send_legal", task_name: "Send to Legal", by: "u-bd2", by_name: "BD Manager" },
+      { kind: "stage_done", at: AT, stage: "bd_qualification" },
+      { kind: "stage_started", at: AT, stage: "legal" },
     ],
     ...over,
   };

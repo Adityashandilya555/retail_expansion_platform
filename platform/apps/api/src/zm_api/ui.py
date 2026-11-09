@@ -37,6 +37,8 @@ class UiStage(BaseModel):
     key: str
     name: str
     department: str
+    sla_days: int | None = None
+    """Days a case may spend in the stage before it shows as overdue (S2-29)."""
 
 
 class UiField(BaseModel):
@@ -86,7 +88,10 @@ def visible_ui(client_name: str, release: ReleaseRow, departments: set[str]) -> 
             name=f.name,
             case_label=f.case_label,
             case_code=f.case_code.pattern,
-            stages=[UiStage(key=s.key, name=s.name, department=s.department) for s in f.stages],
+            stages=[
+                UiStage(key=s.key, name=s.name, department=s.department, sla_days=s.sla_days)
+                for s in f.stages
+            ],
             start_fields=form_fields(wf, f.start.form),
         )
         for f in wf.flows

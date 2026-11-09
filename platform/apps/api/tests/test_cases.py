@@ -1,10 +1,12 @@
-"""The cases read API without the stack (#91): stage states from history rows, status, title,
-masking, task names, the routes' guards and the two Operaton history calls. The full flow runs in
-test_cases_integration.py (`-m integration`)."""
+"""The cases read API without the stack (#91): stage states from history rows, the activity
+timeline (#94), status, title, masking, task names, the routes' guards and the two Operaton
+history calls. The full flow runs in test_cases_integration.py (`-m integration`)."""
 
 import asyncio
 import copy
 import json
+import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -12,10 +14,10 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from zm_api import cases, tasks
+from zm_api import cases, cases_routes, tasks
 from zm_api.context import Resolver
 from zm_api.main import create_app
-from zm_api.operaton import OperatonClient
+from zm_api.operaton import OperatonClient, time_of
 from zm_api.registry import Client
 from zm_api.templates import load_templates
 
@@ -72,6 +74,26 @@ def test_closed_in_legal_from_variables() -> None:
     assert cases.case_status(variables) == "closed"
 
 
+AT = datetime(2026, 10, 26, 10, tzinfo=UTC)  # "2026-10-26T10:00:00.000+0000" as Operaton sends it
+
+
+def test_operaton_times_become_iso_utc() -> None:
+    """Operaton's `+0000` offset has no colon, which Safari's `Date.parse` rejects: the API
+    sends ISO 8601 in UTC instead (a `+0530` engine too)."""
+    assert time_of("2026-10-18T09:00:00.000+0000") == datetime(2026, 10, 18, 9, tzinfo=UTC)
+    assert time_of("2026-10-18T14:30:00.000+0530") == datetime(2026, 10, 18, 9, tzinfo=UTC)
+    stage = cases_routes.StageOut(
+        key="legal",
+        name="Legal",
+        department="legal",
+        state="open",
+        started_at=time_of("2026-10-18T09:00:00.000+0000"),
+        ended_at=None,
+    )
+    sent = json.loads(stage.model_dump_json())
+    assert sent["started_at"] == "2026-10-18T09:00:00Z" and sent["ended_at"] is None
+
+
 def call(stage: str, start: str, end: str | None = None, canceled: bool = False) -> dict:
     return {"activityId": f"call_{stage}", "startTime": start, "endTime": end, "canceled": canceled}
 
@@ -88,7 +110,7 @@ def test_closed_with_activities_tells_cancelled_from_finished() -> None:
     found = cases.stage_states(STAGES, variables, cancelled)
     assert states(found)["finance"] == "closed" and states(found)["legal"] == "closed"
     assert states(found)["bd_loi"] == "done" and states(found)["design"] == "queued"
-    assert found[0].started_at == t and found[0].ended_at == t
+    assert found[0].started_at == found[0].ended_at == AT
 
     finished = [*cancelled[:2], call("legal", t, t, canceled=True), call("finance", t, t)]
     assert states(cases.stage_states(STAGES, variables, finished))["finance"] == "done"
@@ -97,7 +119,57 @@ def test_closed_with_activities_tells_cancelled_from_finished() -> None:
 def test_open_stage_from_activities_has_no_end() -> None:
     t = "2026-10-26T10:00:00.000+0000"
     found = cases.stage_states(STAGES, {"case_status": "open"}, [call("bd_qualification", t)])
-    assert found[0].state == "open" and found[0].started_at == t and found[0].ended_at is None
+    assert found[0].state == "open" and found[0].started_at == AT and found[0].ended_at is None
+
+
+def test_without_activities_a_stage_starts_when_its_variable_was_first_set() -> None:
+    """The list (S2-29: days in stage, overdue): `m_<stage>`'s history row keeps the createTime
+    of its first value, `in progress`, set when the stage started."""
+    first, later = "2026-10-20T09:00:00.000+0000", "2026-10-26T09:00:00.000+0000"
+    variables = {"case_status": "open", "m_bd_qualification": "done", "m_legal": "in progress"}
+    started = {"case_status": first, "m_bd_qualification": first, "m_legal": later}
+    found = {s.key: s for s in cases.stage_states(STAGES, variables, started=started)}
+    assert found["bd_qualification"].started_at == datetime(2026, 10, 20, 9, tzinfo=UTC)
+    assert found["legal"].started_at == datetime(2026, 10, 26, 9, tzinfo=UTC)
+    assert found["bd_qualification"].ended_at is None  # only the activities' history has ends
+    assert found["design"].started_at is None
+
+
+def test_events_lead_with_created_then_stage_runs_and_submissions_by_time() -> None:
+    """The Activity tab (S2-29). The case row is written once Operaton has started the case, so
+    `created` trails the first stage's start yet leads; a cancelled run ends `stage_closed`."""
+
+    def t(minute: int) -> str:
+        return f"2026-10-26T10:{minute:02d}:00.000+0000"
+
+    by = uuid.uuid4()
+    created = cases.Event("created", datetime.fromisoformat(t(1)), by=by, by_name="Bd2")
+    sent = cases.Event(
+        "submitted",
+        datetime.fromisoformat(t(2)),
+        stage="bd_qualification",
+        task="bd_send_legal",
+        task_name="Send to Legal",
+        by=by,
+        by_name="Bd2",
+    )
+    runs = [
+        call("bd_qualification", t(0), t(3)),
+        call("legal", t(3)),
+        call("finance", t(3), t(4), canceled=True),  # cut short by a close
+    ]
+    found = cases.events(created, runs, [sent])
+    assert [(e.kind, e.stage) for e in found] == [
+        ("created", None),
+        ("stage_started", "bd_qualification"),
+        ("submitted", "bd_qualification"),
+        ("stage_done", "bd_qualification"),
+        ("stage_started", "legal"),
+        ("stage_started", "finance"),
+        ("stage_closed", "finance"),
+    ]
+    assert found[2] is sent and found[3].at == datetime.fromisoformat(t(3))
+    assert cases.events(created, [], []) == [created]
 
 
 def test_case_status() -> None:
@@ -176,6 +248,22 @@ def test_routes_need_a_client_token(rows: dict[str, Client]) -> None:
         owner = bearer(token("owner", client=None))
         assert http.get("/app/cases", headers=owner).status_code == 403
         assert http.get("/app/cases/MX-0001", headers=owner).status_code == 403
+
+
+def test_a_cut_off_list_says_so_in_a_header_the_browser_can_read(
+    rows: dict[str, Client], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def capped(*_: Any) -> tuple[list[cases.CaseRow], bool]:
+        return [], True
+
+    web = "https://zm-web.test"
+    monkeypatch.setattr(cases, "list_cases", capped)
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", web)
+    with TestClient(create_app(Resolver(FakeRegistry(rows)))) as http:
+        r = http.get("/app/cases", headers={**bearer(token()), "Origin": web})
+    assert r.status_code == 200 and r.json() == []
+    assert r.headers["x-truncated"] == "true"
+    assert "x-truncated" in r.headers["access-control-expose-headers"].lower()
 
 
 @respx.mock
@@ -260,8 +348,9 @@ def test_history_is_read_in_chunks_and_a_full_page_is_an_error() -> None:
         (1, 3),
     ]
     one = FakeEngine(1)
-    asyncio.run(cases.history_variables(SimpleNamespace(operaton=one), ids[:500], ["x"]))  # type: ignore[arg-type]
-    assert len(one.calls) == 2  # 400 + 100
+    page = ids[: cases.MAX_CASES + 1]  # a listing reads the newest 500 and one more
+    asyncio.run(cases.history_variables(SimpleNamespace(operaton=one), page, ["x"]))  # type: ignore[arg-type]
+    assert one.calls == [(cases.MAX_CASES + 1, cases.MAX_CASES + 2)]  # a single request
 
     full = SimpleNamespace(operaton=FakeEngine(2))  # more rows than 1 name allows: not trusted
     with pytest.raises(RuntimeError, match="passed"):

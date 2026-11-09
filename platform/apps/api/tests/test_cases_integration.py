@@ -16,6 +16,7 @@ import os
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -25,6 +26,7 @@ from alembic.config import Config
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
+from zm_api import cases
 from zm_api.main import create_app
 from zm_api.operaton import OperatonClient
 from zm_api.publish import publish
@@ -270,6 +272,17 @@ def test_the_list_matches_operaton_with_one_history_request(
     assert {k: s for k, s in states(a).items() if s != "queued"} == expect
 
 
+def test_the_list_has_stage_starts_for_days_in_stage(world: World) -> None:
+    """S2-29 (overdue): an open case's started stages carry their start, as the detail has it."""
+    code = world.codes["A"]
+    listed = {s["key"]: s for s in rows(world)[code]["stages"]}
+    detail = {s["key"]: s for s in world.get("legal1", f"/app/cases/{code}")["stages"]}
+    for k in ("bd_qualification", "legal", "finance"):
+        at = [datetime.fromisoformat(s[k]["started_at"]) for s in (listed, detail)]
+        assert abs((at[0] - at[1]).total_seconds()) < 1, k
+    assert listed["design"]["started_at"] is None
+
+
 def test_parallel_stages_are_open_together(world: World) -> None:
     a = rows(world)[world.codes["A"]]
     assert states(a)["legal"] == states(a)["finance"] == "open"
@@ -288,6 +301,26 @@ def test_a_case_closed_in_legal(world: World) -> None:
     assert rows(world, status="completed") == {}
     assert world.codes["C"] not in rows(world, status="open")
     assert len(rows(world, flow="store_launch")) == 3 and rows(world, flow="nope") == {}
+
+
+def test_past_the_cap_the_list_says_it_is_cut_off(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """More cases than MAX_CASES: the newest ones and `X-Truncated: true`, with or without
+    `?status=`, so kpi_strip's counts never fall short silently."""
+
+    def listed(**params: Any) -> tuple[list[str], str | None]:
+        r = world.http.get("/app/cases", params=params, headers=world.auth("bd1"))
+        assert r.status_code == 200, r.text
+        return [c["code"] for c in r.json()], r.headers.get("x-truncated")
+
+    a, b, c = (world.codes[k] for k in "ABC")
+    assert listed() == ([c, b, a], None)
+    monkeypatch.setattr(cases, "MAX_CASES", 2)
+    assert listed() == ([c, b], "true")
+    assert listed(status="open") == ([b, a], None)
+    monkeypatch.setattr(cases, "MAX_CASES", 1)
+    assert listed(status="open") == ([b], "true")
 
 
 def test_hidden_sections_are_masked_in_both_endpoints(world: World) -> None:
@@ -351,3 +384,41 @@ def test_the_detail_has_times_tasks_and_decisions(world: World) -> None:
         "legal_change_request",
     ]
     assert c["history"][-1]["outcome"] == "accept" and c["tasks"] == []
+
+
+def _timeline(case: dict[str, Any]) -> list[tuple[str, str | None]]:
+    """(kind, task for a submission or else stage) of each event."""
+    return [(e["kind"], e["task"] or e["stage"]) for e in case["events"]]
+
+
+def test_the_activity_is_created_then_stage_runs_and_submissions_in_order(world: World) -> None:
+    a = world.get("legal1", f"/app/cases/{world.codes['A']}")
+    seen = _timeline(a)
+    assert seen[:2] == [("created", None), ("stage_started", "bd_qualification")]
+    assert a["events"][0]["by"] == str(world.users["bd2"]) and a["events"][0]["by_name"] == "Bd2"
+    # each submission once, in order (BD L2 started A, so its own review step was skipped)
+    assert [s for s in seen if s[0] == "submitted"] == [
+        ("submitted", t)
+        for t in ("bd_site_details", "bd_approve_details", "bd_upload_loi", "bd_send_legal")
+    ]
+    assert seen.index(("submitted", "bd_approve_details")) < seen.index(
+        ("stage_done", "bd_qualification")
+    )
+    assert seen.index(("stage_done", "bd_qualification")) < seen.index(("stage_started", "bd_loi"))
+    assert seen.index(("submitted", "bd_send_legal")) < seen.index(("stage_started", "legal"))
+    assert seen[-2:] in (
+        [("stage_started", "legal"), ("stage_started", "finance")],
+        [("stage_started", "finance"), ("stage_started", "legal")],  # parallel: the same instant
+    )
+    times = [datetime.fromisoformat(e["at"]) for e in a["events"][1:]]
+    assert times == sorted(times)
+    # no values: what legal1 can't see on the case page can't leak through the timeline
+    keys = {"kind", "at", "stage", "task", "task_name", "by", "by_name"}
+    assert all(set(e) == keys for e in a["events"])
+
+
+def test_the_closed_case_activity_ends_with_its_stages_closed(world: World) -> None:
+    seen = _timeline(world.get("bd1", f"/app/cases/{world.codes['C']}"))
+    assert ("submitted", "legal_change_request") in seen
+    assert {("stage_closed", "legal"), ("stage_closed", "finance")} <= set(seen)
+    assert ("stage_done", "legal") not in seen

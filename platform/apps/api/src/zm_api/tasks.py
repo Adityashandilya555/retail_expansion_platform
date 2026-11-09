@@ -39,7 +39,7 @@ from zm_api.errors import (
     ServiceUnavailable,
     Unauthorized,
 )
-from zm_api.operaton import Json, OperatonError
+from zm_api.operaton import Json, OperatonError, time_of
 from zm_api.releases import ReleaseRow
 from zm_compiler import level_groups
 from zm_schema import group_id, submission_errors
@@ -402,7 +402,7 @@ class TaskItem:
     flow: str
     case_code: str
     stage: str | None
-    created: str
+    created: datetime
     assignee: str | None
     form_key: str | None
 
@@ -438,7 +438,7 @@ async def _items(
             flow=case.flow,
             case_code=case.code,
             stage=stage["key"] if stage else None,
-            created=t["created"],
+            created=time_of(t["created"]),
             assignee=t.get("assignee"),
             form_key=t.get("formKey"),
         )
