@@ -1,0 +1,11 @@
+{
+  "name": "case_activity",
+  "version": 1,
+  "description": "What happened on the case, oldest first: created, each stage started, done or closed, and each submitted task, with who and when. No form values.",
+  "regions": ["activity"],
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

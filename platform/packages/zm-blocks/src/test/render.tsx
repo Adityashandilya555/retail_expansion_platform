@@ -5,7 +5,7 @@ import { renderWithZm } from "@zm/ui/test";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { BlocksApi } from "../api";
 import { PageRenderer } from "../PageRenderer";
-import type { UiPage } from "../registry";
+import type { AppUi, UiPage } from "../registry";
 import { fixtureApi, sampleUi } from "./index";
 
 function Location() {
@@ -15,10 +15,15 @@ function Location() {
 
 export function drawPage(
   page: UiPage,
-  { path = "/app", routes = {}, scheme }: { path?: string; routes?: Parameters<typeof fixtureApi>[0]; scheme?: "light" | "dark" } = {},
+  {
+    path = "/app",
+    routes = {},
+    scheme,
+    ui = sampleUi,
+  }: { path?: string; routes?: Parameters<typeof fixtureApi>[0]; scheme?: "light" | "dark"; ui?: AppUi } = {},
 ): Request[] {
   const { api, calls } = fixtureApi(routes);
-  const drawn = <PageRenderer page={page} ui={sampleUi} />;
+  const drawn = <PageRenderer page={page} ui={ui} />;
   renderWithZm(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <BlocksApi value={api}>

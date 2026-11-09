@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
+from fastapi import Response
 from pydantic import BaseModel, ConfigDict
 
 from zm_api import cases
@@ -22,8 +23,8 @@ class StageOut(_Model):
     department: str
     state: Literal["queued", "open", "done", "closed"]
     """`closed`: the case was closed in this stage, or the close cancelled it while it ran."""
-    started_at: str | None
-    ended_at: str | None
+    started_at: datetime | None
+    ended_at: datetime | None
 
 
 class CaseRow(_Model):
@@ -78,6 +79,19 @@ class DecisionOut(_Model):
     at: datetime
 
 
+class EventOut(_Model):
+    kind: cases.EventKind
+    """`stage_closed`: the case was closed in the stage, or the close cut it short."""
+    at: datetime
+    stage: str | None = None
+    task: str | None = None
+    """The submitted task's id."""
+    task_name: str | None = None
+    by: UUID | None = None
+    """Who started the case or submitted the task."""
+    by_name: str | None = None
+
+
 class CaseDetail(CaseRow):
     sections: list[SectionOut]
     """The start form of the newer of the active release and the case's own, as the user sees
@@ -86,30 +100,43 @@ class CaseDetail(CaseRow):
     tasks: list[OpenTaskOut]
     history: list[DecisionOut]
     """Committed submissions, oldest first."""
+    events: list[EventOut]
+    """The case's activity (S2-29): created first, then each stage run's start and end and each
+    submission, oldest first. No values: only what, which stage or task, who and when."""
 
 
 def _row(row: cases.CaseRow) -> dict[str, Any]:
     return {**row.__dict__, "stages": [s.__dict__ for s in row.stages]}
 
 
-@routes.get("/cases")
+@routes.get(
+    "/cases",
+    responses={
+        200: {"headers": {"X-Truncated": {"description": "`true`: more than 500 matched."}}}
+    },
+)
 async def list_cases(
     ctx: ClientCtx,
     uid: UserId,
+    response: Response,
     flow: str | None = None,
     status: Literal["open", "completed", "closed"] | None = None,
 ) -> list[CaseRow]:
     """Every case of the client (newest first, up to 500) with its stage states."""
-    return [CaseRow(**_row(r)) for r in await cases.list_cases(ctx, uid, flow, status)]
+    found, truncated = await cases.list_cases(ctx, uid, flow, status)
+    if truncated:
+        response.headers["X-Truncated"] = "true"
+    return [CaseRow(**_row(r)) for r in found]
 
 
 @routes.get("/cases/{code}")
 async def get_case(code: str, ctx: ClientCtx, uid: UserId) -> CaseDetail:
-    """One case: its stages with times, values by section, open tasks and decisions."""
+    """One case: its stages with times, values by section, open tasks, decisions and activity."""
     detail = await cases.get_case(ctx, uid, code)
     return CaseDetail(
         **_row(detail.row),
         sections=[s.__dict__ for s in detail.sections],
         tasks=[t.__dict__ for t in detail.open_tasks],
         history=[d.__dict__ for d in detail.history],
+        events=[e.__dict__ for e in detail.events],
     )

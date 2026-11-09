@@ -89,7 +89,9 @@ def test_a_user_without_memberships_sees_only_pages_for_everyone() -> None:
 
 
 def test_client_look_release_version_and_flows() -> None:
-    out = ui.visible_ui("Matrix Retail", release(version=3), {"legal"})
+    wf = matrix_retail()
+    wf["flows"][0]["stages"][2]["sla_days"] = 5  # legal (S2-29)
+    out = ui.visible_ui("Matrix Retail", release(version=3, workflow=wf), {"legal"})
     look = {"name": "Matrix Retail", "theme": "quartz", "accent": "slate"}
     assert out.client.model_dump() == look
     assert out.release.version == 3
@@ -99,8 +101,10 @@ def test_client_look_release_version_and_flows() -> None:
         "key": "bd_qualification",
         "name": flow.stages[0].name,
         "department": "bd",
+        "sla_days": None,
     }
     assert [s.department for s in flow.stages][:4] == ["bd", "bd", "legal", "bd"]
+    assert flow.stages[2].sla_days == 5
     assert [f.key for f in flow.start_fields] == ["site_name", "city", "address", "store_model"]
     assert flow.start_fields[0].type == "text" and flow.start_fields[0].label
 

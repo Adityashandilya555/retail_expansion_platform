@@ -6,6 +6,7 @@
 
 import re
 from collections.abc import Iterator
+from typing import Any
 
 from jsonschema import Draft202012Validator
 
@@ -58,6 +59,26 @@ def ancestors(graph: dict[str, set[str]], key: str) -> set[str]:
             seen.add(a)
             todo.extend(graph.get(a, set()))
     return seen
+
+
+def _case_block_stages(
+    block: str, props: dict[str, Any], flow_stages: dict[str, list[str]]
+) -> Iterator[tuple[str, str]]:
+    """(path under `props`, message) for each stage a kpi_strip tile or a case_table names that
+    isn't a stage of the block's flow: the shell would show an empty tile or table without
+    telling why (#94). The flow is the shell's (cases.tsx `flowOf`): `flow`, else the first."""
+    if block not in ("kpi_strip", "case_table") or not flow_stages:
+        return
+    flow = props.get("flow")
+    if flow not in flow_stages:
+        flow = next(iter(flow_stages))
+    if block == "kpi_strip":
+        named = [(join("tiles", i, "stage"), t.get("stage")) for i, t in enumerate(props["tiles"])]
+    else:
+        named = [(join("stages", i), k) for i, k in enumerate(props.get("stages", []))]
+    for at, stage in named:
+        if stage is not None and stage not in flow_stages[flow]:
+            yield at, f"'{stage}' is not a stage of flow '{flow}'"
 
 
 def semantic_errors(doc: WorkflowV1) -> list[Error]:
@@ -243,6 +264,9 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
                 before |= group_filled
 
     # ── apps: the look and each page against the UI packages (catalogue.json, #37) ──
+    flow_stages: dict[str, list[str]] = {}
+    for f in doc.flows:
+        flow_stages.setdefault(f.key, [s.key for s in f.stages])
     ui = catalogue.load()
     if doc.apps.theme not in ui["presets"]:
         err("apps.theme", f"unknown theme preset '{doc.apps.theme}'")
@@ -299,6 +323,11 @@ def semantic_errors(doc: WorkflowV1) -> list[Error]:
                 if any(
                     Draft202012Validator(m["props"]).is_valid(ref.props) for m in versions.values()
                 ):
+                    for at, msg in _case_block_stages(ref.block, ref.props, flow_stages):
+                        err(
+                            join(bp, "props", at),
+                            f"{on}, region '{key}': block '{ref.block}': {msg}",
+                        )
                     continue
                 newest = max(versions.values(), key=lambda m: m["version"])
                 for e in Draft202012Validator(newest["props"]).iter_errors(ref.props):

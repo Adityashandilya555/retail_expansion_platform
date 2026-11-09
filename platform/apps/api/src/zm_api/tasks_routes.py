@@ -42,7 +42,7 @@ class TaskItem(_Model):
     case_code: str
     stage: str | None
     """Key of the stage the task belongs to."""
-    created: str
+    created: datetime
     assignee: str | None
     form_key: str | None
     """Operaton's form key, `zm:<task id>`."""

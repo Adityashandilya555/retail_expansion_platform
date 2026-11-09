@@ -161,7 +161,7 @@ export interface paths {
         };
         /**
          * Get Case
-         * @description One case: its stages with times, values by section, open tasks and decisions.
+         * @description One case: its stages with times, values by section, open tasks, decisions and activity.
          */
         get: operations["get_case_app_cases__code__get"];
         put?: never;
@@ -856,6 +856,12 @@ export interface components {
              */
             created_at: string;
             /**
+             * Events
+             * @description The case's activity (S2-29): created first, then each stage run's start and end and each
+             *     submission, oldest first. No values: only what, which stage or task, who and when.
+             */
+            events: components["schemas"]["EventOut"][];
+            /**
              * Fields
              * @description Start-form values, without fields hidden from the user's level.
              */
@@ -1304,6 +1310,36 @@ export interface components {
             workflow: {
                 [key: string]: unknown;
             };
+        };
+        /** EventOut */
+        EventOut: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * By
+             * @description Who started the case or submitted the task.
+             */
+            by?: string | null;
+            /** By Name */
+            by_name?: string | null;
+            /**
+             * Kind
+             * @description `stage_closed`: the case was closed in the stage, or the close cut it short.
+             * @enum {string}
+             */
+            kind: "created" | "stage_started" | "stage_done" | "stage_closed" | "submitted";
+            /** Stage */
+            stage?: string | null;
+            /**
+             * Task
+             * @description The submitted task's id.
+             */
+            task?: string | null;
+            /** Task Name */
+            task_name?: string | null;
         };
         /** FieldError */
         FieldError: {
@@ -1765,7 +1801,10 @@ export interface components {
             assignee: string | null;
             /** Case Code */
             case_code: string;
-            /** Created */
+            /**
+             * Created
+             * Format: date-time
+             */
             created: string;
             /** Flow */
             flow: string;
@@ -1863,6 +1902,8 @@ export interface components {
             key: string;
             /** Name */
             name: string;
+            /** Sla Days */
+            sla_days?: number | null;
         };
         /** UserCounts */
         UserCounts: {
@@ -2215,6 +2256,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description `true`: more than 500 matched. */
+                    "X-Truncated"?: unknown;
                     [name: string]: unknown;
                 };
                 content: {

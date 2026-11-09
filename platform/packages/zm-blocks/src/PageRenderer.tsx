@@ -15,6 +15,7 @@ export function defaultCasePage(flow: string): UiPage {
       header: [{ block: "case_header", props: {} }],
       overview: [{ block: "case_fields", props: {} }],
       tasks: [{ block: "case_tasks", props: {} }],
+      activity: [{ block: "case_activity", props: {} }],
     },
   };
 }

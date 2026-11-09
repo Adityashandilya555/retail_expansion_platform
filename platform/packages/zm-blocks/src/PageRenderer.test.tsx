@@ -168,10 +168,10 @@ test("case: without ?tab= the first tab opens, and choosing a tab puts it in the
   expect(screen.getByRole("region", { name: "case_tasks" })).toBeDefined();
 });
 
-test("the built-in case page: case_header, then case_fields and case_tasks tabs", () => {
+test("the built-in case page: case_header, then case_fields, case_tasks and case_activity tabs", () => {
   draw(defaultCasePage("store_launch"), { path: "/app/cases/MX-0001?tab=overview" });
   expect(blockNames()).toEqual(["case_header", "case_fields"]);
-  expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Tasks"]);
+  expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Tasks", "Activity"]);
 });
 
 test("layout manifests: names match their keys, standard has hero (max 1), main, aside; case needs a flow", () => {

@@ -64,7 +64,7 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id"],
-        expose_headers=["X-Request-Id"],
+        expose_headers=["X-Request-Id", "X-Truncated"],
     )
 
     @app.get("/healthz")
