@@ -101,7 +101,7 @@ test("sla_days 5 on Legal: a case 6 days in Legal shows an overdue pill", async 
   drawPage(sitesPage(SITES), { path: "/app/sites", routes, ui: legalSla5 });
   const table = await screen.findByRole("table", { name: "Sites" });
   await within(table).findByText("Indiranagar");
-  expect(cells(table).map((row) => row[4])).toEqual(["OpenOverdue", "Open", "Open"]); // MX-0001 only: Design has no SLA
+  expect(cells(table).map((row) => row[4])).toEqual(["OpenOverdue in Legal", "Open", "Open"]); // MX-0001 only: Design has no SLA
   vi.useRealTimers();
 });
 
@@ -110,11 +110,11 @@ test("five days in Legal is not overdue", async () => {
   drawPage(sitesPage(SITES), { path: "/app/sites", routes, ui: legalSla5 });
   const table = await screen.findByRole("table", { name: "Sites" });
   await within(table).findByText("Indiranagar");
-  expect(within(table).queryByText("Overdue")).toBeNull();
+  expect(within(table).queryByText(/Overdue/)).toBeNull();
   vi.useRealTimers();
 });
 
-test("parallel stages: Overdue and Days in stage both follow the current (first open) stage", async () => {
+test("parallel stages: a late second open stage is overdue, named in the pill, and Days in stage counts it", async () => {
   vi.useFakeTimers({ now: new Date("2026-10-26T09:00:01Z"), toFake: ["Date"] });
   const [first] = sampleCases;
   if (!first) throw new Error("the fixtures have three sites");
@@ -128,7 +128,7 @@ test("parallel stages: Overdue and Days in stage both follow the current (first 
   drawPage(sitesPage({ columns: ["code", "stage", "age", "status"] }), { routes: { "GET /app/cases": () => [parallel] }, ui: legalSla5 });
   const table = await screen.findByRole("table", { name: "Sites" });
   await within(table).findByText("MX-0001");
-  expect(cells(table)).toEqual([["MX-0001", expect.stringMatching(/^BD qualification/), "1", "Open"]]);
+  expect(cells(table)).toEqual([["MX-0001", expect.stringMatching(/^BD qualification/), "6", "OpenOverdue in Legal"]]);
   vi.useRealTimers();
 });
 

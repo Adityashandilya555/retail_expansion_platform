@@ -54,7 +54,7 @@ test("each kind counts its cases; a tile in the URL filters the table on arrival
   if (!third) throw new Error("the fixtures have three sites");
   const done = { ...third, code: "MX-0004", status: "completed" as const, stages: third.stages.map((s) => ({ ...s, state: "done" as const })) };
   const tiles = [{ kind: "open_cases" }, { kind: "done" }, { kind: "done", stage: "legal", label: "Through Legal" }, { kind: "in_stage", stage: "bd_qualification" }];
-  drawPage(legalPage(tiles, { stages: ["legal", "design"] }), { path: "/app/legal?kpi=done.legal", routes: { "GET /app/cases": () => [...sampleCases, done] } });
+  drawPage(legalPage(tiles), { path: "/app/legal?kpi=done.legal", routes: { "GET /app/cases": () => [...sampleCases, done] } });
   await shows("3", /^Open sites/);
   await shows("1", /^Completed/);
   await shows("2", /^Through Legal/);
@@ -63,11 +63,55 @@ test("each kind counts its cases; a tile in the URL filters the table on arrival
   expect(codes()).toEqual(["MX-0003", "MX-0004"]); // past Legal
 });
 
-test("a picked tile keeps the table's own `stages`: the tile's cases in those stages", async () => {
+test("a picked tile keeps the table's own `stages`, and the strip counts within them", async () => {
   drawPage(legalPage([{ kind: "open_cases" }, { kind: "awaiting_me" }], { stages: ["legal"] }), { path: "/app/legal?kpi=open_cases", routes });
-  await shows("3", /^Open sites/); // the strip counts the flow's cases
+  await shows("1", /^Open sites/); // 3 open in the flow, 1 of them at Legal
   expect(tile(/^Open sites/).getAttribute("aria-pressed")).toBe("true");
-  expect(codes()).toEqual(["MX-0001"]); // the table still shows only the cases at Legal
+  expect(codes()).toEqual(["MX-0001"]);
+});
+
+/** Every kind over sites in every state: one completed, one with Legal late beside a reopened BD. */
+function everyKindCases() {
+  const [first, , third] = sampleCases;
+  if (!first || !third) throw new Error("the fixtures have three sites");
+  const done = { ...third, code: "MX-0004", status: "completed" as const, stages: third.stages.map((s) => ({ ...s, state: "done" as const })) };
+  const parallel = {
+    ...first,
+    code: "MX-0005",
+    my_tasks: 0,
+    stages: first.stages.map((s) => (s.key === "bd_qualification" ? { ...s, state: "open" as const, started_at: "2026-10-25T09:00:00Z", ended_at: null } : s)),
+  };
+  return [...sampleCases, done, parallel];
+}
+const legalSla5: AppUi = {
+  ...sampleUi,
+  flows: sampleUi.flows.map((f) => ({ ...f, stages: f.stages.map((s) => (s.key === "legal" ? { ...s, sla_days: 5 } : s)) })),
+};
+const KIND_GROUPS = [
+  [{ kind: "open_cases" }, { kind: "awaiting_me" }, { kind: "overdue" }, { kind: "done" }],
+  [{ kind: "in_stage", stage: "legal" }, { kind: "overdue", stage: "legal" }, { kind: "done", stage: "legal" }, { kind: "awaiting_me", stage: "legal" }],
+];
+
+test.each([
+  [0, "an unscoped table", undefined],
+  [1, "an unscoped table", undefined],
+  [0, "a table scoped to Legal", ["legal"]],
+  [1, "a table scoped to Legal", ["legal"]],
+] as const)("tiles %i over %s: each tile's count is the rows it shows once picked", async (group, _, stages) => {
+  vi.useFakeTimers({ now: new Date("2026-10-26T09:00:01Z"), toFake: ["Date"] }); // Legal runs 6 days, SLA 5
+  const tiles = KIND_GROUPS[group] ?? [];
+  drawPage(legalPage(tiles, stages ? { stages } : {}), { path: "/app/legal", routes: { "GET /app/cases": everyKindCases }, ui: legalSla5 });
+  await waitFor(() => expect(codes().length).toBeGreaterThan(0));
+  const user = userEvent.setup();
+  for (const button of screen.getAllByRole("button", { pressed: false })) {
+    await waitFor(() => expect(button.textContent).toMatch(/\d/));
+    const count = Number((button.textContent ?? "").replace(/\D/g, "")); // labels have no digits
+    await user.click(button);
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    const shown = codes().filter((c) => c?.startsWith("MX-")).length; // not the empty-state row
+    expect([button.textContent, shown]).toEqual([button.textContent, count]);
+    await user.click(button); // clear it again
+  }
 });
 
 test("a tile and the table's stage chips replace each other in the URL", async () => {

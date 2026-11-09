@@ -1,15 +1,16 @@
 import { Paper, SimpleGrid, Text, UnstyledButton } from "@mantine/core";
 import { Num } from "@zm/ui";
 import { useSearchParams } from "react-router";
-import { Failed, flowOf, inTile, tileKey, useCases, type Tile } from "../../src/cases";
+import { Failed, flowOf, inTableScope, inTile, tableStages, tileKey, useCases, type Tile } from "../../src/cases";
 import type { BlockProps } from "../../src/registry";
 
 /** `props` as manifest.json allows them (the renderer has already validated them). */
 type Props = { flow?: string; tiles: Tile[] };
 
-/** kpi_strip v1 (S2-29, #94): counts over a flow's cases; a tile picks (or clears) `?kpi=`, which
- * filters the page's case_table to the cases the tile counts. */
-export function KpiStrip({ props, ui }: BlockProps) {
+/** kpi_strip v1 (S2-29, #94): counts over a flow's cases (within the `stages` of the page's
+ * case_table over that flow); a tile picks (or clears) `?kpi=`, which filters that table to the
+ * cases the tile counts. */
+export function KpiStrip({ props, ui, page }: BlockProps) {
   const { flow: flowKey, tiles } = props as Props;
   const flow = flowOf(ui, flowKey);
   // ponytail: counted in the browser from GET /app/cases, the request case_table makes anyway. It
@@ -31,6 +32,9 @@ export function KpiStrip({ props, ui }: BlockProps) {
     return t.label ?? named[t.kind];
   };
   const picked = params.get("kpi");
+  // counted within the page's case_table's `stages`, so a picked tile's count is the rows it shows
+  const scope = tableStages(page, ui, flow);
+  const scoped = cases.data?.rows.filter((c) => inTableScope(c, scope));
   return (
     <SimpleGrid cols={{ base: 2, sm: tiles.length }}>
       {tiles.map((t, i) => {
@@ -57,7 +61,7 @@ export function KpiStrip({ props, ui }: BlockProps) {
                 {label(t)}
               </Text>
               <Text span display="block" fz="h2" fw={650}>
-                <Num value={cases.data?.rows.filter((c) => inTile(t, c, flow)).length} />
+                <Num value={scoped?.filter((c) => inTile(t, c, flow)).length} />
                 {cases.data?.truncated && "+"}
               </Text>
             </Paper>

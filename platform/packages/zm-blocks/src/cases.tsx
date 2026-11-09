@@ -58,12 +58,33 @@ export function useCases(flow: string | undefined) {
 /** Whole days since `at`. */
 export const daysSince = (at: string) => Math.floor((Date.now() - Date.parse(at)) / 86_400_000);
 
-/** Longer in its stage than the stage's `sla_days` (S2-29): the case's current stage, the one
- * case_table's "Days in stage" counts (with parallel stages open, the first), or `stage` when given. */
-export function isOverdue(c: CaseRow, flow: Flow, stage?: string): boolean {
-  const s = stage ? c.stages.find((x) => x.key === stage) : currentStage(c.stages);
-  const sla = flow.stages.find((f) => f.key === s?.key)?.sla_days;
-  return s?.state === "open" && !!sla && !!s.started_at && daysSince(s.started_at) > sla;
+/** The open stage the case has run longer than its `sla_days` (S2-29), checking every open stage
+ * (parallel ones too) or only `stage` when given; the first such in flow order. The kpi_strip
+ * `overdue` tiles and case_table's Overdue pill both read this. */
+export function overdueStage(c: CaseRow, flow: Flow, stage?: string): StageOut | undefined {
+  return c.stages.find((s) => {
+    const sla = flow.stages.find((f) => f.key === s.key)?.sla_days;
+    return s.state === "open" && (!stage || s.key === stage) && !!sla && !!s.started_at && daysSince(s.started_at) > sla;
+  });
+}
+
+/** The stage case_table's "Days in stage" counts: the overdue one if any, else the current one. */
+export const ageStage = (c: CaseRow, flow: Flow): StageOut | undefined => overdueStage(c, flow) ?? currentStage(c.stages);
+
+/** A case_table's `stages` scope: cases whose current stage is one of them (all without one). */
+export const inTableScope = (c: CaseRow, stages: readonly string[] | undefined): boolean =>
+  !stages || stages.includes(currentStage(c.stages)?.key ?? "");
+
+/** The `stages` of the page's case_table over `flow` (the table a picked tile filters), so a tile
+ * counts exactly the rows the table shows once picked. */
+export function tableStages(page: UiPage, ui: AppUi, flow: Flow): string[] | undefined {
+  for (const placed of Object.values(page.regions ?? {})) {
+    for (const ref of placed) {
+      const props = (ref.props ?? {}) as { flow?: string; stages?: string[] };
+      if (ref.block === "case_table" && flowOf(ui, props.flow)?.key === flow.key) return props.stages;
+    }
+  }
+  return undefined;
 }
 
 export const TILE_KINDS = ["open_cases", "in_stage", "awaiting_me", "overdue", "done"] as const;
@@ -89,7 +110,7 @@ export function inTile(t: Tile, c: CaseRow, flow: Flow): boolean {
     case "awaiting_me":
       return c.my_tasks > 0 && (!t.stage || at("open"));
     case "overdue":
-      return isOverdue(c, flow, t.stage);
+      return !!overdueStage(c, flow, t.stage);
     case "done":
       return t.stage ? at("done") : c.status === "completed";
   }

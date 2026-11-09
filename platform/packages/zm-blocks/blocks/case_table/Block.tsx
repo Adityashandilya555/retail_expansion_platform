@@ -2,17 +2,12 @@ import { Chip, Code, Group, Stack, Text, TextInput } from "@mantine/core";
 import { DataTable, Num, StageTracker, StatusPill, type Column } from "@zm/ui";
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { currentStage, daysSince, display, flowOf, inTile, isOverdue, STATUS, tileOf, trackerStages, useCases, type CaseRow } from "../../src/cases";
+import { ageStage, currentStage, daysSince, display, flowOf, inTableScope, inTile, overdueStage, STATUS, tileOf, trackerStages, useCases, type CaseRow } from "../../src/cases";
 import type { BlockProps } from "../../src/registry";
 
 /** `props` as manifest.json allows them (the renderer has already validated them). */
 type Props = { flow?: string; columns?: string[]; stages?: string[] };
 
-/** Whole days since the case's current stage started. */
-function daysIn(c: CaseRow): number | null {
-  const started = currentStage(c.stages)?.started_at;
-  return started ? daysSince(started) : null;
-}
 
 /** case_table v1 (S1-25, #92): a flow's cases, e.g. the Sites list. A row opens the case page.
  * A kpi_strip tile picked in the URL (`?kpi=`, #94) shows the cases it counts instead of the stage
@@ -35,13 +30,19 @@ export function CaseTable({ props, ui }: BlockProps) {
   const rows = (cases.data?.rows ?? []).filter((c) => {
     const at = currentStage(c.stages)?.key ?? "";
     return (
-      (!only || only.includes(at)) &&
+      inTableScope(c, only) &&
       (tile ? inTile(tile, c, flow) : picked.length === 0 || picked.includes(at)) &&
       (!term || c.code.toLowerCase().includes(term) || c.title.toLowerCase().includes(term))
     );
   });
 
+  /** Whole days in the stage the case is overdue in, else in its current stage. */
+  const daysIn = (c: CaseRow): number | null => {
+    const started = ageStage(c, flow)?.started_at;
+    return started ? daysSince(started) : null;
+  };
   const order = (c: CaseRow) => flow.stages.findIndex((s) => s.key === currentStage(c.stages)?.key);
+  const late = (c: CaseRow) => overdueStage(c, flow);
   const known: Record<string, Column<CaseRow>> = {
     code: { key: "code", header: "Code", render: (c) => <Code>{c.code}</Code>, sortValue: (c) => c.code },
     title: { key: "title", header: label, render: (c) => c.title, sortValue: (c) => c.title },
@@ -62,7 +63,7 @@ export function CaseTable({ props, ui }: BlockProps) {
       render: (c) => (
         <Group gap="xs" wrap="nowrap">
           <StatusPill tone={STATUS[c.status][0]}>{STATUS[c.status][1]}</StatusPill>
-          {isOverdue(c, flow) && <StatusPill tone="warning">Overdue</StatusPill>}
+          {late(c) && <StatusPill tone="warning">{`Overdue in ${late(c)?.name}`}</StatusPill>}
         </Group>
       ),
       sortValue: (c) => c.status,
