@@ -476,6 +476,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/owner/clients/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Clients Overview
+         * @description Per client: account counts, cases in progress per flow, the active release, and the health
+         *     of its Operaton and vault. Every client is probed at once, each with PROBE_TIMEOUT, so one
+         *     that is down never holds up or fails the rest. The answer is kept OVERVIEW_TTL seconds.
+         */
+        get: operations["clients_overview_owner_clients_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/owner/clients/{client_id}": {
         parameters: {
             query?: never;
@@ -1153,6 +1175,30 @@ export interface components {
             /** Workspace Code */
             workspace_code: string;
         };
+        /**
+         * ClientOverview
+         * @description Counts and status only (PRODUCT.md, owner step 8): never a person's name or email, nor a
+         *     form value. The console names the client from `GET /owner/clients`.
+         */
+        ClientOverview: {
+            /** Cases In Progress */
+            cases_in_progress: components["schemas"]["FlowCases"][] | null;
+            health: components["schemas"]["Health"] | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            last_release: components["schemas"]["LastRelease"] | null;
+            /** Slug */
+            slug: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "new" | "provisioning" | "ready" | "failed" | "suspended";
+            users: components["schemas"]["UserCounts"] | null;
+        };
         /** ConversationIn */
         ConversationIn: {
             /**
@@ -1326,6 +1372,13 @@ export interface components {
             /** Value */
             value: unknown;
         };
+        /** FlowCases */
+        FlowCases: {
+            /** Count */
+            count: number;
+            /** Flow */
+            flow: string;
+        };
         /** FormOut */
         FormOut: {
             /** Layout */
@@ -1339,6 +1392,11 @@ export interface components {
             schema: {
                 [key: string]: unknown;
             };
+        };
+        /** Health */
+        Health: {
+            db: components["schemas"]["Probe"];
+            operaton: components["schemas"]["Probe"];
         };
         /** InviteAcceptIn */
         InviteAcceptIn: {
@@ -1362,6 +1420,16 @@ export interface components {
             changed: string[];
             /** Removed */
             removed: string[];
+        };
+        /** LastRelease */
+        LastRelease: {
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Version */
+            version: number;
         };
         /** Level */
         Level: {
@@ -1519,6 +1587,13 @@ export interface components {
             accent?: string | null;
             /** Color Scheme */
             color_scheme?: ("light" | "dark" | "auto") | null;
+        };
+        /** Probe */
+        Probe: {
+            /** Ms */
+            ms: number | null;
+            /** Up */
+            up: boolean;
         };
         /**
          * Problem
@@ -1829,6 +1904,15 @@ export interface components {
             name: string;
             /** Sla Days */
             sla_days?: number | null;
+        };
+        /** UserCounts */
+        UserCounts: {
+            /** Active */
+            active: number;
+            /** Deactivated */
+            deactivated: number;
+            /** Invited */
+            invited: number;
         };
         /** UserIn */
         UserIn: {
@@ -2771,6 +2855,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClientDetail"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    clients_overview_owner_clients_overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientOverview"][];
                 };
             };
             /** @description Problem details (RFC 9457) */

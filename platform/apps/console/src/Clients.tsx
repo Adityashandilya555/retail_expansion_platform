@@ -19,6 +19,7 @@ import {
 } from "@zm/ui";
 import { useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
+import { ClientCards } from "./ClientCards";
 import { api } from "./session";
 
 type ClientOut = components["schemas"]["ClientOut"];
@@ -26,7 +27,7 @@ type StepOut = components["schemas"]["StepOut"];
 type ReleaseOut = components["schemas"]["ReleaseOut"];
 type ThemeIn = components["schemas"]["ThemeIn"];
 
-const CLIENT_STATUS: Record<ClientOut["status"], [StatusTone, string]> = {
+export const CLIENT_STATUS: Record<ClientOut["status"], [StatusTone, string]> = {
   new: ["queued", "New"],
   provisioning: ["open", "Provisioning"],
   ready: ["done", "Ready"],
@@ -41,12 +42,12 @@ const STEP_STATUS: Record<StepOut["status"], [StatusTone, string]> = {
   needs_human: ["warning", "Needs a person"],
 };
 
-function Status<S extends string>({ of, status }: { of: Record<S, [StatusTone, string]>; status: S }) {
+export function Status<S extends string>({ of, status }: { of: Record<S, [StatusTone, string]>; status: S }) {
   const [tone, label] = of[status];
   return <StatusPill tone={tone}>{label}</StatusPill>;
 }
 
-async function must<T>(call: Promise<{ data?: T; error?: { detail?: string | null } }>): Promise<T> {
+export async function must<T>(call: Promise<{ data?: T; error?: { detail?: string | null } }>): Promise<T> {
   const { data, error } = await call;
   if (data === undefined) throw new Error(error?.detail ?? "Request failed");
   return data;
@@ -60,6 +61,7 @@ export function ClientsList() {
   return (
     <>
       <PageHeader title="Clients" actions={<Button onClick={() => navigate("/clients/new")}>New client</Button>} />
+      {clients.data?.length ? <ClientCards clients={clients.data} /> : null}
       <DataTable
         caption="Clients"
         rows={clients.data ?? []}

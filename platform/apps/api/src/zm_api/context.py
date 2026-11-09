@@ -45,6 +45,10 @@ class ClientContext:
     operaton: OperatonClient  # the client's own engine as its service account
     bucket: str | None
 
+    async def aclose(self) -> None:
+        await self.operaton.aclose()
+        await self.db.dispose()
+
 
 @dataclass(frozen=True)
 class OwnerContext:
@@ -61,6 +65,25 @@ def _asyncpg(dsn: str) -> URL:
 def _resources(row: Client) -> tuple[str | None, bytes | None, str | None]:
     """What a ClientContext is built from; other row changes (name, updated_at) don't rebuild it."""
     return row.operaton_url, row.secrets, row.bucket
+
+
+def open_context(row: Client, **pool: Any) -> ClientContext:
+    """A client's own vault engine (`pool`: create_async_engine's pool options) and Operaton
+    client, from its registry row; 503 without its secrets or Operaton URL. The caller closes
+    them (`aclose`)."""
+    if not row.operaton_url or not row.secrets:
+        raise ServiceUnavailable("This workspace isn't available yet")
+    sealed = secrets.unseal(row.secrets)
+    return ClientContext(
+        client=row,
+        db=create_async_engine(_asyncpg(sealed["zm_api_dsn"]), **pool),
+        operaton=OperatonClient(
+            row.operaton_url,
+            auth=(SERVICE_ACCOUNT, sealed["service_account_password"]),
+            client=row.slug,
+        ),
+        bucket=row.bucket,
+    )
 
 
 class Resolver:
@@ -110,7 +133,7 @@ class Resolver:
 
     async def context(self, row: Client) -> ClientContext:
         """The live resources of a ready client; 503 while it isn't ready."""
-        if row.status != "ready" or not row.operaton_url or not row.secrets:
+        if row.status != "ready":
             raise ServiceUnavailable("This workspace isn't available yet")
         slug = row.slug
         async with self._lock:
@@ -121,36 +144,19 @@ class Resolver:
                 self._live.move_to_end(slug)
                 return ctx
             if ctx is not None:
-                await self._close(self._live.pop(slug))
-            sealed = secrets.unseal(row.secrets)
-            ctx = ClientContext(
-                client=row,
-                db=create_async_engine(
-                    _asyncpg(sealed["zm_api_dsn"]), pool_size=VAULT_POOL, max_overflow=0
-                ),
-                operaton=OperatonClient(
-                    row.operaton_url,
-                    auth=(SERVICE_ACCOUNT, sealed["service_account_password"]),
-                    client=row.slug,
-                ),
-                bucket=row.bucket,
-            )
-            self._live[slug] = ctx
+                await self._live.pop(slug).aclose()
+            ctx = self._live[slug] = open_context(row, pool_size=VAULT_POOL, max_overflow=0)
+            # shortcut: closing on eviction or a resource change can cut off a request still using
+            # the old resources; fine while max_clients is far above the client count, refcount
+            # them if not.
             while len(self._live) > self._max:
-                await self._close(self._live.popitem(last=False)[1])
+                await self._live.popitem(last=False)[1].aclose()
             return ctx
-
-    # shortcut: closing on eviction or a resource change can cut off a request still using the old
-    # resources; fine while max_clients is far above the client count, refcount them if not.
-    @staticmethod
-    async def _close(ctx: ClientContext) -> None:
-        await ctx.operaton.aclose()
-        await ctx.db.dispose()
 
     async def aclose(self) -> None:
         async with self._lock:
             while self._live:
-                await self._close(self._live.popitem()[1])
+                await self._live.popitem()[1].aclose()
         close = getattr(self._lookup, "aclose", None)
         if close is not None:
             await close()
