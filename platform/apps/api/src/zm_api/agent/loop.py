@@ -538,8 +538,19 @@ class MessageIn(BaseModel):
 
 
 class Said(BaseModel):
-    kind: Literal["owner", "agent"]
+    kind: Literal["agent"]
     text: str
+
+
+class Asked(BaseModel):
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
+    kind: Literal["owner"]
+    text: str
+    unanswered: bool
+    """An owner's message whose turn ended with no reply stored and no refusal (an API error, the
+    budget, a reply cut off or dropped): no later call sends it, so the dock offers to send it
+    again."""
 
 
 class Chip(BaseModel):
@@ -563,7 +574,7 @@ class Usage(BaseModel):
 class Transcript(BaseModel):
     model_config = ConfigDict(use_attribute_docstrings=True)
 
-    entries: list[Said | Chip | Refused]
+    entries: list[Asked | Said | Chip | Refused]
     """In order: the owner's and the agent's texts, each done edit's change chip, refusals."""
     usage: Usage
     """The conversation's sums, as `done {usage}` gives a turn's."""
@@ -576,8 +587,21 @@ def transcript(rows: list[Doc], changes: list[Doc], running: bool = False) -> Tr
     what its turns streamed, less what wasn't kept (the text of a call that didn't finish, and
     errors). A turn the console left stops between
     its tool runs, before the reply and their results are stored, but its edits are done: their
-    chips come from the change log, before the first row stored after them."""
+    chips come from the change log, before the first row stored after them. An owner's message
+    that nothing answered is flagged `unanswered`, but for a refused one (its refusal says why) and
+    the running turn's."""
     blocks = [b for r in rows if r["role"] == "user" for b in r["content"]]
+    opens = [i for i, r in enumerate(rows) if r["content"] is not None and _opens(r)]
+    unanswered = {
+        i
+        for i, after in zip(opens, [*opens[1:], len(rows)], strict=True)
+        if not (running and after == len(rows))
+        and not any(
+            r["role"] == "assistant"
+            and (r["content"] is not None or (r.get("usage") or {}).get("stop_reason") == "refusal")
+            for r in rows[i:after]
+        )
+    }
     shown = {
         json.loads(b["content"]).get("change_id") for b in blocks if b["type"] == "tool_result"
     }
@@ -586,9 +610,9 @@ def transcript(rows: list[Doc], changes: list[Doc], running: bool = False) -> Tr
         for c in changes
         if c["id"] not in shown
     ]
-    entries: list[Said | Chip | Refused] = []
+    entries: list[Asked | Said | Chip | Refused] = []
     total = dict.fromkeys(USAGE, 0)
-    for r in rows:
+    for n, r in enumerate(rows):
         while lost and lost[0][0] < r["at"]:
             entries.append(lost.pop(0)[1])
         usage = r.get("usage") or {}
@@ -598,7 +622,9 @@ def transcript(rows: list[Doc], changes: list[Doc], running: bool = False) -> Tr
             for block in r["content"]:
                 result = json.loads(block["content"]) if block["type"] == "tool_result" else {}
                 if block["type"] == "text":
-                    entries.append(Said(kind="owner", text=block["text"]))
+                    entries.append(
+                        Asked(kind="owner", text=block["text"], unanswered=n in unanswered)
+                    )
                 elif "change_id" in result:
                     change = result["change_id"]
                     entries.append(Chip(kind="change", change_id=change, summary=result["summary"]))

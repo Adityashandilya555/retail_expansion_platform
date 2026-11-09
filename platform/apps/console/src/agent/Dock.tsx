@@ -15,6 +15,7 @@ type Mode = components["schemas"]["ConversationOut"]["mode"];
 
 const MODES: Record<Mode, string> = { configure: "Configure", edit: "Edit" };
 const LOST = "The connection dropped. This is what the conversation kept; the draft keeps every change the agent finished.";
+const UNREAD = "The connection dropped, and the conversation couldn't be read back.";
 const OFFLINE = "Can't reach Z-Matrix right now. Check your connection and try again.";
 const NOT_SENT = "Your message wasn't sent.";
 const WAITING = "The connection dropped. Waiting for the agent's turn to end…";
@@ -23,12 +24,25 @@ const MAX_RETRY_MS = 30_000;
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
+/** A read the API answered with an error. */
+class ReadFailed extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+/** A 4xx but 408 and 429 won't pass by reading again (a session gone, a conversation not found). */
+const final = (e: unknown) => e instanceof ReadFailed && e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429;
+
 const tokens = (u: Usage) =>
   `${formatNum(u.input_tokens + u.cache_creation_input_tokens)} in, ${formatNum(u.cache_read_input_tokens)} cached, ${formatNum(u.output_tokens)} out`;
 // fetch rejects with a TypeError when there's no connection
 const reason = (e: unknown, fallback: string) => (e instanceof Error && !(e instanceof TypeError) && e.message !== "Request failed" ? e.message : fallback);
 
-function Line({ entry, onOpen }: { entry: Entry; onOpen: (changeId: number) => void }) {
+/** `onResend` sends an unanswered message again; null while a turn runs. */
+function Line({ entry, onOpen, onResend }: { entry: Entry; onOpen: (changeId: number) => void; onResend: ((text: string) => void) | null }) {
   switch (entry.kind) {
     case "owner":
     case "agent":
@@ -40,6 +54,14 @@ function Line({ entry, onOpen }: { entry: Entry; onOpen: (changeId: number) => v
           <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
             {entry.text}
           </Text>
+          {entry.kind === "owner" && entry.unanswered && (
+            <Group gap="xs" mt={4}>
+              <Text size="sm">Not answered, so the agent won't see it. Send it again?</Text>
+              <Button variant="light" size="compact-sm" disabled={!onResend} onClick={() => onResend?.(entry.text)}>
+                Send again
+              </Button>
+            </Group>
+          )}
         </div>
       );
     case "change":
@@ -97,16 +119,19 @@ export function Dock({ clientId, onTurn }: { clientId: string; onTurn?: (turning
   const refresh = () => Promise.all(["changes", "validate", "draft"].map((key) => queries.invalidateQueries({ queryKey: [key, clientId] })));
   const read = async (id: string): Promise<{ chat: Chat; running: boolean }> => {
     const conversation = { params: { path: { client_id: clientId, conversation_id: id } } };
-    const stored = await must(api.GET("/owner/clients/{client_id}/agent/conversations/{conversation_id}", conversation));
+    const { data: stored, error, response } = await api.GET("/owner/clients/{client_id}/agent/conversations/{conversation_id}", conversation);
+    if (!stored) throw new ReadFailed(error?.detail ?? "Request failed", response.status);
     return { chat: { ...EMPTY, entries: stored.entries, usage: stored.usage }, running: stored.running };
   };
-  /** The conversation once no turn runs in it: what a dropped turn kept, all stored. Null if the dock went away. */
+  /** The conversation once no turn runs in it: what a dropped turn kept, all stored. Null if the dock
+   * went away; rejects on an error reading again won't fix. */
   const settled = async (id: string): Promise<Chat | null> => {
     for (let wait = RETRY_MS; mounted.current; wait = Math.min(wait * 2, MAX_RETRY_MS)) {
       try {
         const stored = await read(id);
         if (!stored.running) return stored.chat;
-      } catch {
+      } catch (e) {
+        if (final(e)) throw e;
         // offline, or the API is: read again
       }
       await sleep(wait);
@@ -128,9 +153,10 @@ export function Dock({ clientId, onTurn }: { clientId: string; onTurn?: (turning
     }
   }
 
-  async function send(e?: FormEvent) {
+  /** Sends the message box, or `again`: an unanswered message, the box left as it is. */
+  async function send(e?: FormEvent, again?: string) {
     e?.preventDefault();
-    const text = said.trim();
+    const text = (again ?? said).trim();
     if (!text || running !== null) return;
     setRunning("");
     onTurn?.(true);
@@ -150,8 +176,8 @@ export function Dock({ clientId, onTurn }: { clientId: string; onTurn?: (turning
       });
       if (!data) return add({ kind: "error", message: error?.detail ?? "Couldn't send the message." }); // 409: busy or crowded
       streaming = true;
-      setSaid("");
-      add({ kind: "owner", text });
+      if (again === undefined) setSaid("");
+      add({ kind: "owner", text, unanswered: false });
       let done = false;
       await readEvents(data, (event) => {
         done ||= event.event === "done";
@@ -164,8 +190,12 @@ export function Dock({ clientId, onTurn }: { clientId: string; onTurn?: (turning
       if (!id || !streaming) return add({ kind: "error", message: `${NOT_SENT} ${reason(e, OFFLINE)}` });
       // the turn may still be running and editing the draft: Send and Publish wait until it ends
       setWaiting(true);
-      const stored = await settled(id);
-      if (stored && showing.current === id) setChat({ ...stored, entries: [...stored.entries, { kind: "error", message: LOST }] });
+      try {
+        const stored = await settled(id);
+        if (stored && showing.current === id) setChat({ ...stored, entries: [...stored.entries, { kind: "error", message: LOST }] });
+      } catch (failed) {
+        add({ kind: "error", message: `${UNREAD} ${reason(failed, OFFLINE)}` });
+      }
     } finally {
       setWaiting(false);
       setRunning(null);
@@ -275,7 +305,12 @@ export function Dock({ clientId, onTurn }: { clientId: string; onTurn?: (turning
         <Stack gap="sm" role="log" aria-live="polite" aria-label="Chat" mih={160}>
           {chat.entries.length === 0 && <Text size="sm">Describe the client's process, or what to change; the agent edits the draft.</Text>}
           {chat.entries.map((entry, i) => (
-            <Line key={"change_id" in entry ? `change-${entry.change_id}` : i} entry={entry} onOpen={setShown} />
+            <Line
+              key={"change_id" in entry ? `change-${entry.change_id}` : i}
+              entry={entry}
+              onOpen={setShown}
+              onResend={turning ? null : (text) => void send(undefined, text)}
+            />
           ))}
         </Stack>
       </Paper>

@@ -301,6 +301,11 @@ def replies(chats: dict[uuid.UUID, Doc], cid: uuid.UUID) -> list[Any]:
     return [r["content"] for r in chats[cid]["rows"] if r["role"] == "assistant"]
 
 
+def asked(said: str, unanswered: bool = False) -> Doc:
+    """An owner's message as the read-back gives it."""
+    return {"kind": "owner", "text": said, "unanswered": unanswered}
+
+
 # --- unit ----------------------------------------------------------------------------------------
 
 
@@ -658,7 +663,9 @@ def test_a_reply_the_console_leaves_between_its_tool_runs_still_keeps_its_usage(
     for cid, read in zip((cancelled, closed), asyncio.run(go()), strict=True):
         assert roles(chats, cid) == ["user", "system", "assistant"]
         assert replies(chats, cid) == [None]
-        assert read.entries == [loop.Said(kind="owner", text="Hi")] and not read.running
+        # dropped before any reply was stored: the dock offers to send it again
+        assert read.entries == [loop.Asked(kind="owner", text="Hi", unanswered=True)]
+        assert not read.running
         assert (read.usage.input_tokens, read.usage.output_tokens) == (1200, 300)
         again = run(fake, held, cid, "Go on")
         assert again == [("error", {"message": loop.OVER_BUDGET}), ("done", again[-1][1])]
@@ -679,6 +686,40 @@ def test_an_api_error_says_whether_sending_again_can_help(
     said = [run(Fake(e), held, new(chats), "Hi")[0][1]["message"] for e in [refused, *passing]]
     assert said[0] == "The request was refused: prompt too long"
     assert all(s.startswith("The model is unavailable") and "Try again" in s for s in said[1:])
+
+
+def test_a_message_nothing_answered_reads_back_unanswered_unless_it_was_refused(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """No later call sends a message no stored reply answers, so the read-back flags it for the
+    dock to offer sending it again: after an API error or a cut-off reply, not after a refusal
+    (its refusal says why), and not while its turn still runs."""
+    overloaded = api_error(anthropic.OverloadedError, 529, "overloaded_error", "Overloaded")
+    refused = reply(
+        stop="refusal",
+        stop_details={"type": "refusal", "category": "cyber", "explanation": "Declined."},
+    )
+    cut = reply(tool_use("add_field", ARGS["add_field"]), stop="max_tokens")
+    fake, cid = Fake(overloaded, refused, cut, reply(text("Hi."))), new(chats)
+    for said in ("Show me the draft", "Add a GST number", "Add a PAN number", "Hello"):
+        run(fake, held, cid, said)
+    # the last call sends only its own message
+    [opening] = [m for m in fake.requests[-1]["messages"] if m["role"] == "user"]
+    assert opening["content"] == [{"type": "text", "text": "Hello"}]
+    read = asyncio.run(loop.get_conversation(uuid.uuid4(), cid, held.ctx, ME)).model_dump()
+    assert read["entries"] == [
+        asked("Show me the draft", unanswered=True),
+        asked("Add a GST number"),
+        {"kind": "refusal", "category": "cyber"},
+        asked("Add a PAN number", unanswered=True),
+        asked("Hello"),
+        {"kind": "agent", "text": "Hi."},
+    ]
+    # a turn still running hasn't answered yet
+    rows = chats[cid]["rows"][:2]
+    assert loop.transcript(rows, [], running=True).entries[0].unanswered is False  # type: ignore[union-attr]
+    assert loop.transcript(rows, []).entries[0].unanswered is True  # type: ignore[union-attr]
 
 
 def test_a_failure_outside_the_api_still_ends_the_stream_with_an_error_and_done(
@@ -728,7 +769,8 @@ def test_a_turn_overlapping_one_on_its_conversation_is_refused_before_any_call(
     events, after, during = asyncio.run(go())
     # the dock reads it back as running until the turn lets go
     assert during.running and not asyncio.run(read()).running
-    assert during.entries == [loop.Said(kind="owner", text=FIRE_NOC)]  # stored as it started
+    # stored as it started, and not unanswered while its turn runs
+    assert during.entries == [loop.Asked(kind="owner", text=FIRE_NOC, unanswered=False)]
     assert names(events)[-1] == "done" and len(fake.requests) == len(fake.counted) == 4
     assert [c["tool"] for c in held.log] == ["add_document_slot", "set_approval_chain"]
     assert len(after.rows) == len(chats[cid]["rows"]) == 9
@@ -849,12 +891,12 @@ def test_the_dock_reads_a_conversation_back_as_it_streamed(
     assert read.status_code == 200
     # the refused turn kept the owner's message and its call's usage (and why it stopped)
     assert read.json()["entries"] == [
-        {"kind": "owner", "text": FIRE_NOC},
+        asked(FIRE_NOC),
         {"kind": "agent", "text": "Adding the upload."},
         {"kind": "change", "change_id": 1, "summary": "Added: Fire NOC upload"},
         {"kind": "change", "change_id": 2, "summary": "Approval of legal_licensing: legal L2"},
         {"kind": "agent", "text": "Done: Fire NOC upload with Legal L2 approval."},
-        {"kind": "owner", "text": "Add a GST number"},
+        asked("Add a GST number"),
         {"kind": "refusal", "category": "cyber"},
     ]
     assert read.json()["running"] is False
@@ -894,10 +936,10 @@ def test_the_edits_of_a_turn_stopped_mid_reply_read_back_where_they_happened() -
     ]
     read = loop.transcript(rows, changes).model_dump()
     assert read["entries"] == [
-        {"kind": "owner", "text": FIRE_NOC},
+        asked(FIRE_NOC),
         {"kind": "agent", "text": "Adding the upload."},
         {"kind": "change", "change_id": 1, "summary": "Added: Fire NOC upload"},
-        {"kind": "owner", "text": "Add a GST number"},
+        asked("Add a GST number"),
         {"kind": "change", "change_id": 2, "summary": "Added: GST"},
         {"kind": "agent", "text": "Done."},
     ]
@@ -1064,7 +1106,7 @@ def test_the_dock_lists_an_owners_conversations_and_reads_one_back(agent_vault: 
         newer["id"],
     )
     entries = read.json()["entries"]
-    assert entries[0] == {"kind": "owner", "text": FIRE_NOC}
+    assert entries[0] == asked(FIRE_NOC)
     assert [(e["change_id"], e["summary"]) for e in entries if e["kind"] == "change"] == [
         (changes[0][0], "Added: Fire NOC upload"),
         (changes[1][0], "Approval of legal_licensing: legal L2"),
@@ -1101,10 +1143,10 @@ def test_the_edit_of_a_turn_stopped_mid_reply_reads_back_where_it_happened(
         "pilot", "select id from app.draft_changes where conversation_id = %s", cid
     )
     assert read.json()["entries"] == [
-        {"kind": "owner", "text": FIRE_NOC},
+        asked(FIRE_NOC),
         {"kind": "agent", "text": "Adding the upload."},
         {"kind": "change", "change_id": change, "summary": "Added: Fire NOC upload"},
-        {"kind": "owner", "text": "Thanks"},
+        asked("Thanks"),
         {"kind": "agent", "text": "Anything else?"},
     ]
     assert read.json()["usage"]["output_tokens"] == 900  # the stopped turn's two replies, and one
@@ -1147,12 +1189,38 @@ def test_the_dock_reads_a_turn_as_running_until_it_lets_go_and_then_its_message(
         True,
         False,
     ]
-    assert after.json()["entries"] == [{"kind": "owner", "text": FIRE_NOC}]
+    assert after.json()["entries"] == [asked(FIRE_NOC, unanswered=True)]
     assert after.json()["usage"]["output_tokens"] == 300  # the stopped reply's usage
     [request] = fake.requests
     assert [m["content"] for m in request["messages"] if m["role"] == "user"] == [
         [{"type": "text", "text": "Hi"}]
     ]
+
+
+@pytest.mark.integration
+def test_a_claim_reads_as_busy_whether_its_lock_key_is_negative_or_positive(
+    agent_vault: Clients,
+) -> None:
+    """`pg_locks` splits a bigint key into its high and low halves; `_busy` puts them back
+    together, also for a negative `hashtext`, whose high half is all ones."""
+    ids = [str(uuid.uuid4()) for _ in range(32)]
+    keys = vault_sql(
+        "pilot", "select id, hashtext('zm_agent:' || id) from unnest(%s::text[]) id", ids
+    )
+    negative = next(uuid.UUID(i) for i, k in keys if k < 0)
+    positive = next(uuid.UUID(i) for i, k in keys if k > 0)
+
+    async def go(cid: uuid.UUID) -> list[bool]:
+        async with Stack(agent_vault) as stack:
+            ctx = await stack.ctx("pilot")
+            before = await loop._busy(ctx, cid)
+            async with loop._claimed(ctx, cid):
+                during = [await loop._busy(ctx, cid), await loop._busy(ctx, uuid.uuid4())]
+            return [before, *during, await loop._busy(ctx, cid)]
+
+    for cid in (negative, positive):
+        # free, claimed (another id isn't), let go
+        assert asyncio.run(go(cid)) == [False, True, False, False]
 
 
 # --- live: the real API, by hand ----------------------------------------------------------------

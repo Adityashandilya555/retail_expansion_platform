@@ -132,6 +132,31 @@
         "title": "AppUi",
         "type": "object"
       },
+      "Asked": {
+        "properties": {
+          "kind": {
+            "const": "owner",
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "unanswered": {
+            "description": "An owner's message whose turn ended with no reply stored and no refusal (an API error, the\nbudget, a reply cut off or dropped): no later call sends it, so the dock offers to send it\nagain.",
+            "title": "Unanswered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "unanswered"
+        ],
+        "title": "Asked",
+        "type": "object"
+      },
       "BlockRef": {
         "additionalProperties": false,
         "properties": {
@@ -1968,10 +1993,7 @@
       "Said": {
         "properties": {
           "kind": {
-            "enum": [
-              "owner",
-              "agent"
-            ],
+            "const": "agent",
             "title": "Kind",
             "type": "string"
           },
@@ -2443,6 +2465,9 @@
             "description": "In order: the owner's and the agent's texts, each done edit's change chip, refusals.",
             "items": {
               "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Asked"
+                },
                 {
                   "$ref": "#/components/schemas/Said"
                 },

@@ -222,20 +222,22 @@ test("a valid draft publishes after a confirm, and says when nothing changed", a
 test("a dropped stream keeps the turn locked, reading the conversation back with backoff (offline too) until it ends", async () => {
   const turn = sse();
   // what the API keeps of a turn stopped between its tool runs: the owner's message (stored as the
-  // turn started), the done edits' chips from the change log, the stopped reply's usage; not its text
-  const kept: Omit<Transcript, "running"> = {
+  // turn started, unanswered once it ended), the done edits' chips from the change log, the stopped
+  // reply's usage; not its text
+  const kept = (running: boolean): Transcript => ({
+    running,
     entries: [
-      { kind: "owner", text: "Add a Fire NOC upload" },
+      { kind: "owner", text: "Add a Fire NOC upload", unanswered: !running },
       { kind: "change", change_id: 1, summary: NOC },
     ],
     usage: { ...USAGE, output_tokens: 900 },
-  };
+  });
   const reads: Handler[] = [
     () => {
       throw new TypeError("Failed to fetch"); // offline right after the drop
     },
-    () => json({ ...kept, running: true }), // the turn is still storing what it keeps
-    () => json({ ...kept, running: false }),
+    () => json(kept(true)), // the turn is still storing what it keeps
+    () => json(kept(false)),
   ];
   const calls = dockApi({
     [`POST ${AGENT}/${CID}/messages`]: () => turn.response(),
@@ -267,6 +269,49 @@ test("a dropped stream keeps the turn locked, reading the conversation back with
   expect(screen.getByText(/this conversation 1,200 in, 3,000 cached, 900 out/)).toBeDefined();
   await waitFor(() => expect(publish.hasAttribute("disabled")).toBe(false));
   expect(screen.queryByText(/Waiting for the agent's turn/)).toBeNull();
+  expect(log().getByText(/Not answered/)).toBeDefined();
+});
+
+test("a read-back the API refuses for good (401, 404) stops waiting, unlocks and says why", async () => {
+  const turn = sse();
+  const calls = dockApi({
+    [`POST ${AGENT}/${CID}/messages`]: () => turn.response(),
+    [`GET ${AGENT}/${CID}`]: () => problem(404, "No such conversation"),
+  });
+  const user = renderDock();
+  await say(user, "Add a Fire NOC upload");
+  turn.drop();
+  expect(await log().findByText(/couldn't be read back\. No such conversation/)).toBeDefined();
+  const publish = screen.getByRole("button", { name: "Publish" });
+  await waitFor(() => expect(publish.hasAttribute("disabled")).toBe(false));
+  expect(calls.filter((c) => c === `GET ${AGENT}/${CID}`)).toHaveLength(1); // no second try
+});
+
+test("an unanswered message offers to send it again, leaving the message box as it is", async () => {
+  const turn = sse();
+  const sent: unknown[] = [];
+  dockApi({
+    [`GET ${AGENT}`]: () => json([{ id: CID, owner_id: OWNER, mode: "edit", started_at: AT }]),
+    [`GET ${AGENT}/${CID}`]: () =>
+      json({ entries: [{ kind: "owner", text: "Add a GST number", unanswered: true }], usage: USAGE, running: false } satisfies Transcript),
+    [`POST ${AGENT}/${CID}/messages`]: async (r) => {
+      sent.push(await r.json());
+      return turn.response();
+    },
+  });
+  const user = renderDock();
+  const select = await screen.findByLabelText("Conversation");
+  await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(2));
+  await user.selectOptions(select, CID);
+  expect(await log().findByText(/Not answered/)).toBeDefined();
+  await user.type(screen.getByLabelText("Message"), "draft");
+  await user.click(log().getByRole("button", { name: "Send again" }));
+  turn.send("text_delta", { text: "Added." });
+  turn.send("done", { usage: USAGE });
+  turn.end();
+  expect(await log().findByText("Added.")).toBeDefined();
+  expect(sent).toEqual([{ text: "Add a GST number" }]);
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Message").value).toBe("draft");
 });
 
 test("a message the API never got says it wasn't sent, not that the connection dropped, and stays to send again", async () => {
@@ -377,7 +422,7 @@ test.each(["light", "dark"] as const)("the dock passes axe in %s", async (scheme
     [`GET ${AGENT}/${CID}`]: () =>
       json({
         entries: [
-          { kind: "owner", text: "Add a Fire NOC upload" },
+          { kind: "owner", text: "Add a Fire NOC upload", unanswered: true },
           { kind: "agent", text: "Adding the upload." },
           { kind: "change", change_id: 1, summary: NOC },
           { kind: "refusal", category: null },

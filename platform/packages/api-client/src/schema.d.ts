@@ -839,6 +839,23 @@ export interface components {
             pages: components["schemas"]["Page"][];
             release: components["schemas"]["UiRelease"];
         };
+        /** Asked */
+        Asked: {
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "owner";
+            /** Text */
+            text: string;
+            /**
+             * Unanswered
+             * @description An owner's message whose turn ended with no reply stored and no refusal (an API error, the
+             *     budget, a reply cut off or dropped): no later call sends it, so the dock offers to send it
+             *     again.
+             */
+            unanswered: boolean;
+        };
         /** BlockRef */
         BlockRef: {
             /** Block */
@@ -1604,9 +1621,9 @@ export interface components {
         Said: {
             /**
              * Kind
-             * @enum {string}
+             * @constant
              */
-            kind: "owner" | "agent";
+            kind: "agent";
             /** Text */
             text: string;
         };
@@ -1807,7 +1824,7 @@ export interface components {
              * Entries
              * @description In order: the owner's and the agent's texts, each done edit's change chip, refusals.
              */
-            entries: (components["schemas"]["Said"] | components["schemas"]["Chip"] | components["schemas"]["Refused"])[];
+            entries: (components["schemas"]["Asked"] | components["schemas"]["Said"] | components["schemas"]["Chip"] | components["schemas"]["Refused"])[];
             /**
              * Running
              * @description Whether a turn is running in it: what it stores until it ends isn't here yet.
