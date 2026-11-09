@@ -2457,6 +2457,11 @@
             "title": "Entries",
             "type": "array"
           },
+          "running": {
+            "description": "Whether a turn is running in it: what it stores until it ends isn't here yet.",
+            "title": "Running",
+            "type": "boolean"
+          },
           "usage": {
             "$ref": "#/components/schemas/Usage",
             "description": "The conversation's sums, as `done {usage}` gives a turn's."
@@ -2464,7 +2469,8 @@
         },
         "required": [
           "entries",
-          "usage"
+          "usage",
+          "running"
         ],
         "title": "Transcript",
         "type": "object"
@@ -4212,7 +4218,7 @@
     },
     "/owner/clients/{client_id}/agent/conversations/{conversation_id}": {
       "get": {
-        "description": "What the dock shows of a conversation, from its stored rows and the change log; 404 for\nanother owner's. A stream that dropped can't be resumed (the turn stops, its done edits stay),\nso the dock reads the conversation again here.",
+        "description": "What the dock shows of a conversation, from its stored rows and the change log; 404 for\nanother owner's. A stream that dropped can't be resumed (the turn stops, its done edits stay),\nso the dock reads the conversation again here, until `running` is false: a stopping turn\nstill stores what it kept, and lets go after.",
         "operationId": "get_conversation_owner_clients__client_id__agent_conversations__conversation_id__get",
         "parameters": [
           {

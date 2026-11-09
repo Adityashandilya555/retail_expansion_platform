@@ -531,7 +531,8 @@ export interface paths {
          * Get Conversation
          * @description What the dock shows of a conversation, from its stored rows and the change log; 404 for
          *     another owner's. A stream that dropped can't be resumed (the turn stops, its done edits stay),
-         *     so the dock reads the conversation again here.
+         *     so the dock reads the conversation again here, until `running` is false: a stopping turn
+         *     still stores what it kept, and lets go after.
          */
         get: operations["get_conversation_owner_clients__client_id__agent_conversations__conversation_id__get"];
         put?: never;
@@ -1807,6 +1808,11 @@ export interface components {
              * @description In order: the owner's and the agent's texts, each done edit's change chip, refusals.
              */
             entries: (components["schemas"]["Said"] | components["schemas"]["Chip"] | components["schemas"]["Refused"])[];
+            /**
+             * Running
+             * @description Whether a turn is running in it: what it stores until it ends isn't here yet.
+             */
+            running: boolean;
             /** @description The conversation's sums, as `done {usage}` gives a turn's. */
             usage: components["schemas"]["Usage"];
         };

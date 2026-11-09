@@ -16,8 +16,11 @@ blocks too, since Opus 5.5 checks that earlier turns weren't edited. A reply is 
 messages it answers and, when it called tools, with their results, so the stored history always
 replays. A call that stops (refusal, max_tokens), answers nothing or doesn't finish (an unreadable
 reply asked again, an API error, the console going away, mid-reply or while its tools run) keeps
-only its usage (with why it stopped, if it did), and the rest of its turn is dropped. The console
-lists an owner's conversations and reads one back as its dock shows it (#41). The budget,
+only its usage (with why it stopped, if it did), and the rest of its turn is dropped. The turn's
+message is stored when it starts, so the dock reads it back however the turn ends, but one that
+no stored reply answers isn't sent again (a refused request would be refused again). The console
+lists an owner's conversations and reads one back as its dock shows it (#41), with whether a
+turn is running in it. The budget,
 AGENT_MAX_TOKENS_PER_CONVERSATION, counts what each call read fresh or wrote (input, cache
 writes, output; cache reads, at a twentieth of the price, don't).
 `count_tokens` sizes each call first, and a call that could pass the budget if none of it were
@@ -227,6 +230,25 @@ async def _claimed(ctx: ClientContext, conversation_id: UUID) -> AsyncIterator[N
             await lock.commit()
 
 
+async def _busy(ctx: ClientContext, conversation_id: UUID) -> bool:
+    """Whether a turn holds the conversation's claim, from `pg_locks`, without taking it: a lock
+    on one bigint key shows as its high 32 bits (`classid`) and low 32 bits (`objid`), with
+    `objsubid` 1."""
+    async with ctx.db.connect() as conn:
+        return (
+            await conn.execute(
+                text(
+                    "select exists (select 1 from pg_locks where locktype = 'advisory'"
+                    " and granted and objsubid = 1"
+                    " and database = (select oid from pg_database"
+                    " where datname = current_database())"
+                    " and ((classid::bigint << 32) | objid::bigint) = hashtext(:k)::bigint)"
+                ),
+                {"k": f"zm_agent:{conversation_id}"},
+            )
+        ).scalar_one()
+
+
 _running: Counter[AsyncEngine] = Counter()  # turns running per vault engine, in this process
 
 
@@ -292,8 +314,27 @@ async def load(ctx: ClientContext, conversation_id: UUID, owner: UUID) -> Conver
     return Conversation(conversation_id, mode, rows, _state(doc, sha, rows))
 
 
+def _opens(row: Doc) -> bool:
+    """Whether `row` is a turn's message (a tool results message has only `tool_result` blocks)."""
+    return row["role"] == "user" and any(b["type"] == "text" for b in row["content"])
+
+
 def _messages(rows: list[Doc]) -> list[Doc]:
-    return [{"role": r["role"], "content": r["content"]} for r in rows if r["content"] is not None]
+    """The stored rows as a call sends them: those with content, less an earlier turn's message
+    and its draft state when no stored reply answered it (the turn stopped first)."""
+    kept = [r for r in rows if r["content"] is not None]
+    opens = [i for i, r in enumerate(kept) if _opens(r)]
+    unanswered = {
+        j
+        for i, after in zip(opens, opens[1:], strict=False)
+        if not any(r["role"] == "assistant" for r in kept[i:after])
+        for j in (i, i + 1)  # its draft state is stored right after it
+    }
+    return [
+        {"role": r["role"], "content": r["content"]}
+        for i, r in enumerate(kept)
+        if i not in unanswered
+    ]
 
 
 def _fresh(usage: Doc) -> int:
@@ -332,7 +373,8 @@ async def turn(
     `tool_call {name}`, `change {change_id, summary}`, `refusal {category}`, `error {message}`,
     always ending with `done {usage}` (the turn's sums). `client` is an
     `anthropic.AsyncAnthropic`."""
-    unsaved = [{"role": "user", "content": [{"type": "text", "text": said}]}, conversation.state]
+    opening = [{"role": "user", "content": [{"type": "text", "text": said}]}, conversation.state]
+    unsaved: list[Doc] = []
     total = dict.fromkeys(USAGE, 0)
     model = settings.agent_model()
 
@@ -346,6 +388,7 @@ async def turn(
         conversation.rows.extend(rows)
 
     try:
+        await save(opening)  # the dock reads it back however the turn ends
         while True:
             request = {
                 "model": model,
@@ -524,12 +567,14 @@ class Transcript(BaseModel):
     """In order: the owner's and the agent's texts, each done edit's change chip, refusals."""
     usage: Usage
     """The conversation's sums, as `done {usage}` gives a turn's."""
+    running: bool
+    """Whether a turn is running in it: what it stores until it ends isn't here yet."""
 
 
-def transcript(rows: list[Doc], changes: list[Doc]) -> Transcript:
+def transcript(rows: list[Doc], changes: list[Doc], running: bool = False) -> Transcript:
     """A conversation's stored rows and its `changes` (oldest first) as the dock shows them (#41):
-    what its turns streamed, less what wasn't kept (the text of a call that didn't finish, errors,
-    and a turn's message when no call of it was stored). A turn the console left stops between
+    what its turns streamed, less what wasn't kept (the text of a call that didn't finish, and
+    errors). A turn the console left stops between
     its tool runs, before the reply and their results are stored, but its edits are done: their
     chips come from the change log, before the first row stored after them."""
     blocks = [b for r in rows if r["role"] == "user" for b in r["content"]]
@@ -564,7 +609,7 @@ def transcript(rows: list[Doc], changes: list[Doc]) -> Transcript:
         elif usage.get("stop_reason") == "refusal":
             entries.append(Refused(kind="refusal", category=usage["category"]))
     entries += [chip for _, chip in lost]
-    return Transcript(entries=entries, usage=Usage(**total))
+    return Transcript(entries=entries, usage=Usage(**total), running=running)
 
 
 def anthropic_client(request: Request) -> anthropic.AsyncAnthropic:
@@ -610,9 +655,12 @@ async def get_conversation(
 ) -> Transcript:
     """What the dock shows of a conversation, from its stored rows and the change log; 404 for
     another owner's. A stream that dropped can't be resumed (the turn stops, its done edits stay),
-    so the dock reads the conversation again here."""
+    so the dock reads the conversation again here, until `running` is false: a stopping turn
+    still stores what it kept, and lets go after."""
+    # before the rows: a turn that had let go by then has stored all it keeps
+    running = await _busy(ctx, conversation_id)
     _, rows = await _stored(ctx, conversation_id, owner.owner_id)
-    return transcript(rows, await _changes(ctx, conversation_id))
+    return transcript(rows, await _changes(ctx, conversation_id), running)
 
 
 @routes.post(AGENT + "/{conversation_id}/messages", response_class=EventSourceResponse)
