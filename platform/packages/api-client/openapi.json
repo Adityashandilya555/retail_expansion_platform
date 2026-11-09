@@ -132,6 +132,31 @@
         "title": "AppUi",
         "type": "object"
       },
+      "Asked": {
+        "properties": {
+          "kind": {
+            "const": "owner",
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "unanswered": {
+            "description": "An owner's message whose turn ended with no reply stored and no refusal (an API error, the\nbudget, a reply cut off or dropped): no later call sends it, so the dock offers to send it\nagain.",
+            "title": "Unanswered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "unanswered"
+        ],
+        "title": "Asked",
+        "type": "object"
+      },
       "BlockRef": {
         "additionalProperties": false,
         "properties": {
@@ -674,6 +699,30 @@
           "field_types"
         ],
         "title": "ChangeTargets",
+        "type": "object"
+      },
+      "Chip": {
+        "properties": {
+          "change_id": {
+            "title": "Change Id",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "change",
+            "title": "Kind",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "change_id",
+          "summary"
+        ],
+        "title": "Chip",
         "type": "object"
       },
       "ClientDetail": {
@@ -2100,6 +2149,32 @@
         "title": "PublishOut",
         "type": "object"
       },
+      "Refused": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "kind": {
+            "const": "refusal",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "category"
+        ],
+        "title": "Refused",
+        "type": "object"
+      },
       "ReleaseOut": {
         "properties": {
           "deployment_id": {
@@ -2165,6 +2240,25 @@
           "label"
         ],
         "title": "RenameFieldLabel",
+        "type": "object"
+      },
+      "Said": {
+        "properties": {
+          "kind": {
+            "const": "agent",
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text"
+        ],
+        "title": "Said",
         "type": "object"
       },
       "SectionOut": {
@@ -2620,6 +2714,47 @@
         "title": "TokenOut",
         "type": "object"
       },
+      "Transcript": {
+        "properties": {
+          "entries": {
+            "description": "In order: the owner's and the agent's texts, each done edit's change chip, refusals.",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Asked"
+                },
+                {
+                  "$ref": "#/components/schemas/Said"
+                },
+                {
+                  "$ref": "#/components/schemas/Chip"
+                },
+                {
+                  "$ref": "#/components/schemas/Refused"
+                }
+              ]
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "running": {
+            "description": "Whether a turn is running in it: what it stores until it ends isn't here yet.",
+            "title": "Running",
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "description": "The conversation's sums, as `done {usage}` gives a turn's."
+          }
+        },
+        "required": [
+          "entries",
+          "usage",
+          "running"
+        ],
+        "title": "Transcript",
+        "type": "object"
+      },
       "UiClient": {
         "properties": {
           "accent": {
@@ -2762,6 +2897,34 @@
           "department"
         ],
         "title": "UiStage",
+        "type": "object"
+      },
+      "Usage": {
+        "properties": {
+          "cache_creation_input_tokens": {
+            "title": "Cache Creation Input Tokens",
+            "type": "integer"
+          },
+          "cache_read_input_tokens": {
+            "title": "Cache Read Input Tokens",
+            "type": "integer"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "input_tokens",
+          "cache_creation_input_tokens",
+          "cache_read_input_tokens",
+          "output_tokens"
+        ],
+        "title": "Usage",
         "type": "object"
       },
       "UserCounts": {
@@ -4309,6 +4472,52 @@
       }
     },
     "/owner/clients/{client_id}/agent/conversations": {
+      "get": {
+        "description": "The calling owner's conversations with the client's agent, newest first (at most 100).",
+        "operationId": "list_conversations_owner_clients__client_id__agent_conversations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationOut"
+                  },
+                  "title": "Response List Conversations Owner Clients  Client Id  Agent Conversations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Conversations",
+        "tags": [
+          "owner"
+        ]
+      },
       "post": {
         "description": "A new conversation with the client's agent.",
         "operationId": "start_conversation_owner_clients__client_id__agent_conversations_post",
@@ -4357,6 +4566,60 @@
           }
         },
         "summary": "Start Conversation",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/agent/conversations/{conversation_id}": {
+      "get": {
+        "description": "What the dock shows of a conversation, from its stored rows and the change log; 404 for\nanother owner's. A stream that dropped can't be resumed (the turn stops, its done edits stay),\nso the dock reads the conversation again here, until `running` is false: a stopping turn\nstill stores what it kept, and lets go after.",
+        "operationId": "get_conversation_owner_clients__client_id__agent_conversations__conversation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transcript"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Get Conversation",
         "tags": [
           "owner"
         ]

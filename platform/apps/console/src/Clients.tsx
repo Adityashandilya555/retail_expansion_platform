@@ -1,6 +1,6 @@
 // Clients, their provisioning, look and publishing (#29, #34). Provisioning itself is the worker's
 // (#24, #25): the API queues the steps, and the client page polls them every 5 s.
-import { Button, Code, Group, Modal, NativeSelect, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Button, Code, Group, Modal, NativeSelect, Stack, Tabs, Text, TextInput, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
 import {
@@ -17,10 +17,11 @@ import {
   StatusPill,
   type StatusTone,
 } from "@zm/ui";
-import { useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
+import { Dock } from "./agent/Dock";
 import { ClientCards } from "./ClientCards";
-import { api } from "./session";
+import { api, must } from "./session";
 
 type ClientOut = components["schemas"]["ClientOut"];
 type StepOut = components["schemas"]["StepOut"];
@@ -45,12 +46,6 @@ const STEP_STATUS: Record<StepOut["status"], [StatusTone, string]> = {
 export function Status<S extends string>({ of, status }: { of: Record<S, [StatusTone, string]>; status: S }) {
   const [tone, label] = of[status];
   return <StatusPill tone={tone}>{label}</StatusPill>;
-}
-
-export async function must<T>(call: Promise<{ data?: T; error?: { detail?: string | null } }>): Promise<T> {
-  const { data, error } = await call;
-  if (data === undefined) throw new Error(error?.detail ?? "Request failed");
-  return data;
 }
 
 // --- `/`: the clients ------------------------------------------------------------------------
@@ -283,6 +278,11 @@ export function ClientPage() {
   });
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  // the dock's turn: each edit commits as it is made, so a publish meanwhile would take a half-done draft.
+  // ponytail: this page's own turn only; one in another tab, or another owner's, can still be published
+  // mid-way. A client-wide lock that turns share and publish takes would close that.
+  const [turning, setTurning] = useState(false);
+  const waiting = useId();
 
   if (client.isPending) return null;
   if (!client.data) {
@@ -329,71 +329,94 @@ export function ClientPage() {
         </Notice>
       )}
 
-      <Stack gap="sm">
-        <Group justify="space-between">
-          <Title order={2} size="h3">
-            Provisioning
-          </Title>
-          {stuck.length > 0 && (
-            <Button
-              variant="default"
-              loading={busy}
-              onClick={() =>
-                run(() => must(api.POST("/owner/clients/{client_id}/provisioning/retry", { params: { path: { client_id: id } } })), "Couldn't retry.")
-              }
-            >
-              Retry failed step
-            </Button>
-          )}
-        </Group>
-        {stuck
-          .filter((s) => s.status === "needs_human")
-          .map((s) => (
-            <Notice key={s.step} tone="warning" title={`${s.step} needs a person`}>
-              <Text size="sm">{s.last_error}</Text>
-              <Text size="sm" c="dimmed">
-                Then click Retry failed step.
-              </Text>
-            </Notice>
-          ))}
-        <DataTable
-          caption="Provisioning"
-          rows={c.steps}
-          rowKey={(s) => s.step}
-          emptyText="No steps queued"
-          columns={[
-            { key: "seq", header: "#", align: "right" },
-            { key: "step", header: "Step", render: (s) => <Code>{s.step}</Code> },
-            { key: "status", header: "Status", render: (s) => <Status of={STEP_STATUS} status={s.status} /> },
-            { key: "attempts", header: "Attempts", align: "right" },
-            { key: "last_error", header: "Details", render: (s) => s.last_error ?? "" },
-          ]}
-        />
-      </Stack>
+      <Tabs defaultValue="overview">
+        <Tabs.List>
+          <Tabs.Tab value="overview">Overview</Tabs.Tab>
+          <Tabs.Tab value="configure" disabled={c.status !== "ready"}>
+            Configure
+          </Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="overview" pt="lg">
+          <Stack gap="xl">
+            <Stack gap="sm">
+              <Group justify="space-between">
+                <Title order={2} size="h3">
+                  Provisioning
+                </Title>
+                {stuck.length > 0 && (
+                  <Button
+                    variant="default"
+                    loading={busy}
+                    onClick={() =>
+                      run(() => must(api.POST("/owner/clients/{client_id}/provisioning/retry", { params: { path: { client_id: id } } })), "Couldn't retry.")
+                    }
+                  >
+                    Retry failed step
+                  </Button>
+                )}
+              </Group>
+              {stuck
+                .filter((s) => s.status === "needs_human")
+                .map((s) => (
+                  <Notice key={s.step} tone="warning" title={`${s.step} needs a person`}>
+                    <Text size="sm">{s.last_error}</Text>
+                    <Text size="sm" c="dimmed">
+                      Then click Retry failed step.
+                    </Text>
+                  </Notice>
+                ))}
+              <DataTable
+                caption="Provisioning"
+                rows={c.steps}
+                rowKey={(s) => s.step}
+                emptyText="No steps queued"
+                columns={[
+                  { key: "seq", header: "#", align: "right" },
+                  { key: "step", header: "Step", render: (s) => <Code>{s.step}</Code> },
+                  { key: "status", header: "Status", render: (s) => <Status of={STEP_STATUS} status={s.status} /> },
+                  { key: "attempts", header: "Attempts", align: "right" },
+                  { key: "last_error", header: "Details", render: (s) => s.last_error ?? "" },
+                ]}
+              />
+            </Stack>
 
-      {c.status === "ready" && <Look clientId={id} />}
+            {c.status === "ready" && <Look clientId={id} />}
 
-      {c.status === "ready" && (
-        <Stack gap="sm">
-          <Group justify="space-between">
-            <Title order={2} size="h3">
-              Releases
-            </Title>
-            <Button onClick={() => setConfirming(true)}>Publish draft as v{next}</Button>
-          </Group>
-          <DataTable<ReleaseOut>
-            caption="Releases"
-            rows={c.releases}
-            rowKey={(r) => String(r.version)}
-            emptyText="Nothing published yet"
-            columns={[
-              { key: "version", header: "Version", render: (r) => `v${r.version}` },
-              { key: "published_at", header: "Published", render: (r) => new Date(r.published_at).toLocaleString() },
-              { key: "deployment_id", header: "Deployment", render: (r) => <Code>{r.deployment_id}</Code> },
-            ]}
-          />
-        </Stack>
-      )}
+            {c.status === "ready" && (
+              <Stack gap="sm">
+                <Group justify="space-between">
+                  <Title order={2} size="h3">
+                    Releases
+                  </Title>
+                  <Button disabled={turning} aria-describedby={turning ? waiting : undefined} onClick={() => setConfirming(true)}>
+                    Publish draft as v{next}
+                  </Button>
+                </Group>
+                {turning && (
+                  <Text id={waiting} size="sm">
+                    The agent is changing the draft in Configure. Publish once its turn ends.
+                  </Text>
+                )}
+                <DataTable<ReleaseOut>
+                  caption="Releases"
+                  rows={c.releases}
+                  rowKey={(r) => String(r.version)}
+                  emptyText="Nothing published yet"
+                  columns={[
+                    { key: "version", header: "Version", render: (r) => `v${r.version}` },
+                    { key: "published_at", header: "Published", render: (r) => new Date(r.published_at).toLocaleString() },
+                    { key: "deployment_id", header: "Deployment", render: (r) => <Code>{r.deployment_id}</Code> },
+                  ]}
+                />
+              </Stack>
+            )}
+          </Stack>
+        </Tabs.Panel>
+        {/* the agent dock (#41); kept mounted, so a conversation survives a look at the overview */}
+        <Tabs.Panel value="configure" pt="lg">
+          {c.status === "ready" && <Dock clientId={id} onTurn={setTurning} />}
+        </Tabs.Panel>
+      </Tabs>
 
       <Modal opened={confirming} onClose={() => setConfirming(false)} title={`Publish v${next}?`}>
         <Stack>
