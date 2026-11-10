@@ -32,12 +32,16 @@ function change(id: number, summary: string, over: Partial<ChangeOut> = {}): Cha
 }
 
 /** The API as the dock calls it: no conversations yet, a valid draft, `log` as the change log, plus `routes`. */
+const NONE = { added: [], removed: [], changed: [] };
+
 function dockApi(routes: Record<string, Handler>, log: () => ChangeOut[] = () => []): string[] {
   const calls: string[] = [];
   const all: Record<string, Handler> = {
     [`GET ${AGENT}`]: () => json([]),
     [`POST ${AGENT}`]: async (r) => json({ id: CID, owner_id: OWNER, mode: ((await r.json()) as { mode: string }).mode, started_at: AT }, 201),
     [`GET ${CLIENT}/draft/validate`]: () => json([]),
+    [`GET ${CLIENT}/draft/diff`]: () =>
+      json({ stages: NONE, tasks: NONE, fields: { ...NONE, added: ["fire_noc"] }, blocks: [], theme: null, accent: null }),
     [`GET ${CLIENT}/draft/changes`]: (r) => json(log().slice(0, Number(new URL(r.url).searchParams.get("limit") ?? 100))),
     ...routes,
   };
@@ -71,7 +75,7 @@ function renderDock(scheme?: "light" | "dark") {
   const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderWithZm(
     <QueryClientProvider client={queries}>
-      <Dock clientId={ID} />
+      <Dock clientId={ID} clientName="Pilot" next={3} />
     </QueryClientProvider>,
     { scheme },
   );
@@ -206,16 +210,16 @@ test("a valid draft publishes after a confirm, and says when nothing changed", a
   const publish = await screen.findByRole("button", { name: "Publish" });
   await waitFor(() => expect(publish.hasAttribute("disabled")).toBe(false));
   await user.click(publish);
-  const dialog = await screen.findByRole("dialog", { name: "Publish the draft?" });
+  const dialog = await screen.findByRole("dialog", { name: "Publish v3?" });
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(calls).not.toContain(`POST ${CLIENT}/publish`);
 
   await user.click(publish);
-  await user.click(within(await screen.findByRole("dialog", { name: "Publish the draft?" })).getByRole("button", { name: "Publish" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Publish v3?" })).getByRole("button", { name: "Publish" }));
   expect(await screen.findByText("Release v3 is live.")).toBeDefined();
   created = false;
   await user.click(publish);
-  await user.click(within(await screen.findByRole("dialog", { name: "Publish the draft?" })).getByRole("button", { name: "Publish" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Publish v3?" })).getByRole("button", { name: "Publish" }));
   expect(await screen.findByText("Nothing changed since v2.")).toBeDefined();
 });
 

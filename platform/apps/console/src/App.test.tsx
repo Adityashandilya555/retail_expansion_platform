@@ -32,12 +32,18 @@ function api(routes: Record<string, Handler>): string[] {
   return calls;
 }
 
-/** An owner signed in with the refresh cookie, a quartz draft for the client, plus `routes`. */
+const NO_CHANGES = { added: [], removed: [], changed: [] };
+const NO_DIFF = { stages: NO_CHANGES, tasks: NO_CHANGES, fields: NO_CHANGES, blocks: [], theme: null, accent: null };
+
+/** An owner signed in with the refresh cookie, a quartz draft for the client (valid, unchanged vs
+ * live), plus `routes`. */
 const signedInApi = (routes: Record<string, Handler>) =>
   api({
     "POST /owner/auth/refresh": () => json(TOKEN),
     "GET /owner/me": () => json(OWNER),
     [`GET /owner/clients/${ID}/draft`]: () => json(draft({ theme: "quartz" })),
+    [`GET /owner/clients/${ID}/draft/diff`]: () => json(NO_DIFF),
+    [`GET /owner/clients/${ID}/draft/validate`]: () => json([]),
     ...routes,
   });
 
@@ -379,6 +385,127 @@ test("publishing an unchanged draft says so, not as an error", async () => {
   expect(await screen.findByText("Nothing changed since v1.")).toBeDefined();
   expect(screen.getByText("No new release")).toBeDefined();
   expect(screen.queryByText("Couldn't continue")).toBeNull();
+});
+
+// --- the Publish dialog (#43) ---------------------------------------------------------------
+
+const v1 = { version: 1, deployment_id: "dep-1", published_at: AT, published_by: OWNER.id };
+const live = () => json(detail({ status: "ready", steps: steps(allDone), last_release: 1, releases: [v1] }));
+
+async function openPublish(version = 2) {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: `Publish draft as v${version}` }));
+  return { user, dialog: await screen.findByRole("dialog", { name: `Publish v${version}?` }) };
+}
+
+test("the Publish dialog says what changes against the live release, and that running sites stay", async () => {
+  signedInApi({
+    [`GET /owner/clients/${ID}`]: live,
+    [`GET /owner/clients/${ID}/draft/diff`]: () =>
+      json({
+        ...NO_DIFF,
+        fields: { added: ["store_size"], removed: ["fax"], changed: ["site_name"] },
+        stages: { added: [], removed: [], changed: ["store_launch.bd_qualification"] },
+        blocks: ["home"],
+        theme: { live: "quartz", draft: "warm" },
+      }),
+  });
+  renderAt(`/clients/${ID}`);
+  const { dialog } = await openPublish();
+
+  const changes = await within(dialog).findByRole("list", { name: "Changes since v1" });
+  const lines = within(changes)
+    .getAllByRole("listitem")
+    .map((li) => li.textContent);
+  expect(lines).toEqual([
+    "Fields: added store_size; changed site_name; removed fax",
+    "Stages: changed store_launch.bd_qualification",
+    "Pages with changed blocks: home",
+    "Theme: quartz → warm",
+  ]);
+  expect(within(dialog).getByText("Running sites stay on their release; new sites start on v2.")).toBeDefined();
+  expect(within(dialog).getByRole("button", { name: "Publish" })).toHaveProperty("disabled", false);
+  await expectNoAxeViolations();
+});
+
+test("an unchanged draft says so in the dialog", async () => {
+  signedInApi({ [`GET /owner/clients/${ID}`]: live });
+  renderAt(`/clients/${ID}`);
+  const { dialog } = await openPublish();
+  expect(await within(dialog).findByText("No changes since v1.")).toBeDefined();
+});
+
+test("a draft with problems lists them, and Publish waits until they are fixed", async () => {
+  const calls = signedInApi({
+    [`GET /owner/clients/${ID}`]: live,
+    [`GET /owner/clients/${ID}/draft/validate`]: () =>
+      json([
+        { path: "flows[0].stages[1].after[0]", message: "unknown stage 'fitout'" },
+        { path: "fields.site_name.type", message: "a published field can't change type" },
+      ]),
+  });
+  renderAt(`/clients/${ID}`);
+  const { user, dialog } = await openPublish();
+
+  const problems = await within(dialog).findByRole("list", { name: "Fix before publishing" });
+  expect(within(problems).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+    "flows[0].stages[1].after[0]: unknown stage 'fitout'",
+    "fields.site_name.type: a published field can't change type",
+  ]);
+  const publish = within(dialog).getByRole("button", { name: "Publish" });
+  expect(publish).toHaveProperty("disabled", true);
+  await user.click(publish);
+  expect(calls).not.toContain(`POST /owner/clients/${ID}/publish`);
+});
+
+test("a reopened dialog waits for its new check, not the cached one", async () => {
+  let held = false;
+  let answer: (r: Response) => void = () => {};
+  signedInApi({
+    [`GET /owner/clients/${ID}`]: live,
+    // the first check finds nothing; once held, a recheck waits until the test answers it
+    [`GET /owner/clients/${ID}/draft/validate`]: () =>
+      held ? new Promise<Response>((resolve) => (answer = resolve)) : json([]),
+  });
+  renderAt(`/clients/${ID}`);
+  const first = await openPublish();
+  await vi.waitFor(() => expect(within(first.dialog).getByRole("button", { name: "Publish" })).toHaveProperty("disabled", false));
+  await first.user.click(within(first.dialog).getByRole("button", { name: "Cancel" }));
+  held = true;
+  const { dialog } = await openPublish();
+
+  const publish = within(dialog).getByRole("button", { name: "Publish" });
+  expect(publish).toHaveProperty("disabled", true);
+  answer(json([{ path: "fields.site_name.type", message: "a published field can't change type" }]));
+  expect(await within(dialog).findByRole("list", { name: "Fix before publishing" })).toBeDefined();
+  expect(publish).toHaveProperty("disabled", true);
+});
+
+test("a failed publish shows the error in the dialog, which stays open; nothing is released", async () => {
+  signedInApi({
+    [`GET /owner/clients/${ID}`]: () => json(detail({ status: "ready", steps: steps(allDone) })),
+    [`POST /owner/clients/${ID}/publish`]: () =>
+      json({ type: "about:blank", title: "Bad Gateway", status: 502, detail: "The client's engine didn't answer.", request_id: "r", errors: null }, 502),
+  });
+  renderAt(`/clients/${ID}`);
+  const { user, dialog } = await openPublish(1);
+  await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+
+  const alert = await within(dialog).findByRole("alert");
+  expect(alert.textContent).toContain("The client's engine didn't answer.");
+  expect(screen.getByRole("dialog", { name: "Publish v1?" })).toBeDefined();
+  expect(screen.getByText("Nothing published yet")).toBeDefined();
+});
+
+test("if the draft can't be checked, the dialog says so and leaves Publish to the server's check", async () => {
+  signedInApi({
+    [`GET /owner/clients/${ID}`]: live,
+    [`GET /owner/clients/${ID}/draft/validate`]: () => problem(503),
+  });
+  renderAt(`/clients/${ID}`);
+  const { dialog } = await openPublish();
+  expect(await within(dialog).findByText(/Couldn't check the draft/)).toBeDefined();
+  expect(within(dialog).getByRole("button", { name: "Publish" })).toHaveProperty("disabled", false);
 });
 
 // --- the client's look (#34) ------------------------------------------------------------------

@@ -6,8 +6,9 @@
 import { Button, Code, Group, Loader, Modal, NativeSelect, Paper, SegmentedControl, Stack, Text, Textarea } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
-import { formatNum, Notice, notifyError, notifyInfo, StatusPill } from "@zm/ui";
+import { formatNum, Notice, StatusPill } from "@zm/ui";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { PublishDialog } from "../Publish";
 import { api, must } from "../session";
 import { EMPTY, readEvents, step, type Chat, type Entry, type Usage } from "./stream";
 
@@ -85,8 +86,19 @@ function Line({ entry, onOpen, onResend }: { entry: Entry; onOpen: (changeId: nu
   }
 }
 
-/** `onTurn` hears when a turn starts and ends, so the client page's own Publish can wait for it. */
-export function Dock({ clientId, onTurn }: { clientId: string; onTurn?: (turning: boolean) => void }) {
+/** `onTurn` hears when a turn starts and ends, so the client page's own Publish can wait for it.
+ * `next` is the version a publish would create, for the Publish dialog (#43). */
+export function Dock({
+  clientId,
+  clientName,
+  next,
+  onTurn,
+}: {
+  clientId: string;
+  clientName: string;
+  next: number;
+  onTurn?: (turning: boolean) => void;
+}) {
   const queries = useQueryClient();
   const path = { params: { path: { client_id: clientId } } };
   const conversations = useQuery({
@@ -221,22 +233,6 @@ export function Dock({ clientId, onTurn }: { clientId: string; onTurn?: (turning
     }
   }
 
-  async function publish() {
-    setBusy(true);
-    try {
-      // #43 replaces this confirm with the publish dialog (diff summary, versioning warnings)
-      const done = await must(api.POST("/owner/clients/{client_id}/publish", path));
-      setConfirming(false);
-      if (done.created) notifyInfo("Published", `Release v${done.version} is live.`);
-      else notifyInfo("No new release", `Nothing changed since v${done.version}.`);
-      await Promise.all([queries.invalidateQueries({ queryKey: ["client", clientId] }), refresh()]);
-    } catch (e) {
-      notifyError(reason(e, "Couldn't publish."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   const first = problems.data?.[0];
   const unchecked = problems.isError ? reason(problems.error, OFFLINE) : null;
   const diff = changes.data?.find((c) => c.id === shown);
@@ -351,19 +347,7 @@ export function Dock({ clientId, onTurn }: { clientId: string; onTurn?: (turning
       <Modal opened={shown !== null} onClose={() => setShown(null)} title={diff?.summary ?? "Change"}>
         {diff ? <Code block>{JSON.stringify(diff.patch, null, 2)}</Code> : <Text size="sm">This change isn't among the latest 500.</Text>}
       </Modal>
-      <Modal opened={confirming} onClose={() => setConfirming(false)} title="Publish the draft?">
-        <Stack>
-          <Text size="sm">The draft is compiled and deployed to the client's own Operaton as its next release. Sites already running stay on theirs.</Text>
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => setConfirming(false)}>
-              Cancel
-            </Button>
-            <Button loading={busy} onClick={() => void publish()}>
-              Publish
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
+      <PublishDialog clientId={clientId} clientName={clientName} next={next} opened={confirming} onClose={() => setConfirming(false)} />
     </Stack>
   );
 }

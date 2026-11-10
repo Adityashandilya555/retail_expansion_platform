@@ -1,6 +1,6 @@
 // Clients, their provisioning, look and publishing (#29, #34). Provisioning itself is the worker's
 // (#24, #25): the API queues the steps, and the client page polls them every 5 s.
-import { Button, Code, Group, Modal, NativeSelect, Stack, Tabs, Text, TextInput, Title } from "@mantine/core";
+import { Button, Code, Group, NativeSelect, Stack, Tabs, Text, TextInput, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
 import {
@@ -10,7 +10,6 @@ import {
   isAccent,
   Notice,
   notifyError,
-  notifyInfo,
   PageHeader,
   PresetPicker,
   resolvePreset,
@@ -21,6 +20,7 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Dock } from "./agent/Dock";
 import { ClientCards } from "./ClientCards";
+import { PublishDialog } from "./Publish";
 import { api, must } from "./session";
 
 type ClientOut = components["schemas"]["ClientOut"];
@@ -414,35 +414,11 @@ export function ClientPage() {
         </Tabs.Panel>
         {/* the agent dock (#41); kept mounted, so a conversation survives a look at the overview */}
         <Tabs.Panel value="configure" pt="lg">
-          {c.status === "ready" && <Dock clientId={id} onTurn={setTurning} />}
+          {c.status === "ready" && <Dock clientId={id} clientName={c.name} next={next} onTurn={setTurning} />}
         </Tabs.Panel>
       </Tabs>
 
-      <Modal opened={confirming} onClose={() => setConfirming(false)} title={`Publish v${next}?`}>
-        <Stack>
-          <Text size="sm">
-            The draft is compiled and deployed to {c.name}'s own Operaton as release v{next}. Sites already running stay on their
-            release.
-          </Text>
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => setConfirming(false)}>
-              Cancel
-            </Button>
-            <Button
-              loading={busy}
-              onClick={() =>
-                run(async () => {
-                  const done = await must(api.POST("/owner/clients/{client_id}/publish", { params: { path: { client_id: id } } }));
-                  setConfirming(false);
-                  if (!done.created) notifyInfo("No new release", `Nothing changed since v${done.version}.`);
-                }, "Couldn't publish.")
-              }
-            >
-              Publish
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
+      <PublishDialog clientId={id} clientName={c.name} next={next} opened={confirming} onClose={() => setConfirming(false)} />
     </Stack>
   );
 }

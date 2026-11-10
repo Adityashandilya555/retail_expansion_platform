@@ -176,6 +176,21 @@ def deprovision(argv: list[str]) -> None:
     log.info("deprovisioned %s: %s", args.slug, ", ".join(deleted) or "nothing left to delete")
 
 
+def compat(argv: list[str]) -> None:
+    """`zm-worker compat-live`: every ready client's active release against this build (#43);
+    exits 1 on any problem. The API's pre-deploy runs it after the vault migrations."""
+    parser = argparse.ArgumentParser(prog="zm-worker compat-live")
+    parser.parse_args(argv)
+    missing = [v for v in RECONCILE_ENV if not os.environ.get(v)]
+    if missing:
+        parser.error(f"set {', '.join(missing)}")
+    from zm_worker import compat_live
+
+    code = compat_live.main(os.environ["PLATFORM_DATABASE_URL"])
+    if code:
+        sys.exit(code)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = sys.argv[1:] if argv is None else argv
     logs.configure(os.environ.get("LOG_LEVEL", "info"))
@@ -188,6 +203,9 @@ def main(argv: list[str] | None = None) -> None:
     if args[:1] == ["deprovision"]:
         deprovision(args[1:])
         return
+    if args[:1] == ["compat-live"]:
+        compat(args[1:])
+        return
     if args[:1] == ["reconcile"]:  # one pass by hand: `zm-worker reconcile`
         from zm_worker import reconcile
 
@@ -198,7 +216,7 @@ def main(argv: list[str] | None = None) -> None:
             f"unknown command {args[0]!r}; usage: zm-worker"
             " [vault-migrate --dsn URL | vault-migrate --ready"
             " | provision-local SLUG --dsn URL --operaton-url URL"
-            " | reconcile | deprovision SLUG --yes]"
+            " | reconcile | compat-live | deprovision SLUG --yes]"
         )
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
