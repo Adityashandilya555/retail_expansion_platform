@@ -458,6 +458,29 @@ test("a draft with problems lists them, and Publish waits until they are fixed",
   expect(calls).not.toContain(`POST /owner/clients/${ID}/publish`);
 });
 
+test("a reopened dialog waits for its new check, not the cached one", async () => {
+  let held = false;
+  let answer: (r: Response) => void = () => {};
+  signedInApi({
+    [`GET /owner/clients/${ID}`]: live,
+    // the first check finds nothing; once held, a recheck waits until the test answers it
+    [`GET /owner/clients/${ID}/draft/validate`]: () =>
+      held ? new Promise<Response>((resolve) => (answer = resolve)) : json([]),
+  });
+  renderAt(`/clients/${ID}`);
+  const first = await openPublish();
+  await vi.waitFor(() => expect(within(first.dialog).getByRole("button", { name: "Publish" })).toHaveProperty("disabled", false));
+  await first.user.click(within(first.dialog).getByRole("button", { name: "Cancel" }));
+  held = true;
+  const { dialog } = await openPublish();
+
+  const publish = within(dialog).getByRole("button", { name: "Publish" });
+  expect(publish).toHaveProperty("disabled", true);
+  answer(json([{ path: "fields.site_name.type", message: "a published field can't change type" }]));
+  expect(await within(dialog).findByRole("list", { name: "Fix before publishing" })).toBeDefined();
+  expect(publish).toHaveProperty("disabled", true);
+});
+
 test("a failed publish shows the error in the dialog, which stays open; nothing is released", async () => {
   signedInApi({
     [`GET /owner/clients/${ID}`]: () => json(detail({ status: "ready", steps: steps(allDone) })),

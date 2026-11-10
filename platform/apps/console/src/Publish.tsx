@@ -61,8 +61,9 @@ export function PublishDialog({
   const [failed, setFailed] = useState<string | null>(null);
   const live = next - 1;
   const lines = diff.data ? summary(diff.data) : [];
-  // a check that failed doesn't block: publishing checks the draft again
-  const blocked = problems.isPending || (problems.data?.length ?? 0) > 0;
+  // a check that failed doesn't block: publishing checks the draft again; a cached one waits for its
+  // refetch, so the summary on screen is the one that gets published
+  const blocked = problems.isFetching || diff.isFetching || (problems.data?.length ?? 0) > 0;
 
   function close() {
     setFailed(null);
