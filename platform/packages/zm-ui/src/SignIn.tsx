@@ -74,12 +74,15 @@ export function SignInForm({
   );
 }
 
+// Mantine's notification close button has no accessible name of its own
+const DISMISS = { "aria-label": "Dismiss" };
+
 /** An error the person can act on, as a Mantine notification (inside ZmProvider). */
 export function notifyError(message: string) {
-  notifications.show({ color: TONE_COLORS.error, title: "Couldn't continue", message });
+  notifications.show({ color: TONE_COLORS.error, title: "Couldn't continue", message, closeButtonProps: DISMISS });
 }
 
 /** News that isn't a failure, e.g. "nothing to publish", as a Mantine notification. */
 export function notifyInfo(title: string, message: string) {
-  notifications.show({ color: TONE_COLORS.neutral, title, message });
+  notifications.show({ color: TONE_COLORS.neutral, title, message, closeButtonProps: DISMISS });
 }
