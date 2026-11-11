@@ -2,7 +2,8 @@ import { Center, Loader, Menu } from "@mantine/core";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppFrame, AuthCard, notifyError, SignInForm, ZmProvider } from "@zm/ui";
 import { useState } from "react";
-import { BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate } from "react-router";
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router";
+import { ReviewPage, ReviewQueue } from "./ChangeRequests";
 import { ClientPage, ClientsList, NewClient } from "./Clients";
 import { currentOwner, signIn, signOut } from "./session";
 
@@ -29,8 +30,14 @@ function Login() {
 }
 
 /** Everything behind sign-in (silently from the refresh cookie after a reload), in the app frame. */
+const NAV = [
+  { key: "clients", label: "Clients", to: "/" },
+  { key: "change-requests", label: "Change requests", to: "/change-requests" },
+];
+
 function SignedIn() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const queries = useQueryClient();
   const owner = useQuery({ queryKey: ["owner"], queryFn: currentOwner });
   if (owner.data === null) return <Navigate to="/login" replace />;
@@ -44,9 +51,9 @@ function SignedIn() {
   return (
     <AppFrame
       clientName="Z-Matrix owner console"
-      nav={[{ key: "clients", label: "Clients" }]}
-      activeKey="clients"
-      onNavigate={() => navigate("/")}
+      nav={NAV.map(({ key, label }) => ({ key, label }))}
+      activeKey={pathname.startsWith("/change-requests") ? "change-requests" : "clients"}
+      onNavigate={(key) => navigate(NAV.find((n) => n.key === key)?.to ?? "/")}
       user={{ name: owner.data.name, email: owner.data.email }}
       userMenu={
         <Menu.Item
@@ -77,6 +84,8 @@ export function ConsoleApp() {
             <Route path="/" element={<ClientsList />} />
             <Route path="/clients/new" element={<NewClient />} />
             <Route path="/clients/:id" element={<ClientPage />} />
+            <Route path="/change-requests" element={<ReviewQueue />} />
+            <Route path="/change-requests/:id" element={<ReviewPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

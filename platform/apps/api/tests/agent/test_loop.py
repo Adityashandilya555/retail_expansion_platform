@@ -259,8 +259,12 @@ def chats(held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> dict[uuid.U
         log = [{**c, "id": i} for i, c in enumerate(held.log, 1)]
         return [c for c in log if c["conversation_id"] == cid]
 
+    async def requested(_ctx: Any, cid: uuid.UUID) -> Doc | None:
+        return found[cid].get("change_request")
+
     monkeypatch.setattr(loop, "_stored", stored)
     monkeypatch.setattr(loop, "_append", append)
+    monkeypatch.setattr(loop, "_request", requested)
 
     async def held_claim(_ctx: Any, cid: uuid.UUID) -> bool:
         return cid in busy
@@ -798,6 +802,48 @@ def test_past_a_clients_turn_limit_a_turn_is_refused_before_its_claim(
             pass
 
     asyncio.run(go())
+
+
+CHANGE_REQUEST = {
+    "id": str(uuid.uuid4()),
+    "kind": "add_document_type",
+    "summary": "Add a Fire NOC upload to the legal_licensing form",
+    "payload": {"kind": "add_document_type", "form": "legal_licensing", "label": "Fire NOC"},
+    "note": "The city now asks for it",
+}
+
+
+def test_a_change_request_conversation_tells_the_agent_and_links_its_edits(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """Apply with agent (#46): every turn's draft state carries the request, as a system message
+    (the operator's channel), and each edit the turn makes is logged against it."""
+    cid = new(chats)
+    chats[cid]["change_request"] = CHANGE_REQUEST
+    fake = Fake(*fire_noc())
+    events = run(fake, held, cid, "Apply the request")
+    assert names(events)[-1] == "done"
+    for request in fake.requests:
+        said = [m for m in request["messages"] if m["role"] == "system"][-1]["content"]
+        assert said.startswith("Draft state: ")
+        assert "Add a Fire NOC upload to the legal_licensing form" in said
+        assert "The city now asks for it" in said
+        assert json.dumps(CHANGE_REQUEST["payload"], sort_keys=True) in said
+    assert len(held.log) == 2
+    assert {c["change_request_id"] for c in held.log} == {uuid.UUID(CHANGE_REQUEST["id"])}
+
+
+def test_an_ordinary_conversation_links_no_request(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    cid = new(chats)
+    fake = Fake(*fire_noc())
+    run(fake, held, cid, FIRE_NOC)
+    said = [m for m in fake.requests[0]["messages"] if m["role"] == "system"][-1]["content"]
+    assert "Change request" not in said
+    assert {c["change_request_id"] for c in held.log} == {None}
 
 
 def sse(body: str) -> list[tuple[str, Doc]]:
