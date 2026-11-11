@@ -132,6 +132,26 @@
         "title": "AppUi",
         "type": "object"
       },
+      "ApproveIn": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "ApproveIn",
+        "type": "object"
+      },
       "Asked": {
         "properties": {
           "kind": {
@@ -1015,6 +1035,19 @@
       "ConversationIn": {
         "additionalProperties": false,
         "properties": {
+          "change_request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Apply with agent (#46): the client's open change request this conversation applies; it\ngoes `in_review`, and the conversation's edits are linked to it.",
+            "title": "Change Request Id"
+          },
           "mode": {
             "description": "`configure` sets a client up (effort high); `edit` changes it later (effort medium).",
             "enum": [
@@ -1033,6 +1066,18 @@
       },
       "ConversationOut": {
         "properties": {
+          "change_request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Request Id"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -1489,6 +1534,30 @@
           "db"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "ImpactOut": {
+        "properties": {
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "title": "Problems",
+            "type": "array"
+          }
+        },
+        "required": [
+          "problems",
+          "notes"
+        ],
+        "title": "ImpactOut",
         "type": "object"
       },
       "InviteAcceptIn": {
@@ -2175,6 +2244,22 @@
         "title": "Refused",
         "type": "object"
       },
+      "RejectIn": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note"
+        ],
+        "title": "RejectIn",
+        "type": "object"
+      },
       "ReleaseOut": {
         "properties": {
           "deployment_id": {
@@ -2240,6 +2325,251 @@
           "label"
         ],
         "title": "RenameFieldLabel",
+        "type": "object"
+      },
+      "ReviewDetail": {
+        "properties": {
+          "client_id": {
+            "format": "uuid",
+            "title": "Client Id",
+            "type": "string"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "client_slug": {
+            "title": "Client Slug",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImpactOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The dry run on the client's draft; null while the client has no draft."
+          },
+          "kind": {
+            "enum": [
+              "add_field",
+              "rename_field_label",
+              "add_document_type",
+              "set_required",
+              "add_select_option"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "linked_changes": {
+            "description": "Edits in the draft linked to this request (undone ones don't count).",
+            "title": "Linked Changes",
+            "type": "integer"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "shipped_in_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipped In Version"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "in_review",
+              "approved",
+              "rejected",
+              "shipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "client_id",
+          "client_slug",
+          "client_name",
+          "kind",
+          "payload",
+          "summary",
+          "note",
+          "status",
+          "review_note",
+          "shipped_in_version",
+          "created_at",
+          "updated_at",
+          "impact",
+          "linked_changes"
+        ],
+        "title": "ReviewDetail",
+        "type": "object"
+      },
+      "ReviewOut": {
+        "description": "A request as the owner console lists it, with its client.",
+        "properties": {
+          "client_id": {
+            "format": "uuid",
+            "title": "Client Id",
+            "type": "string"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "client_slug": {
+            "title": "Client Slug",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "add_field",
+              "rename_field_label",
+              "add_document_type",
+              "set_required",
+              "add_select_option"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "shipped_in_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipped In Version"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "in_review",
+              "approved",
+              "rejected",
+              "shipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "client_id",
+          "client_slug",
+          "client_name",
+          "kind",
+          "payload",
+          "summary",
+          "note",
+          "status",
+          "review_note",
+          "shipped_in_version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ReviewOut",
         "type": "object"
       },
       "Said": {
@@ -4316,6 +4646,266 @@
         ]
       }
     },
+    "/owner/change-requests": {
+      "get": {
+        "description": "Every client's requests, newest first, filtered by status and client; fewer than `limit`\nis the end.",
+        "operationId": "list_reviews_owner_change_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "submitted",
+                    "in_review",
+                    "approved",
+                    "rejected",
+                    "shipped"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "client_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReviewOut"
+                  },
+                  "title": "Response List Reviews Owner Change Requests Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Reviews",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/change-requests/{change_request_id}": {
+      "get": {
+        "description": "The request with its dry run on the client's draft and how many draft edits it has.",
+        "operationId": "get_review_owner_change_requests__change_request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Get Review",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/change-requests/{change_request_id}/approve": {
+      "post": {
+        "description": "Once the agent's edits for it are in the draft (409 before); the next publish ships it.",
+        "operationId": "approve_owner_change_requests__change_request_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ApproveIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Approve",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/change-requests/{change_request_id}/reject": {
+      "post": {
+        "description": "With a note the client admin sees. The draft is left as it is: undo any edits already\napplied for it in the dock.",
+        "operationId": "reject_owner_change_requests__change_request_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Reject",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
     "/owner/clients": {
       "get": {
         "operationId": "list_clients_owner_clients_get",
@@ -4519,7 +5109,7 @@
         ]
       },
       "post": {
-        "description": "A new conversation with the client's agent.",
+        "description": "A new conversation with the client's agent; with `change_request_id`, one applying that\nrequest (404 for another client's, 409 for one already decided).",
         "operationId": "start_conversation_owner_clients__client_id__agent_conversations_post",
         "parameters": [
           {

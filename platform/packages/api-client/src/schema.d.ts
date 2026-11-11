@@ -455,6 +455,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/owner/change-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Reviews
+         * @description Every client's requests, newest first, filtered by status and client; fewer than `limit`
+         *     is the end.
+         */
+        get: operations["list_reviews_owner_change_requests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/change-requests/{change_request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Review
+         * @description The request with its dry run on the client's draft and how many draft edits it has.
+         */
+        get: operations["get_review_owner_change_requests__change_request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/change-requests/{change_request_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve
+         * @description Once the agent's edits for it are in the draft (409 before); the next publish ships it.
+         */
+        post: operations["approve_owner_change_requests__change_request_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/change-requests/{change_request_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject
+         * @description With a note the client admin sees. The draft is left as it is: undo any edits already
+         *     applied for it in the dock.
+         */
+        post: operations["reject_owner_change_requests__change_request_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/owner/clients": {
         parameters: {
             query?: never;
@@ -533,7 +615,8 @@ export interface paths {
         put?: never;
         /**
          * Start Conversation
-         * @description A new conversation with the client's agent.
+         * @description A new conversation with the client's agent; with `change_request_id`, one applying that
+         *     request (404 for another client's, 409 for one already decided).
          */
         post: operations["start_conversation_owner_clients__client_id__agent_conversations_post"];
         delete?: never;
@@ -860,6 +943,11 @@ export interface components {
             /** Pages */
             pages: components["schemas"]["Page"][];
             release: components["schemas"]["UiRelease"];
+        };
+        /** ApproveIn */
+        ApproveIn: {
+            /** Note */
+            note?: string | null;
         };
         /** Asked */
         Asked: {
@@ -1258,6 +1346,12 @@ export interface components {
         /** ConversationIn */
         ConversationIn: {
             /**
+             * Change Request Id
+             * @description Apply with agent (#46): the client's open change request this conversation applies; it
+             *     goes `in_review`, and the conversation's edits are linked to it.
+             */
+            change_request_id?: string | null;
+            /**
              * Mode
              * @description `configure` sets a client up (effort high); `edit` changes it later (effort medium).
              * @enum {string}
@@ -1266,6 +1360,8 @@ export interface components {
         };
         /** ConversationOut */
         ConversationOut: {
+            /** Change Request Id */
+            change_request_id?: string | null;
             /**
              * Id
              * Format: uuid
@@ -1453,6 +1549,13 @@ export interface components {
         Health: {
             db: components["schemas"]["Probe"];
             operaton: components["schemas"]["Probe"];
+        };
+        /** ImpactOut */
+        ImpactOut: {
+            /** Notes */
+            notes: string[];
+            /** Problems */
+            problems: components["schemas"]["FieldError"][];
         };
         /** InviteAcceptIn */
         InviteAcceptIn: {
@@ -1699,6 +1802,11 @@ export interface components {
              */
             kind: "refusal";
         };
+        /** RejectIn */
+        RejectIn: {
+            /** Note */
+            note: string;
+        };
         /** ReleaseOut */
         ReleaseOut: {
             /** Deployment Id */
@@ -1727,6 +1835,114 @@ export interface components {
              * @description The new label; the stored key stays.
              */
             label: string;
+        };
+        /** ReviewDetail */
+        ReviewDetail: {
+            /**
+             * Client Id
+             * Format: uuid
+             */
+            client_id: string;
+            /** Client Name */
+            client_name: string;
+            /** Client Slug */
+            client_slug: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** @description The dry run on the client's draft; null while the client has no draft. */
+            impact: components["schemas"]["ImpactOut"] | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "add_field" | "rename_field_label" | "add_document_type" | "set_required" | "add_select_option";
+            /**
+             * Linked Changes
+             * @description Edits in the draft linked to this request (undone ones don't count).
+             */
+            linked_changes: number;
+            /** Note */
+            note: string | null;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Review Note */
+            review_note: string | null;
+            /** Shipped In Version */
+            shipped_in_version: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "submitted" | "in_review" | "approved" | "rejected" | "shipped";
+            /** Summary */
+            summary: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * ReviewOut
+         * @description A request as the owner console lists it, with its client.
+         */
+        ReviewOut: {
+            /**
+             * Client Id
+             * Format: uuid
+             */
+            client_id: string;
+            /** Client Name */
+            client_name: string;
+            /** Client Slug */
+            client_slug: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "add_field" | "rename_field_label" | "add_document_type" | "set_required" | "add_select_option";
+            /** Note */
+            note: string | null;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Review Note */
+            review_note: string | null;
+            /** Shipped In Version */
+            shipped_in_version: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "submitted" | "in_review" | "approved" | "rejected" | "shipped";
+            /** Summary */
+            summary: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** Said */
         Said: {
@@ -2895,6 +3111,141 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TokenOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_reviews_owner_change_requests_get: {
+        parameters: {
+            query?: {
+                status?: ("submitted" | "in_review" | "approved" | "rejected" | "shipped") | null;
+                client_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewOut"][];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_review_owner_change_requests__change_request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDetail"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    approve_owner_change_requests__change_request_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ApproveIn"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reject_owner_change_requests__change_request_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RejectIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewOut"];
                 };
             };
             /** @description Problem details (RFC 9457) */

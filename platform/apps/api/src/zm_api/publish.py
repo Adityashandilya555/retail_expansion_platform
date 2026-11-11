@@ -13,7 +13,9 @@
    fields it adds, `required_from_version` on those it makes required.
    Steps 1-4 run in one client-database transaction under a per-client advisory lock, so two
    publishes at once deploy and number their versions in the same order.
-5. Index it in `platform.releases` (idempotent, so a retried publish repairs a missing row).
+5. Index it in `platform.releases` (idempotent, so a retried publish repairs a missing row), and
+   ship the client's approved change requests whose edits the new release carries (S2-24b,
+   `cr_review.ship`): `shipped`, with `shipped_in_version`.
 
 Operaton failing in steps 2-3 raises before anything is written (502); a database failure after
 the deploy is a 503, and publishing again completes it (the deploy is then a duplicate).
@@ -31,7 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from zm_api import releases, versioning
+from zm_api import cr_review, releases, versioning
 from zm_api.clients import forget_overview
 from zm_api.context import ClientContext, OwnerCtx, owner_router
 from zm_api.errors import (
@@ -153,6 +155,8 @@ async def publish(
 
             row = await releases.release_by_deployment(conn, deployment_id)
             created = row is None
+            # a new release carries the draft's linked edits; an older one made current doesn't
+            shipping = await cr_review.shipped_by(conn) if created else []
             if row is None:
                 # the document as published, after any schema migration (D14), stamped (S2-25)
                 workflow = wf.model_dump(mode="json", by_alias=True, exclude_unset=True)
@@ -191,6 +195,7 @@ async def publish(
                     "sha": row.sha256,
                 },
             )
+            await cr_review.ship(conn, ctx.client.id, shipping, row.version)
     except (SQLAlchemyError, OSError) as e:
         # Operaton may already hold the deployment; publishing again is safe and completes it.
         raise ServiceUnavailable("Couldn't record the release; publish again to retry") from e
