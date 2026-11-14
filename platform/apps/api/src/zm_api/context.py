@@ -5,6 +5,12 @@ or body, so a token can only reach its own client's database and Operaton: anoth
 simply don't exist there (404). Tokens are issued by `zm_api.auth` (#22): HS256 with
 `JWT_SECRET`, claims `{sub, kind: "client" | "owner", client, exp}`. A missing or invalid token is
 401; a valid token of the wrong kind (owner on `/app`, client on `/owner`) is 403.
+
+A third kind, `preview` (#42), is an owner looking at a client's draft as one role: `{sub: the
+owner, kind: "preview", client, as: {department, level}, label, exp}`, 15 minutes. It passes on
+`/app` reads only (any other method is 403), and only the routes that take `Viewer` answer it,
+from the draft and fixtures: every route that takes `UserId` is 403, so a preview never reads a
+client's real cases or people.
 """
 
 import asyncio
@@ -48,6 +54,16 @@ class ClientContext:
     async def aclose(self) -> None:
         await self.operaton.aclose()
         await self.db.dispose()
+
+
+@dataclass(frozen=True)
+class Preview:
+    """The role a preview token (#42) looks at the draft as."""
+
+    department: str
+    level: int
+    label: str
+    """e.g. "Legal L1": the role's name for the shell's banner."""
 
 
 @dataclass(frozen=True)
@@ -199,8 +215,12 @@ def _claims(request: Request, kind: str) -> dict[str, Any]:
         )
     except jwt.PyJWTError:
         raise Unauthorized() from None
-    if claims.get("kind") not in {"client", "owner"}:
+    if claims.get("kind") not in {"client", "owner", "preview"}:
         raise Unauthorized()
+    if claims["kind"] == "preview" and kind == "client":
+        if request.method not in {"GET", "HEAD"}:
+            raise Forbidden("A preview is read-only")
+        return claims
     if claims["kind"] != kind:
         raise Forbidden("This sign-in can't be used here")
     return claims
@@ -220,11 +240,31 @@ async def client_context(request: Request) -> ClientContext:
 
 
 def user_id(request: Request) -> UUID:
-    """The signed-in client user (`sub`); use after ClientCtx, which has checked the token."""
+    """The signed-in client user (`sub`); use after ClientCtx, which has checked the token.
+    A preview token is nobody in the client: 403."""
+    claims = _claims(request, "client")
+    if claims["kind"] == "preview":
+        raise Forbidden("This isn't part of the preview")
     try:
-        return UUID(_claims(request, "client")["sub"])
+        return UUID(claims["sub"])
     except ValueError:
         raise Unauthorized() from None
+
+
+def viewer(request: Request) -> UUID | Preview:
+    """Who a read is for: the signed-in user, or the role a preview token looks as."""
+    claims = _claims(request, "client")
+    if claims["kind"] != "preview":
+        return user_id(request)
+    role, label = claims.get("as"), claims.get("label")
+    if (
+        not isinstance(role, dict)
+        or not isinstance(role.get("department"), str)
+        or type(role.get("level")) is not int
+        or not isinstance(label, str)
+    ):
+        raise Unauthorized()
+    return Preview(role["department"], role["level"], label)
 
 
 def owner_context(request: Request) -> OwnerContext:
@@ -236,6 +276,7 @@ def owner_context(request: Request) -> OwnerContext:
 
 ClientCtx = Annotated[ClientContext, Depends(client_context)]
 UserId = Annotated[UUID, Depends(user_id)]
+Viewer = Annotated[UUID | Preview, Depends(viewer)]
 OwnerCtx = Annotated[OwnerContext, Depends(owner_context)]
 
 

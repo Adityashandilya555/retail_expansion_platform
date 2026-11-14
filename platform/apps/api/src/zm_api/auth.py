@@ -30,7 +30,16 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from zm_api import settings
-from zm_api.context import ClientCtx, OwnerCtx, Resolver, UserId, client_router, owner_router
+from zm_api.context import (
+    ClientCtx,
+    OwnerCtx,
+    Preview,
+    Resolver,
+    UserId,
+    Viewer,
+    client_router,
+    owner_router,
+)
 from zm_api.errors import NotFound, TooManyRequests, Unauthorized
 from zm_api.registry import Client
 
@@ -147,6 +156,9 @@ class Me(BaseModel):
     client: ClientInfo
     memberships: list[Membership]
     preferences: Preferences
+    preview: bool = False
+    """True under a preview token (#42): `name` is the role the draft is shown as, and nothing
+    can be changed."""
 
 
 class OwnerMe(BaseModel):
@@ -166,6 +178,24 @@ def access_token(
     if client is not None:
         claims["client"] = client
     return TokenOut(access_token=jwt.encode(claims, settings.jwt_secret(), "HS256"), expires_in=ttl)
+
+
+PREVIEW_TTL = 15 * 60
+
+
+def preview_token(owner: UUID, client: str, role: Preview) -> TokenOut:
+    """A read-only look at `client`'s draft as `role` (#42); it can't be refreshed."""
+    claims = {
+        "sub": str(owner),
+        "kind": "preview",
+        "client": client,
+        "as": {"department": role.department, "level": role.level},
+        "label": role.label,
+        "exp": int(time.time()) + PREVIEW_TTL,
+    }
+    return TokenOut(
+        access_token=jwt.encode(claims, settings.jwt_secret(), "HS256"), expires_in=PREVIEW_TTL
+    )
 
 
 @dataclass(frozen=True)
@@ -409,8 +439,19 @@ app_routes = client_router()
 
 
 @app_routes.get("/me")
-async def me(ctx: ClientCtx, uid: UserId) -> Me:
+async def me(ctx: ClientCtx, uid: Viewer) -> Me:
     """The signed-in user and memberships, read on every call so level changes apply at once."""
+    if isinstance(uid, Preview):
+        return Me(
+            id=UUID(int=0),
+            email="",
+            name=uid.label,
+            is_client_admin=False,
+            client=ClientInfo(slug=ctx.client.slug, name=ctx.client.name),
+            memberships=[Membership(department=uid.department, level=uid.level, scope="own")],
+            preferences=Preferences(),
+            preview=True,
+        )
     async with ctx.db.connect() as conn:
         user = (
             (

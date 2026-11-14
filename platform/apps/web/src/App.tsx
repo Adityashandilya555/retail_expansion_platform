@@ -2,8 +2,8 @@ import { Anchor, Button, PasswordInput, Stack, TextInput } from "@mantine/core";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { AuthCard, notifyError, SignInForm, ZmProvider } from "@zm/ui";
 import { useState } from "react";
-import { BrowserRouter, Link, Navigate, Outlet, Route, Routes, useNavigate, useParams } from "react-router";
-import { acceptInvite, findWorkspace, savedWorkspace, signIn, type Workspace } from "./session";
+import { BrowserRouter, Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
+import { acceptInvite, findWorkspace, savedWorkspace, signIn, startPreview, type Workspace } from "./session";
 import { Shell } from "./Shell";
 
 /** `/`: the workspace code. */
@@ -107,6 +107,21 @@ function AcceptInvite() {
   );
 }
 
+/** `/preview#<token>` (#42): the owner console opens it in a new tab. The token comes in the
+ * fragment, which is never sent to a server, and leaves the address bar with the redirect. */
+function Preview() {
+  const queries = useQueryClient();
+  const { hash } = useLocation();
+  const [started] = useState(() => {
+    const token = hash.slice(1);
+    if (!token) return false;
+    startPreview(token);
+    queries.clear(); // nothing a signed-in user of this tab loaded may show in the preview
+    return true;
+  });
+  return <Navigate to={started ? "/app" : "/"} replace />;
+}
+
 /** The client app's routes, inside a router (BrowserRouter in the app, MemoryRouter in tests). */
 export function ClientApp() {
   const [workspace, setWorkspace] = useState(savedWorkspace);
@@ -126,6 +141,7 @@ export function ClientApp() {
           <Route path="/login" element={<Login workspace={workspace} />} />
           <Route path="/invite/:token" element={<AcceptInvite />} />
         </Route>
+        <Route path="/preview" element={<Preview />} />
         <Route path="/app/*" element={<Shell workspace={workspace} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
