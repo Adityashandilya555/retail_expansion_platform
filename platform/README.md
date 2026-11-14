@@ -74,7 +74,8 @@ pnpm --filter @zm/web dev       # previews: components at http://localhost:5173/
   - **Decide:**
     - `POST …/reject {note}` (from `submitted` or `in_review`) sets the note the client admin sees. It leaves the draft alone; undo any applied edits in the dock.
     - `POST …/approve {note?}` needs the request `in_review`, with at least one linked edit in the draft (else 409).
-  - **Ship:** publishing a new release ships every approved request whose edits it carries: `shipped`, with `shipped_in_version` (`publish.py` → `cr_review.ship`). The client app shows "Shipped in vN".
+  - **Ship:** a request ships in the first release that carries its edits (`app.releases.last_change_id`, `0011_release_last_change.sql`): `shipped`, with `shipped_in_version`. Publishing ships every approved request a release carries (`publish.py` → `cr_review.carried` → `cr_review.ship`), also on a retried publish; approving a request whose edits are already published ships it at once, in that release. The client app shows "Shipped in vN".
+  - **The agent and the client's words:** the request reaches the agent as JSON in a `<client_request>` block marked as untrusted data (`cr_review.describe`); only the owner's messages instruct it.
 
 ## Deploy: Vercel (`zm-web`, `zm-console`)
 There are two projects in the Vercel **Pro** team (D18); Hobby is non-commercial only. They are static Vite builds, so a later move to AWS is S3 + CloudFront. Build settings live in each app's `vercel.json`:

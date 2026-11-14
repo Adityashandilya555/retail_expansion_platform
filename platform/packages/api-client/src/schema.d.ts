@@ -507,7 +507,8 @@ export interface paths {
         put?: never;
         /**
          * Approve
-         * @description Once the agent's edits for it are in the draft (409 before); the next publish ships it.
+         * @description Once the agent's edits for it are in the draft (409 before). The next publish ships it;
+         *     if a release already carries the edits, it is shipped at once, in that release.
          */
         post: operations["approve_owner_change_requests__change_request_id__approve_post"];
         delete?: never;

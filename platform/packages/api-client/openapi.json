@@ -4793,7 +4793,7 @@
     },
     "/owner/change-requests/{change_request_id}/approve": {
       "post": {
-        "description": "Once the agent's edits for it are in the draft (409 before); the next publish ships it.",
+        "description": "Once the agent's edits for it are in the draft (409 before). The next publish ships it;\nif a release already carries the edits, it is shipped at once, in that release.",
         "operationId": "approve_owner_change_requests__change_request_id__approve_post",
         "parameters": [
           {
