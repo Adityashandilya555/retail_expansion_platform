@@ -183,6 +183,18 @@ def test_sites_come_from_fixture_cases_one_per_stage(
     assert api.get("/app/cases/MX-9999", headers=bearer(preview_token())).status_code == 404
 
 
+def test_flows_sharing_a_code_pattern_get_unique_fixture_codes() -> None:
+    release = preview.build("pilot-local", matrix_retail())
+    first = release.workflow["flows"][0]
+    release.workflow["flows"].append({**copy.deepcopy(first), "key": "second"})
+    rows = preview.list_cases(release, LEGAL_L1, None, None)
+    codes = [r.code for r in rows]
+    assert len(set(codes)) == len(codes) == 2 * len(first["stages"])
+    later = next(r for r in rows if r.flow == "second")
+    assert preview.get_case(release, LEGAL_L1, later.code).row.flow == "second"
+    assert preview.get_case(release, LEGAL_L1, "MX-0001").row.flow == first["key"]
+
+
 def test_sample_values_follow_the_field_types() -> None:
     assert preview.sample({"type": "number", "label": "Rent"}, 3) == 3
     assert preview.sample({"type": "text", "label": "City"}, 3) == "City 3"

@@ -8,13 +8,15 @@ live release, Operaton and the client's cases:
   `publish.release_values`) into a release row that is never stored, so `GET /app/ui` and the
   forms are what users get after publish. A draft that can't be published can't be previewed (422).
 - Cases and tasks are fixtures made from that release: per flow one case per stage (`MX-0001` in
-  the first stage, `MX-0002` in the second, ...), open in its stage with the stages before it
+  the first stage, `MX-0002` in the second, ...; flows sharing a code pattern share its
+  numbers, so codes stay unique), open in its stage with the stages before it
   done, start values made up from the start form's field types, and the stage's tasks open.
   A task's id is its id in the draft.
 
 No Operaton call and no read of a real case happens in preview.
 """
 
+from collections import Counter
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -132,11 +134,15 @@ def _fixtures(
     """Every fixture case with the tasks of its open stage that the role sees."""
     workflow, at = release.workflow, release.published_at
     out = []
+    seqs: Counter[str] = Counter()  # as live: flows sharing a code pattern share its sequence
     for flow in workflow["flows"]:
         stages = flow["stages"]
         start = release.forms.get(f"start:{flow['key']}")
-        for n, stage in enumerate(stages, start=1):
-            code = tasks.case_code(flow["case_code"]["pattern"], n)
+        pattern = flow["case_code"]["pattern"]
+        for stage in stages:
+            seqs[tasks.counter_key(pattern)] += 1
+            n = seqs[tasks.counter_key(pattern)]
+            code = tasks.case_code(pattern, n)
             done = {s["key"] for s in stages if stage["key"] in cases._after(stages, s["key"])}
             shown = cases.masked_start_values(
                 start, _values(workflow, cases.start_fields(workflow, flow), n), _levels(who)
@@ -272,7 +278,9 @@ routes = owner_router()
 
 
 @routes.post("/clients/{client_id}/preview-token")
-async def preview_token(body: PreviewIn, ctx: OwnedClient, owner: OwnerCtx) -> auth.TokenOut:
+async def preview_token(
+    client_id: UUID, body: PreviewIn, ctx: OwnedClient, owner: OwnerCtx
+) -> auth.TokenOut:
     """A 15-minute read-only token for the client app, showing the client's draft as one role
     with made-up cases; 422 when the draft can't be published yet or has no such role."""
     release = await draft_release(ctx)
