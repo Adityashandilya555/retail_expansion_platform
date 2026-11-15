@@ -1225,6 +1225,34 @@ def test_a_claim_reads_as_busy_whether_its_lock_key_is_negative_or_positive(
         assert asyncio.run(go(cid)) == [False, True, False, False]
 
 
+# --- the owner configuration session (#40) ------------------------------------------------------
+
+
+def test_the_system_block_is_the_prompt_file_then_the_reference() -> None:
+    body = loop.system()[0]["text"]
+    prompt = (loop.PROMPTS / "configure.md").read_text().strip()
+    assert body.startswith(prompt) and "\n\nReference: {" in body
+    # the rules the issue names: this draft only, catalogue types only, a person publishes
+    for rule in ("## Role", "## Method", "## Limits", "list_field_types", "never publish"):
+        assert rule in prompt, rule
+
+
+def test_a_turn_says_its_mode_and_whether_the_draft_is_still_an_untouched_template(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    fake = Fake(reply(text("Which template?")), *fire_noc(), reply(text("Done.")), tokens=10)
+    configure, edit = new(chats, "configure"), new(chats)
+    run(fake, held, configure, "Set this client up.")
+    first = state(fake.requests[0])
+    # the picker's cue: configure mode on a draft nobody has touched since its template
+    assert (first["mode"], first["template"]) == ("configure", "matrix-retail")
+    run(fake, held, edit, FIRE_NOC)
+    run(fake, held, configure, "Go on.")
+    assert state(fake.requests[1])["mode"] == "edit"
+    assert state(fake.requests[-1])["template"] is None  # the draft has work in it now
+
+
 # --- live: the real API, by hand ----------------------------------------------------------------
 
 
@@ -1250,3 +1278,71 @@ def test_live_smoke(held: SimpleNamespace, chats: dict[uuid.UUID, Doc]) -> None:
         "chain"
     ]
     assert second[-1][1]["usage"]["cache_read_input_tokens"] > 0
+
+
+def live_turns(held: SimpleNamespace, cid: uuid.UUID, *said: str) -> list[list[tuple[str, Doc]]]:  # noqa: F811
+    async def go() -> list[list[tuple[str, Doc]]]:
+        client = anthropic.AsyncAnthropic()
+        turns = []
+        for message in said:
+            conversation = await loop.load(held.ctx, cid, OWNER)
+            turns.append(
+                [e async for e in loop.turn(client, held.ctx, OWNER, conversation, message)]
+            )
+        return turns
+
+    return asyncio.run(go())
+
+
+def said_by_agent(events: list[tuple[str, Doc]]) -> str:
+    return "".join(e["text"] for name, e in events if name == "text_delta")
+
+
+LIVE = pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="needs ANTHROPIC_API_KEY")
+BRIEF = "QSR template, Legal has 3 levels, add a Fire NOC upload with L2 approval"
+
+
+@pytest.mark.live
+@LIVE
+def test_live_one_conversation_configures_the_brief(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """#40, criterion 1: from an untouched draft, one conversation reaches a valid draft on the
+    QSR template with Legal at 3 levels and a Fire NOC document field under L2 approval."""
+    cid = new(chats, "configure")
+    live_turns(held, cid, BRIEF, "Yes, go ahead with what you proposed.")
+    assert drafts.validate(held.doc) == []
+    legal = next(d for d in held.doc["org"]["departments"] if d["key"] == "legal")
+    assert len(legal["levels"]) == 3
+    assert "document" in {
+        f["type"] for f in held.doc["fields"].values() if "noc" in f["label"].lower()
+    }
+    chains = [t["approval"]["chain"] for _, t in tools._tasks(held.doc) if t.get("approval")]
+    assert any({"department": "legal", "level": 2} in chain for chain in chains)
+
+
+@pytest.mark.live
+@LIVE
+def test_live_publish_it_is_explained_and_changes_nothing(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """#40, criterion 2."""
+    before = copy.deepcopy(held.doc)
+    (events,) = live_turns(held, new(chats), "publish it")
+    assert "change" not in names(events) and held.doc == before
+    assert "publish" in said_by_agent(events).lower()
+
+
+@pytest.mark.live
+@LIVE
+def test_live_a_new_field_type_is_answered_with_catalogue_types(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """#40, criterion 3."""
+    (events,) = live_turns(held, new(chats), "Add a signature pad field to the DD checklist.")
+    types = {f["type"] for f in held.doc["fields"].values()}
+    assert types <= set(loop.get_args(loop.FieldType))  # nothing invented
+    assert "change" not in names(events)  # it proposes; the owner picks

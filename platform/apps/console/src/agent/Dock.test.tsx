@@ -203,6 +203,39 @@ test("an invalid draft disables Publish and shows its first problem; Preview wai
   expect(document.getElementById(preview.getAttribute("aria-describedby") ?? "")?.textContent).toBe("Preview comes with #42.");
 });
 
+test("an empty draft opens the dock with the template picker; a pick asks the agent to load it (#40)", async () => {
+  const stream = sse();
+  let sent: unknown;
+  dockApi({
+    "GET /owner/templates": () => json([{ key: "matrix-retail", name: "Matrix Retail" }, { key: "qsr", name: "QSR" }]),
+    [`POST ${AGENT}/${CID}/messages`]: async (r) => {
+      sent = await r.json();
+      return stream.response();
+    },
+  });
+  const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderWithZm(
+    <QueryClientProvider client={queries}>
+      <Dock clientId={ID} clientName="Pilot" next={1} />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  const picker = await screen.findByRole("group", { name: "Start from a template" });
+  await user.click(within(picker).getByRole("button", { name: "QSR" }));
+  expect(await log().findByText("Start from the QSR template (qsr).")).toBeDefined();
+  expect(sent).toEqual({ text: "Start from the QSR template (qsr)." });
+  expect(screen.queryByRole("group", { name: "Start from a template" })).toBeNull();
+  stream.send("done", { usage: USAGE });
+  stream.end();
+});
+
+test("a draft with changes, or a published client, gets no template picker", async () => {
+  dockApi({ "GET /owner/templates": () => json([{ key: "qsr", name: "QSR" }]) }, () => [change(1, NOC)]);
+  renderDock(); // next = 3: v2 is live
+  await screen.findByRole("button", { name: "Publish" });
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Start from a template" })).toBeNull());
+});
+
 test("a valid draft publishes after a confirm, and says when nothing changed", async () => {
   let created = true;
   const calls = dockApi({ [`POST ${CLIENT}/publish`]: () => json({ version: created ? 3 : 2, deployment_id: "d", created, sha256: "s" }) });

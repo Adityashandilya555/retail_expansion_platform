@@ -38,6 +38,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
+from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
 from uuid import UUID
 
@@ -83,19 +84,14 @@ READ_FIRST = "not read yet: read what you'll edit first"
 CHANGED = "changed since your last read: read again what you'll edit"
 UNCHANGED = "unchanged since your last read"
 
-RULES = (
-    "You are the Z-Matrix admin agent. A platform owner describes one client's process; you"
-    " change that client's draft workflow.json, only through your tools. Every edit names the"
-    " draft_sha256 your latest read or edit returned; each turn's draft state message says"
-    " whether the draft has changed since. You can't publish, migrate running sites, manage"
-    " people or change the look (theme preset and accent): a person does those."
-)
+PROMPTS = Path(__file__).parent / "prompts"
 
 
 @cache
 def system() -> list[Doc]:
-    """The system block: the rules and what the tools can place. It changes only with a platform
-    release, so it is cached (the prompt itself comes with #40)."""
+    """The system block: the prompt (`prompts/configure.md`, #40; one for both modes, which the
+    turn's draft state names) and what the tools can place. It changes only with a platform
+    release, so it is cached."""
     ui = catalogue.load()
     reference = {
         "field_types": {t: {"v1_renders": t in tools.V1_RENDERS} for t in get_args(FieldType)},
@@ -107,7 +103,8 @@ def system() -> list[Doc]:
         },
         "templates": {t.key: t.name for t in templates.load_templates()},
     }
-    body = f"{RULES}\n\nReference: {json.dumps(reference, sort_keys=True)}"
+    prompt = (PROMPTS / "configure.md").read_text().strip()
+    body = f"{prompt}\n\nReference: {json.dumps(reference, sort_keys=True)}"
     return [{"type": "text", "text": body, "cache_control": {"type": "ephemeral"}}]
 
 
@@ -128,13 +125,18 @@ def _last_read(rows: list[Doc]) -> str | None:
     return next((r["draft_sha256"] for r in reversed(results) if "draft_sha256" in r), None)
 
 
-def _state(doc: Doc, sha: str, rows: list[Doc]) -> Doc:
-    """The turn's system message: the draft as it is now, in brief (configuration only), and
-    whether it changed since the model's last read. Never the sha: an edit with one it didn't get
+def _state(doc: Doc, sha: str, rows: list[Doc], mode: str) -> Doc:
+    """The turn's system message: the conversation's mode, the draft as it is now, in brief
+    (configuration only; `template` while it is still an untouched starter template, when a
+    configure session starts by settling the template, #40), and whether it changed since the
+    model's last read. Never the sha: an edit with one it didn't get
     from a read would overwrite a person's edit unseen."""
     o = tools.overview(doc)
     read = _last_read(rows)
+    untouched = (t.key for t in templates.load_templates() if t.workflow == doc)
     brief = {
+        "mode": mode,
+        "template": next(untouched, None),
         "draft": READ_FIRST if read is None else UNCHANGED if read == sha else CHANGED,
         "departments": [d["key"] for d in o["departments"]],
         "stages": {f["key"]: [s["key"] for s in f["stages"]] for f in o["flows"]},
@@ -311,7 +313,7 @@ async def load(ctx: ClientContext, conversation_id: UUID, owner: UUID) -> Conver
     mode, rows = await _stored(ctx, conversation_id, owner)
     async with ctx.db.connect() as conn:
         doc, sha = await drafts.read(conn)
-    return Conversation(conversation_id, mode, rows, _state(doc, sha, rows))
+    return Conversation(conversation_id, mode, rows, _state(doc, sha, rows, mode))
 
 
 def _opens(row: Doc) -> bool:
