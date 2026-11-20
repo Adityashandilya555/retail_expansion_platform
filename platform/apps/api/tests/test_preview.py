@@ -2,18 +2,21 @@
 with fixture cases and tasks; nothing reaches Operaton or the client's real cases."""
 
 import copy
+import re
 import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import jwt
 import pytest
 from fastapi.testclient import TestClient
 
 from zm_api import auth, drafts, preview, publish, ui
-from zm_api.context import Preview, Resolver
+from zm_api.context import PREVIEW_ROUTES, Preview, Resolver
 from zm_api.main import create_app
+from zm_api.operaton import OperatonClient
 from zm_api.registry import Client
 from zm_api.releases import ReleaseRow
 
@@ -114,6 +117,65 @@ def test_a_preview_token_cant_write_or_read_real_data(
     assert out.status_code == 403, out.text
 
 
+SIGN_IN = ("/auth/", "/owner/auth/")  # public sign-in namespaces (zm_api.context)
+
+
+def test_every_route_outside_the_preview_allowlist_refuses_a_preview_token(
+    api: TestClient, state: dict[str, Any]
+) -> None:
+    """Closed by default: every operation that needs a token, other than the GETs in
+    `PREVIEW_ROUTES`, is 403 to a preview token, so a route added later (e.g. a GET taking only
+    `ClientCtx`) can't answer one by mistake. Walks the app's own OpenAPI paths."""
+    paths = api.app.openapi()["paths"]
+    assert set(paths) >= PREVIEW_ROUTES  # the allowlist names live routes only
+    probed = 0
+    for template, operations in paths.items():
+        if template.startswith(SIGN_IN):
+            continue
+        path = re.sub(r"\{[^}]+\}", lambda _: str(uuid.uuid4()), template)
+        for method in operations:
+            if method == "get" and template in PREVIEW_ROUTES:
+                continue
+            anonymous = api.request(method, path)
+            if anonymous.status_code != 401:  # public, e.g. /healthz
+                assert not template.startswith(("/app", "/owner")), (method, template)
+                continue
+            out = api.request(method, path, headers=bearer(preview_token()))
+            assert out.status_code == 403, (method, template, out.status_code, out.text)
+            probed += 1
+    assert probed >= 10  # the walk found the app's routes
+
+
+def test_a_preview_never_calls_operaton(
+    api: TestClient, state: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    async def no_call(self: Any, op: str, method: str, path: str, **kwargs: Any) -> Any:
+        calls.append(f"{op} {method} {path}")
+        raise AssertionError("a preview called Operaton")
+
+    async def no_send(self: Any, request: httpx.Request, **kwargs: Any) -> Any:
+        calls.append(str(request.url))
+        raise AssertionError("a preview made an outbound request")
+
+    monkeypatch.setattr(OperatonClient, "_call", no_call)
+    monkeypatch.setattr(httpx.AsyncClient, "send", no_send)
+    who = bearer(preview_token(**{"as": {"department": "legal", "level": 2}}))
+    code = api.get("/app/cases", headers=who).json()[0]["code"]
+    for path in (
+        "/app/me",
+        "/app/ui",
+        "/app/tasks",
+        "/app/tasks?scope=team",
+        "/app/tasks/legal_dd_checklist",
+        "/app/cases",
+        f"/app/cases/{code}",
+    ):
+        assert api.get(path, headers=who).status_code == 200, path
+    assert calls == []
+
+
 # --- criterion 1: the draft's field shows, and the diff lists it -------------------------------
 
 
@@ -123,7 +185,7 @@ def test_a_field_added_to_the_draft_shows_in_the_preview_and_the_diff(
     out = api.get("/app/tasks/legal_dd_checklist", headers=bearer(preview_token()))
     assert out.status_code == 200, out.text
     body = out.json()
-    assert body["editable"] is True
+    assert body["editable"] is False  # a preview can't submit
     assert body["form"]["schema"]["properties"]["dd_extra"]["title"] == "Extra check"
     assert body["task"]["stage"] == "legal" and body["task"]["case_code"] == body["case"]["code"]
 
@@ -193,6 +255,41 @@ def test_flows_sharing_a_code_pattern_get_unique_fixture_codes() -> None:
     later = next(r for r in rows if r.flow == "second")
     assert preview.get_case(release, LEGAL_L1, later.code).row.flow == "second"
     assert preview.get_case(release, LEGAL_L1, "MX-0001").row.flow == first["key"]
+
+
+def test_a_fixture_task_shows_the_values_of_its_own_case(
+    api: TestClient, state: dict[str, Any]
+) -> None:
+    """Made-up values are numbered by their case (`City 3` on MX-0003), the task's too."""
+    l2 = bearer(preview_token(**{"as": {"department": "legal", "level": 2}}))
+    detail = api.get("/app/tasks/legal_dd_verdict", headers=l2).json()
+    code = detail["case"]["code"]
+    n = int(code.split("-")[1])
+    assert n > 1  # legal isn't the first stage, so a case numbered 1 would be someone else's
+    texts = {f: v for f, v in detail["show"].items() if isinstance(v, str)}
+    assert texts, detail["show"]
+    assert all(v.endswith(f" {n}") for v in texts.values()), (code, texts)
+    case = api.get(f"/app/cases/{code}", headers=l2).json()
+    assert case["fields"]["city"] == f"City {n}"
+
+
+def test_the_compiled_draft_is_reused_until_it_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    preview._COMPILED.clear()
+    compiles: list[str] = []
+    real = publish._compile
+
+    def counted(slug: str, draft: dict[str, Any], published: Any = ()) -> Any:
+        compiles.append(slug)
+        return real(slug, draft, published)
+
+    monkeypatch.setattr(publish, "_compile", counted)
+    first = preview.build("pilot-local", matrix_retail())
+    first.forms["legal_dd_checklist"]["schema"]["title"] = "changed by a reader"
+    again = preview.build("pilot-local", matrix_retail())
+    assert compiles == ["pilot-local"]
+    assert again.forms["legal_dd_checklist"]["schema"].get("title") != "changed by a reader"
+    preview.build("pilot-local", with_field())
+    assert len(compiles) == 2
 
 
 def test_sample_values_follow_the_field_types() -> None:

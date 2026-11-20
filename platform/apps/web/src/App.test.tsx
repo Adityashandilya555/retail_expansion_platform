@@ -840,6 +840,14 @@ test("/preview#<token> shows the draft as Legal L1 under a banner; Sites and a S
     expect(await screen.findByRole("heading", { level: 1, name: "Indiranagar" })).toBeDefined();
     expect(screen.getByText(banner)).toBeDefined();
 
+    // leaving forgets the preview token only: no /auth/logout, which would revoke the refresh
+    // cookie of a real client user signed in in this browser
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Account: Legal L1" }));
+    expect(screen.queryByRole("menuitem", { name: "Sign out" })).toBeNull();
+    await user.click(await screen.findByRole("menuitem", { name: "Exit preview" }));
+    expect(await screen.findByLabelText(/Workspace code/)).toBeDefined();
+
     // the token is the whole session: no refresh cookie is used, and nothing is written
     expect(calls).not.toContain("POST /auth/refresh");
     expect(calls.filter((c) => !c.startsWith("GET "))).toEqual([]);

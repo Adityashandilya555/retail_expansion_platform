@@ -7,10 +7,10 @@ simply don't exist there (404). Tokens are issued by `zm_api.auth` (#22): HS256 
 401; a valid token of the wrong kind (owner on `/app`, client on `/owner`) is 403.
 
 A third kind, `preview` (#42), is an owner looking at a client's draft as one role: `{sub: the
-owner, kind: "preview", client, as: {department, level}, label, exp}`, 15 minutes. It passes on
-`/app` reads only (any other method is 403), and only the routes that take `Viewer` answer it,
-from the draft and fixtures: every route that takes `UserId` is 403, so a preview never reads a
-client's real cases or people.
+owner, kind: "preview", client, as: {department, level}, label, exp}`, 15 minutes. It passes
+only on the reads in `PREVIEW_ROUTES` (by route template and method), which answer it from the
+draft and fixtures; every other route is 403, so a new `/app` route is closed to previews until
+it is added there, and a preview never reads a client's real cases or people.
 """
 
 import asyncio
@@ -34,6 +34,11 @@ from zm_api.registry import Client, get_client
 
 SERVICE_ACCOUNT = "zm-service"  # ZM_ADMIN_USER_ID on every client's Operaton (#25)
 VAULT_POOL = 5  # connections per client vault engine, in each API process
+PREVIEW_ROUTES = frozenset(
+    {"/app/me", "/app/ui", "/app/tasks", "/app/tasks/{task_id}", "/app/cases", "/app/cases/{code}"}
+)
+"""The only routes a preview token (#42) reaches, GET/HEAD only: each answers it from the draft
+and fixtures (`zm_api.preview`). Add a route here only once it does."""
 
 
 class Registry(Protocol):
@@ -220,6 +225,9 @@ def _claims(request: Request, kind: str) -> dict[str, Any]:
     if claims["kind"] == "preview" and kind == "client":
         if request.method not in {"GET", "HEAD"}:
             raise Forbidden("A preview is read-only")
+        route = request.scope.get("route")  # set by FastAPI when the route matched
+        if getattr(route, "path", None) not in PREVIEW_ROUTES:
+            raise Forbidden("This isn't part of the preview")
         return claims
     if claims["kind"] != kind:
         raise Forbidden("This sign-in can't be used here")

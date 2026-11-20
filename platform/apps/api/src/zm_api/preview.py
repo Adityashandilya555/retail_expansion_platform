@@ -16,7 +16,10 @@ live release, Operaton and the client's cases:
 No Operaton call and no read of a real case happens in preview.
 """
 
-from collections import Counter
+import copy
+import hashlib
+import json
+from collections import Counter, OrderedDict
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -34,6 +37,24 @@ from zm_schema import group_id
 
 # --- the draft as a release ------------------------------------------------------------------
 
+_COMPILED: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
+_COMPILED_MAX = 8  # drafts kept compiled, per API process
+
+
+def _compiled(slug: str, draft: dict[str, Any], published: list[dict[str, Any]]) -> tuple:
+    """`publish._compile`, remembered by the sha256 of its inputs: a preview reads the draft on
+    every request, and it rarely changes between them."""
+    key = hashlib.sha256(
+        json.dumps([slug, draft, published], sort_keys=True, default=str).encode()
+    ).hexdigest()
+    found = _COMPILED.get(key)
+    if found is None:
+        found = _COMPILED[key] = publish._compile(slug, draft, published)
+        while len(_COMPILED) > _COMPILED_MAX:
+            _COMPILED.popitem(last=False)
+    _COMPILED.move_to_end(key)
+    return found
+
 
 def build(
     slug: str,
@@ -44,13 +65,15 @@ def build(
 ) -> ReleaseRow:
     """The release publishing `draft` now would record as `version`; `active` itself when the
     draft hasn't changed since it (publish would make no new version)."""
-    wf, compiled = publish._compile(slug, draft, published or [])
+    wf, compiled = _compiled(slug, draft, published or [])
     if active is not None and active.sha256 == compiled.digest():
         return active
+    # a copy: the cached compile's forms and ui must not change with what a reader does to these
+    values = copy.deepcopy(publish.release_values(wf, compiled, published or [], version))
     return ReleaseRow(
         version=version,
         deployment_id="preview",
-        **publish.release_values(wf, compiled, published or [], version),
+        **values,
         published_by=None,
         published_at=datetime.now(UTC),
         active=False,
@@ -58,7 +81,6 @@ def build(
 
 
 async def draft_release(ctx: ClientContext) -> ReleaseRow:
-    # ponytail: compiled on every preview read; cache by the draft's sha256 if previews feel slow
     async with ctx.db.connect() as conn:
         draft = await releases.get_draft(conn)
         if draft is None:
@@ -130,8 +152,9 @@ def _stage_tasks(stage: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def _fixtures(
     release: ReleaseRow, who: Preview
-) -> list[tuple[cases.CaseRow, list[cases.OpenTask]]]:
-    """Every fixture case with the tasks of its open stage that the role sees."""
+) -> list[tuple[cases.CaseRow, list[cases.OpenTask], int]]:
+    """Every fixture case with the tasks of its open stage that the role sees, and its sequence
+    number (what its made-up values are numbered by)."""
     workflow, at = release.workflow, release.published_at
     out = []
     seqs: Counter[str] = Counter()  # as live: flows sharing a code pattern share its sequence
@@ -176,21 +199,21 @@ def _fixtures(
                 for t, how in seen
                 if how
             ]
-            out.append((row, open_tasks))
+            out.append((row, open_tasks, n))
     return out
 
 
 def list_cases(release: ReleaseRow, who: Preview, flow: str | None, status: str | None) -> list:
     if status not in (None, "open"):  # every fixture case is open
         return []
-    return [row for row, _ in _fixtures(release, who) if flow in (None, row.flow)]
+    return [row for row, _, _ in _fixtures(release, who) if flow in (None, row.flow)]
 
 
 def get_case(release: ReleaseRow, who: Preview, code: str) -> cases.CaseDetail:
     found = next((f for f in _fixtures(release, who) if f[0].code == code), None)
     if found is None:
         raise NotFound("No such case")
-    row, open_tasks = found
+    row, open_tasks, _ = found
     start = release.forms.get(f"start:{row.flow}")
     defs = release.workflow.get("fields", {})
     return cases.CaseDetail(
@@ -227,7 +250,7 @@ def list_tasks(
         raise Forbidden("Team tasks are for level 2 and above")
     return [
         _item(row, t)
-        for row, open_tasks in _fixtures(release, who)
+        for row, open_tasks, _ in _fixtures(release, who)
         if flow in (None, row.flow) and case in (None, row.code)
         for t in open_tasks
         if scope == "team" or t.can_act
@@ -235,8 +258,9 @@ def list_tasks(
 
 
 def open_task(release: ReleaseRow, who: Preview, task_id: str) -> tuple[tasks.TaskView, dict]:
-    """A fixture task as `tasks.open_task` gives a real one, and the values it shows."""
-    for row, open_tasks in _fixtures(release, who):
+    """A fixture task as `tasks.open_task` gives a real one, and the values it shows (those of
+    its own case). Never editable: a preview can't submit."""
+    for row, open_tasks, n in _fixtures(release, who):
         task = next((t for t in open_tasks if t.id == task_id), None)
         if task is None:
             continue
@@ -254,8 +278,8 @@ def open_task(release: ReleaseRow, who: Preview, task_id: str) -> tuple[tasks.Ta
         me = tasks.Person(UUID(int=0), _levels(who))
         hidden = tasks.hidden_fields(release.workflow, me.levels)
         shown = [f for f in form["schema"].get("x-zm-show", []) if f not in hidden]
-        view = tasks.TaskView(_item(row, task), {}, case, release, me, task.can_act, task_id, form)
-        return view, _values(release.workflow, shown, 1)
+        view = tasks.TaskView(_item(row, task), {}, case, release, me, False, task_id, form)
+        return view, _values(release.workflow, shown, n)
     raise NotFound("No such task")
 
 

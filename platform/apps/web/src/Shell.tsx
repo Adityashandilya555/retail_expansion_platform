@@ -9,7 +9,7 @@ import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-rou
 import { ChangeRequests } from "./ChangeRequests";
 import { People } from "./People";
 import { applyPreferences, savePreferences } from "./preferences";
-import { api, currentUser, loadUi, signOut, type AppUi, type Workspace } from "./session";
+import { api, currentUser, forget, loadUi, signOut, type AppUi, type Workspace } from "./session";
 
 // the client admin's pages (S2-23, S2-24a), whatever the release holds
 const PEOPLE = "admin/people";
@@ -111,12 +111,15 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
           <Menu.Item
             leftSection={<LogOut size={14} strokeWidth={1.5} aria-hidden />}
             onClick={async () => {
-              await signOut();
+              // a preview (#42) only forgets its token: signing out would revoke the refresh
+              // cookie of whoever is signed in to the client app in this browser
+              if (me.data?.preview) forget();
+              else await signOut();
               queries.clear(); // the next person in this tab must not see this one's data
               navigate("/");
             }}
           >
-            Sign out
+            {me.data.preview ? "Exit preview" : "Sign out"}
           </Menu.Item>
         }
       >
