@@ -1668,6 +1668,11 @@
           },
           "preferences": {
             "$ref": "#/components/schemas/Preferences"
+          },
+          "preview": {
+            "default": false,
+            "title": "Preview",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2028,6 +2033,36 @@
           }
         },
         "title": "PreferencesIn",
+        "type": "object"
+      },
+      "PreviewAs": {
+        "properties": {
+          "department": {
+            "title": "Department",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "department",
+          "level"
+        ],
+        "title": "PreviewAs",
+        "type": "object"
+      },
+      "PreviewIn": {
+        "properties": {
+          "as": {
+            "$ref": "#/components/schemas/PreviewAs"
+          }
+        },
+        "required": [
+          "as"
+        ],
+        "title": "PreviewIn",
         "type": "object"
       },
       "Probe": {
@@ -3545,7 +3580,7 @@
     },
     "/app/cases": {
       "get": {
-        "description": "Every case of the client (newest first, up to 500) with its stage states.",
+        "description": "Every case of the client (newest first, up to 500) with its stage states. Under a preview\ntoken (#42): made-up cases of the draft's flows, one per stage.",
         "operationId": "list_cases_app_cases_get",
         "parameters": [
           {
@@ -3782,7 +3817,7 @@
     },
     "/app/tasks": {
       "get": {
-        "description": "`mine`: the user's tasks and their groups' unclaimed ones. `team` (level 2+): every task\nof their departments. `flow` and `case` (a case code) narrow the list.",
+        "description": "`mine`: the user's tasks and their groups' unclaimed ones. `team` (level 2+): every task\nof their departments. `flow` and `case` (a case code) narrow the list. Under a preview token\n(#42): the draft's tasks for the role, on made-up cases.",
         "operationId": "list_tasks_app_tasks_get",
         "parameters": [
           {
@@ -3978,7 +4013,7 @@
     },
     "/app/ui": {
       "get": {
-        "description": "The active release's nav, pages and flows, filtered to the user's departments.",
+        "description": "The active release's nav, pages and flows, filtered to the user's departments. Under a\npreview token (#42): the draft's, as publishing it now would make them, for the role.",
         "operationId": "app_ui_app_ui_get",
         "responses": {
           "200": {
@@ -5047,6 +5082,60 @@
           }
         },
         "summary": "Get Validation",
+        "tags": [
+          "owner"
+        ]
+      }
+    },
+    "/owner/clients/{client_id}/preview-token": {
+      "post": {
+        "description": "A 15-minute read-only token for the client app, showing the client's draft as one role\nwith made-up cases; 422 when the draft can't be published yet or has no such role.",
+        "operationId": "preview_token_owner_clients__client_id__preview_token_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Preview Token",
         "tags": [
           "owner"
         ]

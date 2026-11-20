@@ -3,13 +3,13 @@
 import { Alert, Anchor, Button, Center, Loader, Menu, Stack, Text, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BlocksApi, PageRenderer, defaultCasePage, tasksQuery } from "@zm/blocks";
-import { AppFrame, ZmProvider } from "@zm/ui";
+import { AppFrame, Notice, ZmProvider } from "@zm/ui";
 import { FilePen, LogOut, Users } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router";
 import { ChangeRequests } from "./ChangeRequests";
 import { People } from "./People";
 import { applyPreferences, savePreferences } from "./preferences";
-import { api, currentUser, loadUi, signOut, type AppUi, type Workspace } from "./session";
+import { api, currentUser, forget, loadUi, signOut, type AppUi, type Workspace } from "./session";
 
 // the client admin's pages (S2-23, S2-24a), whatever the release holds
 const PEOPLE = "admin/people";
@@ -65,7 +65,7 @@ function Screen({ label }: { label: string }) {
 export function Shell({ workspace }: { workspace: Workspace | null }) {
   const navigate = useNavigate();
   const queries = useQueryClient();
-  const me = useQuery({ queryKey: ["me"], queryFn: () => currentUser().then(applyPreferences) });
+  const me = useQuery({ queryKey: ["me"], queryFn: () => currentUser().then((user) => (user?.preview ? user : applyPreferences(user))) });
   const ui = useQuery({ queryKey: ["ui"], queryFn: loadUi, enabled: Boolean(me.data) });
   // the nav's count badges (#94); the same request as a `mine` task_inbox, so Home shares it
   const mine = useQuery({ ...tasksQuery(api, "mine"), enabled: Boolean(ui.data) });
@@ -73,7 +73,8 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
   const section = path.split("/")[0] || undefined;
 
   if (me.data === null) return <Navigate to="/" replace />;
-  const userId = me.data?.id;
+  // a preview (#42) is nobody: it keeps no appearance of its own and saves none
+  const userId = me.data?.preview ? undefined : me.data?.id;
   const look = ui.data?.client ?? workspace ?? undefined;
   let body;
   if (me.isError) {
@@ -110,15 +111,23 @@ export function Shell({ workspace }: { workspace: Workspace | null }) {
           <Menu.Item
             leftSection={<LogOut size={14} strokeWidth={1.5} aria-hidden />}
             onClick={async () => {
-              await signOut();
+              // a preview (#42) only forgets its token: signing out would revoke the refresh
+              // cookie of whoever is signed in to the client app in this browser
+              if (me.data?.preview) forget();
+              else await signOut();
               queries.clear(); // the next person in this tab must not see this one's data
               navigate("/");
             }}
           >
-            Sign out
+            {me.data.preview ? "Exit preview" : "Sign out"}
           </Menu.Item>
         }
       >
+        {me.data.preview && (
+          <Notice tone="warning" title={`Preview — draft of ${me.data.client.name} as ${me.data.name}`}>
+            <Text size="sm">Sample sites and tasks from the draft. Nothing here is live, and nothing can be changed.</Text>
+          </Notice>
+        )}
         {admin && path === PEOPLE ? (
           <People selfId={me.data.id} />
         ) : admin && path === CHANGES ? (
