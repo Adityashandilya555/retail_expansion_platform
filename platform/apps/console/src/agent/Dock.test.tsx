@@ -203,6 +203,35 @@ test("an invalid draft disables Publish and shows its first problem; Preview wai
   expect(document.getElementById(preview.getAttribute("aria-describedby") ?? "")?.textContent).toBe("Preview comes with #42.");
 });
 
+test("applying a change request starts its conversation for the request and says so", async () => {
+  const CR = "3b9a1c2d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+  const bodies: unknown[] = [];
+  const turn = sse();
+  dockApi({
+    [`GET /owner/change-requests/${CR}`]: () =>
+      json({ id: CR, client_id: ID, client_slug: "pilot", client_name: "Pilot", kind: "add_field", payload: {}, summary: "Add State, District to the start form", note: null, status: "submitted", review_note: null, shipped_in_version: null, created_at: AT, updated_at: AT, impact: null, linked_changes: 0 }),
+    [`POST ${AGENT}`]: async (r) => {
+      const body = (await r.json()) as { mode: string };
+      bodies.push(body);
+      return json({ id: CID, owner_id: OWNER, mode: body.mode, started_at: AT, change_request_id: CR }, 201);
+    },
+    [`POST ${AGENT}/${CID}/messages`]: () => turn.response(),
+  });
+  const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderWithZm(
+    <QueryClientProvider client={queries}>
+      <Dock clientId={ID} clientName="Pilot" next={3} applying={CR} />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  expect(await screen.findByText(/Applying change request: Add State, District to the start form/)).toBeDefined();
+  await user.type(screen.getByRole("textbox", { name: "Message" }), "Apply it");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(bodies).toEqual([{ mode: "edit", change_request_id: CR }]));
+  turn.send("done", { usage: USAGE });
+  turn.end();
+});
+
 test("a valid draft publishes after a confirm, and says when nothing changed", async () => {
   let created = true;
   const calls = dockApi({ [`POST ${CLIENT}/publish`]: () => json({ version: created ? 3 : 2, deployment_id: "d", created, sha256: "s" }) });

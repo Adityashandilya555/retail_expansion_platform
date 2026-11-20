@@ -13,7 +13,10 @@
    fields it adds, `required_from_version` on those it makes required.
    Steps 1-4 run in one client-database transaction under a per-client advisory lock, so two
    publishes at once deploy and number their versions in the same order.
-5. Index it in `platform.releases` (idempotent, so a retried publish repairs a missing row).
+5. Index it in `platform.releases` (idempotent, so a retried publish repairs a missing row), and
+   ship the client's approved change requests whose edits a release carries (S2-24b,
+   `cr_review.ship`): `shipped`, with the first release that carried them as
+   `shipped_in_version`. A retried publish ships what the failed one didn't.
 
 Operaton failing in steps 2-3 raises before anything is written (502); a database failure after
 the deploy is a 503, and publishing again completes it (the deploy is then a duplicate).
@@ -31,7 +34,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from zm_api import releases, versioning
+from zm_api import cr_review, releases, versioning
 from zm_api.clients import forget_overview
 from zm_api.context import ClientContext, OwnerCtx, owner_router
 from zm_api.errors import (
@@ -140,7 +143,8 @@ async def publish(
             await conn.execute(
                 text("select pg_advisory_xact_lock(hashtext(:k))"), {"k": f"zm_publish:{slug}"}
             )
-            draft = await releases.get_draft(conn)
+            # locked: the release's last_change_id (0011) is exactly what it carries
+            draft = await releases.get_draft(conn, lock=True)
             if draft is None:
                 raise Conflict("This client has no draft to publish yet")
             published = await releases.published_fields(conn)
@@ -179,6 +183,9 @@ async def publish(
             await conn.execute(
                 text("update app.drafts set base_version = :v where id = 1"), {"v": row.version}
             )
+            # read on every publish, not only a new release: a retry after the control plane
+            # failed still ships them (`ship` only touches approved requests)
+            shipping = await cr_review.carried(conn)
 
         async with platform.begin() as conn:
             await conn.execute(
@@ -191,6 +198,7 @@ async def publish(
                     "sha": row.sha256,
                 },
             )
+            await cr_review.ship(conn, ctx.client.id, shipping)
     except (SQLAlchemyError, OSError) as e:
         # Operaton may already hold the deployment; publishing again is safe and completes it.
         raise ServiceUnavailable("Couldn't record the release; publish again to retry") from e

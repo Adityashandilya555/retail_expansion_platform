@@ -9,6 +9,7 @@ from zm_api import (
     cases_routes,
     change_requests,
     clients,
+    cr_review,
     drafts,
     errors,
     logs,
@@ -50,6 +51,7 @@ def create_app(resolver: Resolver | None = None) -> FastAPI:
         people.routes,
         people.owner_routes,
         change_requests.routes,
+        cr_review.routes,
         loop.routes,
     ):
         app.include_router(router)

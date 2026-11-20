@@ -49,9 +49,9 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from zm_api import drafts, settings, templates
+from zm_api import cr_review, drafts, settings, templates
 from zm_api.agent import tools
-from zm_api.context import VAULT_POOL, ClientContext, OwnerCtx, owner_router
+from zm_api.context import VAULT_POOL, ClientContext, OwnerCtx, PlatformRegistry, owner_router
 from zm_api.drafts import OwnedClient
 from zm_api.errors import Conflict, NotFound
 from zm_schema import catalogue
@@ -128,10 +128,31 @@ def _last_read(rows: list[Doc]) -> str | None:
     return next((r["draft_sha256"] for r in reversed(results) if "draft_sha256" in r), None)
 
 
-def _state(doc: Doc, sha: str, rows: list[Doc]) -> Doc:
+def _told(rows: list[Doc]) -> bool:
+    """Whether a stored reply answered a turn whose draft state gave the change request in full:
+    the history sent from then on holds it. A turn no reply answered isn't sent (`_messages`)."""
+    full = False
+    for r in rows:
+        if r["content"] is None:
+            continue
+        if _opens(r):
+            full = False
+        elif r["role"] == "system":
+            full = cr_review.IN_FULL in r["content"]
+        elif r["role"] == "assistant" and full:
+            return True
+    return False
+
+
+def _state(
+    doc: Doc, sha: str, rows: list[Doc], request: Doc | None = None, status: str | None = None
+) -> Doc:
     """The turn's system message: the draft as it is now, in brief (configuration only), and
     whether it changed since the model's last read. Never the sha: an edit with one it didn't get
-    from a read would overwrite a person's edit unseen."""
+    from a read would overwrite a person's edit unseen. A conversation applying a change request
+    (#46) gives the request in full until a reply answered that, then only its id and summary
+    (its payload can run to hundreds of KB, and every turn's state stays in the history); once
+    the owner decided it (`status` no longer open), it says so instead."""
     o = tools.overview(doc)
     read = _last_read(rows)
     brief = {
@@ -141,22 +162,61 @@ def _state(doc: Doc, sha: str, rows: list[Doc]) -> Doc:
         "fields": len(o["fields"]),
         "forms": len(o["forms"]),
     }
-    return {"role": "system", "content": f"Draft state: {json.dumps(brief)}"}
+    said = f"Draft state: {json.dumps(brief)}"
+    if request is not None and status not in cr_review.OPEN:
+        said += f"\n\n{cr_review.decided(request, status)}"
+    elif request is not None:
+        told = cr_review.recall(request) if _told(rows) else cr_review.describe(request)
+        said += f"\n\n{told}"
+    return {"role": "system", "content": said}
 
 
 # --- the vault ---------------------------------------------------------------------------------
 
 
-async def _create(ctx: ClientContext, owner: UUID, mode: str) -> Doc:
+_CONVERSATION = (
+    "id, owner_id, mode, started_at, (change_request ->> 'id')::uuid as change_request_id"
+)
+
+
+async def _create(ctx: ClientContext, owner: UUID, mode: str, request: Doc | None = None) -> Doc:
     async with ctx.db.begin() as conn:
         result = await conn.execute(
             text(
-                "insert into app.agent_conversations (owner_id, mode) values (:o, :m)"
-                " returning id, owner_id, mode, started_at"
+                "insert into app.agent_conversations (owner_id, mode, change_request)"
+                f" values (:o, :m, cast(:r as jsonb)) returning {_CONVERSATION}"
             ),
-            {"o": owner, "m": mode},
+            {"o": owner, "m": mode, "r": _json(request)},
         )
         return dict(result.mappings().one())
+
+
+async def _request(ctx: ClientContext, conversation_id: UUID) -> Doc | None:
+    """The change request a conversation applies (#46), as it kept it; None for most."""
+    async with ctx.db.connect() as conn:
+        return (
+            await conn.execute(
+                text("select change_request from app.agent_conversations where id = :c"),
+                {"c": conversation_id},
+            )
+        ).scalar_one_or_none()
+
+
+async def _status(platform: PlatformRegistry | None, client_id: UUID, cr: UUID) -> str | None:
+    """The change request's status now, from the control plane; None if it is gone (or isn't
+    `client_id`'s)."""
+    if platform is None:
+        raise RuntimeError("A change request conversation needs the control plane")
+    async with platform.engine().connect() as conn:
+        return (
+            await conn.execute(
+                text(
+                    "select status::text from platform.change_requests"
+                    " where id = :id and client_id = :client"
+                ),
+                {"id": cr, "client": client_id},
+            )
+        ).scalar_one_or_none()
 
 
 async def _stored(ctx: ClientContext, conversation_id: UUID, owner: UUID) -> tuple[str, list[Doc]]:
@@ -198,7 +258,7 @@ async def _mine(ctx: ClientContext, owner: UUID) -> list[Doc]:
     async with ctx.db.connect() as conn:
         result = await conn.execute(
             text(
-                "select id, owner_id, mode, started_at from app.agent_conversations"
+                f"select {_CONVERSATION} from app.agent_conversations"
                 " where owner_id = :o order by started_at desc limit 100"
             ),
             {"o": owner},
@@ -304,14 +364,29 @@ class Conversation:
     of a call that stopped or didn't finish is None."""
     state: Doc
     """This turn's system message: the draft as it is now."""
+    request: Doc | None = None
+    """The change request the conversation applies (#46) while it is still open: this turn's
+    edits are linked to it. None once the owner decided it."""
 
 
-async def load(ctx: ClientContext, conversation_id: UUID, owner: UUID) -> Conversation:
-    """`owner`'s conversation and the draft for a new turn; 404 if either is missing."""
+async def load(
+    ctx: ClientContext,
+    conversation_id: UUID,
+    owner: UUID,
+    platform: PlatformRegistry | None = None,
+) -> Conversation:
+    """`owner`'s conversation and the draft for a new turn; 404 if either is missing. A change
+    request it applies is read again in the control plane (`platform`) each turn: once decided,
+    the turn neither offers it to the agent nor links edits to it."""
     mode, rows = await _stored(ctx, conversation_id, owner)
+    request = await _request(ctx, conversation_id)
+    status = await _status(platform, ctx.client.id, UUID(request["id"])) if request else None
     async with ctx.db.connect() as conn:
         doc, sha = await drafts.read(conn)
-    return Conversation(conversation_id, mode, rows, _state(doc, sha, rows))
+    state = _state(doc, sha, rows, request, status)
+    return Conversation(
+        conversation_id, mode, rows, state, request if status in cr_review.OPEN else None
+    )
 
 
 def _opens(row: Doc) -> bool:
@@ -357,9 +432,17 @@ def _echo(content: list[Any]) -> list[Doc]:
     return [b for b in kept if b["type"] != "fallback"]
 
 
-async def _run(ctx: ClientContext, owner: UUID, conversation_id: UUID, name: str, args: Any) -> Doc:
+async def _run(
+    ctx: ClientContext,
+    owner: UUID,
+    conversation: "Conversation",
+    name: str,
+    args: Any,
+) -> Doc:
+    request = conversation.request
+    linked = UUID(request["id"]) if request else None
     try:
-        return await tools.call(ctx, owner, name, args, conversation_id)
+        return await tools.call(ctx, owner, name, args, conversation.id, linked)
     except Exception:  # Claude hears of it; an edit's transaction has left the draft as it was
         log.exception("agent tool failed", extra={"client": ctx.client.slug, "op": name})
         return {"ok": False, "summary": f"{name} failed"}
@@ -470,7 +553,7 @@ async def turn(
                 # it left (a person's edit in between still makes it stale)
                 if latest and isinstance(args, dict) and args.get("draft_sha256") in ours:
                     args = {**args, "draft_sha256": latest}
-                result = await _run(ctx, owner, conversation.id, block["name"], args)
+                result = await _run(ctx, owner, conversation, block["name"], args)
                 if "change_id" in result:
                     yield "change", {"change_id": result["change_id"], "summary": result["summary"]}
                     latest = result["draft_sha256"]
@@ -522,6 +605,9 @@ class ConversationIn(BaseModel):
 
     mode: Mode
     """`configure` sets a client up (effort high); `edit` changes it later (effort medium)."""
+    change_request_id: UUID | None = None
+    """Apply with agent (#46): the client's open change request this conversation applies; it
+    goes `in_review`, and the conversation's edits are linked to it."""
 
 
 class ConversationOut(BaseModel):
@@ -529,6 +615,7 @@ class ConversationOut(BaseModel):
     owner_id: UUID
     mode: Mode
     started_at: datetime
+    change_request_id: UUID | None = None
 
 
 class MessageIn(BaseModel):
@@ -645,14 +732,23 @@ def anthropic_client(request: Request) -> anthropic.AsyncAnthropic:
     return request.app.state.anthropic
 
 
+def control_plane(request: Request) -> PlatformRegistry:
+    """The platform project, where change requests live (its engine made on first use)."""
+    found: PlatformRegistry = request.app.state.platform
+    return found
+
+
 async def opened(
-    conversation_id: UUID, ctx: OwnedClient, owner: OwnerCtx
+    conversation_id: UUID,
+    ctx: OwnedClient,
+    owner: OwnerCtx,
+    platform: Annotated[PlatformRegistry | None, Depends(control_plane)] = None,
 ) -> AsyncIterator[Conversation]:
     """Given room, claimed, then loaded, before the stream starts, so a missing conversation (or
     another owner's) is a plain 404, and one with a turn running, or a client with too many, a
     plain 409; the room and the claim are held until the stream ends."""
     async with _room(ctx), _claimed(ctx, conversation_id):
-        yield await load(ctx, conversation_id, owner.owner_id)
+        yield await load(ctx, conversation_id, owner.owner_id, platform)
 
 
 routes = owner_router()
@@ -661,10 +757,16 @@ AGENT = "/clients/{client_id}/agent/conversations"
 
 @routes.post(AGENT, status_code=201)
 async def start_conversation(
-    client_id: UUID, body: ConversationIn, ctx: OwnedClient, owner: OwnerCtx
+    client_id: UUID, body: ConversationIn, ctx: OwnedClient, owner: OwnerCtx, request: Request
 ) -> ConversationOut:
-    """A new conversation with the client's agent."""
-    return ConversationOut(**await _create(ctx, owner.owner_id, body.mode))
+    """A new conversation with the client's agent; with `change_request_id`, one applying that
+    request (404 for another client's, 409 for one already decided)."""
+    if body.change_request_id is None:
+        return ConversationOut(**await _create(ctx, owner.owner_id, body.mode))
+    # the request goes in_review only if the conversation is stored too
+    async with request.app.state.platform.engine().begin() as conn:
+        kept = await cr_review.start_review(conn, ctx.client.id, body.change_request_id)
+        return ConversationOut(**await _create(ctx, owner.owner_id, body.mode, kept))
 
 
 @routes.get(AGENT)

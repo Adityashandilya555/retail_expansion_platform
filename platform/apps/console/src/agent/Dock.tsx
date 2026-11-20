@@ -87,16 +87,20 @@ function Line({ entry, onOpen, onResend }: { entry: Entry; onOpen: (changeId: nu
 }
 
 /** `onTurn` hears when a turn starts and ends, so the client page's own Publish can wait for it.
- * `next` is the version a publish would create, for the Publish dialog (#43). */
+ * `next` is the version a publish would create, for the Publish dialog (#43). With `applying`
+ * (a change request's id, #46), a new conversation is started for that request: the agent hears
+ * of it each turn, and every edit is linked to it. */
 export function Dock({
   clientId,
   clientName,
   next,
+  applying = null,
   onTurn,
 }: {
   clientId: string;
   clientName: string;
   next: number;
+  applying?: string | null;
   onTurn?: (turning: boolean) => void;
 }) {
   const queries = useQueryClient();
@@ -112,7 +116,12 @@ export function Dock({
   });
   const [current, setCurrent] = useState<string | null>(null); // null: a new conversation, started by its first message
   const showing = useRef<string | null>(null); // the same, for a read landing after the owner moved on
-  const [mode, setMode] = useState<Mode>("configure");
+  const [mode, setMode] = useState<Mode>(applying ? "edit" : "configure"); // a request changes a live client
+  const request = useQuery({
+    queryKey: ["review", applying],
+    queryFn: () => must(api.GET("/owner/change-requests/{change_request_id}", { params: { path: { change_request_id: applying ?? "" } } })),
+    enabled: applying !== null,
+  });
   const [chat, setChat] = useState<Chat>(EMPTY);
   const [said, setSaid] = useState("");
   const [running, setRunning] = useState<string | null>(null); // a turn: "" thinking, else the tool it runs
@@ -176,7 +185,8 @@ export function Dock({
     let streaming = false;
     try {
       if (!id) {
-        id = (await must(api.POST("/owner/clients/{client_id}/agent/conversations", { ...path, body: { mode } }))).id;
+        const linked = applying ? { change_request_id: applying } : {};
+        id = (await must(api.POST("/owner/clients/{client_id}/agent/conversations", { ...path, body: { mode, ...linked } }))).id;
         showing.current = id;
         setCurrent(id);
         void queries.invalidateQueries({ queryKey: ["conversations", clientId] });
@@ -237,8 +247,20 @@ export function Dock({
   const unchecked = problems.isError ? reason(problems.error, OFFLINE) : null;
   const diff = changes.data?.find((c) => c.id === shown);
   const turning = running !== null;
+  // the request this dock applies, while the conversation shown is (or will be) its own
+  const appliesTo = current === null ? applying : (conversations.data?.find((c) => c.id === current)?.change_request_id ?? null);
+  const shownRequest = appliesTo !== null && appliesTo === applying ? request.data : undefined;
+
   return (
     <Stack gap="md">
+      {shownRequest && (
+        <Notice tone="warning" title={`Applying change request: ${shownRequest.summary}`}>
+          <Text size="sm">
+            {shownRequest.note ? `The client admin's note: ${shownRequest.note} ` : ""}Ask the agent to apply it; each of its edits is linked to
+            the request. Approve it under Change requests once the edits are right, then publish.
+          </Text>
+        </Notice>
+      )}
       <Group justify="space-between" align="flex-end">
         <Group align="flex-end">
           <NativeSelect

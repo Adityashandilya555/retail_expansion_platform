@@ -550,7 +550,7 @@ const REQUESTED = { note: null, review_note: null, shipped_in_version: null, cre
 const REQUESTS = [
   { ...REQUESTED, id: "c2", kind: "add_field", payload: STATE_AND_DISTRICT, status: "submitted" },
   { ...REQUESTED, id: "c1", kind: "rename_field_label", payload: { kind: "rename_field_label", field: "city", label: "Town" }, status: "rejected", review_note: "Reports group by City" },
-  { ...REQUESTED, id: "c0", kind: "add_field", payload: { kind: "add_field", form: "start" }, status: "shipped" }, // stored under older rules
+  { ...REQUESTED, id: "c0", kind: "add_field", payload: { kind: "add_field", form: "start" }, status: "shipped", shipped_in_version: 2 }, // stored under older rules
 ];
 
 /** A client admin with the change-request API; returns the change-request calls it saw. */
@@ -579,6 +579,7 @@ test("a client admin's Change requests page lists each request with its status a
   expect(within(table).getByText("Rejected")).toBeDefined();
   expect(within(table).getByText("Reports group by City")).toBeDefined();
   expect(within(table).getByText("Add fields to a form")).toBeDefined();
+  expect(within(table).getByText("Shipped in v2")).toBeDefined(); // the release that carries it (#46)
 
   cleanup();
   forget();
