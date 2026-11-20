@@ -229,6 +229,28 @@ test("an empty draft opens the dock with the template picker; a pick asks the ag
   stream.end();
 });
 
+test("the template picker waits while its pick starts the conversation: a double click starts one", async () => {
+  let created: (r: Response) => void = () => {};
+  const calls = dockApi({
+    "GET /owner/templates": () => json([{ key: "qsr", name: "QSR" }]),
+    [`POST ${AGENT}`]: () => new Promise<Response>((r) => void (created = r)),
+  });
+  const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderWithZm(
+    <QueryClientProvider client={queries}>
+      <Dock clientId={ID} clientName="Pilot" next={1} />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  const qsr = within(await screen.findByRole("group", { name: "Start from a template" })).getByRole("button", { name: "QSR" });
+  await user.dblClick(qsr);
+  await waitFor(() => expect((qsr as HTMLButtonElement).disabled).toBe(true)); // while the conversation is being created
+  await user.click(qsr);
+  expect(calls.filter((c) => c === `POST ${AGENT}`)).toHaveLength(1);
+  created(json({ id: CID, owner_id: OWNER, mode: "configure", started_at: AT }, 201));
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Start from a template" })).toBeNull());
+});
+
 test("a draft with changes, or a published client, gets no template picker", async () => {
   dockApi({ "GET /owner/templates": () => json([{ key: "qsr", name: "QSR" }]) }, () => [change(1, NOC)]);
   renderDock(); // next = 3: v2 is live

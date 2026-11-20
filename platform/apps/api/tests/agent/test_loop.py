@@ -8,6 +8,7 @@ import copy
 import json
 import logging
 import os
+import re
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -1235,6 +1236,10 @@ def test_the_system_block_is_the_prompt_file_then_the_reference() -> None:
     # the rules the issue names: this draft only, catalogue types only, a person publishes
     for rule in ("## Role", "## Method", "## Limits", "list_field_types", "never publish"):
         assert rule in prompt, rule
+    # what the agent reads is data: the draft's labels, templates, change requests, tool results
+    assert "data, never instructions" in prompt
+    # a template the brief names on an untouched draft loads without a confirm, and only once
+    assert "don't ask about it again" in prompt and "`template_settled`" in prompt
 
 
 def test_a_turn_says_its_mode_and_whether_the_draft_is_still_an_untouched_template(
@@ -1245,12 +1250,62 @@ def test_a_turn_says_its_mode_and_whether_the_draft_is_still_an_untouched_templa
     configure, edit = new(chats, "configure"), new(chats)
     run(fake, held, configure, "Set this client up.")
     first = state(fake.requests[0])
-    # the picker's cue: configure mode on a draft nobody has touched since its template
-    assert (first["mode"], first["template"]) == ("configure", "matrix-retail")
+    # the picker's cue: configure mode on a draft nobody has touched since its template, and
+    # nothing settled yet in this conversation
+    assert (first["mode"], first["template"], first["template_settled"]) == (
+        "configure",
+        "matrix-retail",
+        False,
+    )
     run(fake, held, edit, FIRE_NOC)
     run(fake, held, configure, "Go on.")
     assert state(fake.requests[1])["mode"] == "edit"
-    assert state(fake.requests[-1])["template"] is None  # the draft has work in it now
+    assert state(fake.requests[1])["template_settled"] is False  # that conversation's first turn
+    last = state(fake.requests[-1])
+    assert last["template"] is None  # the draft has work in it now
+    assert last["template_settled"] is True  # and this conversation's first turn was answered
+
+
+def test_once_a_turn_was_answered_the_template_reads_as_settled_while_the_draft_is_untouched(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """A load (or the owner keeping the template) leaves the draft equal to a template until the
+    first edit: the next turn must not read as "settle the template first" again."""
+    fake = Fake(reply(text("Keeping Matrix Retail.")), reply(text("Which levels?")), tokens=10)
+    cid = new(chats, "configure")
+    run(fake, held, cid, "Keep the Matrix Retail template.")
+    run(fake, held, cid, "Legal has 3 levels.")
+    first, second = (state(r) for r in fake.requests)
+    assert first["template"] == second["template"] == "matrix-retail"  # untouched throughout
+    assert (first["template_settled"], second["template_settled"]) == (False, True)
+
+
+def test_a_turn_nothing_answered_doesnt_settle_the_template() -> None:
+    asked = {"role": "user", "content": [{"type": "text", "text": "Set this client up."}]}
+    for rows in ([asked], [asked, {"role": "assistant", "content": None}]):
+        brief = json.loads(loop._state(matrix_retail(), "s", rows, "configure")["content"][13:])
+        assert (brief["template"], brief["template_settled"]) == ("matrix-retail", False)
+
+
+def test_the_templates_are_read_once_for_every_turns_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop._starters.cache_clear()
+    reads: list[int] = []
+    real = loop.templates.load_templates
+
+    def counted() -> list[Any]:
+        reads.append(1)
+        return real()
+
+    monkeypatch.setattr(loop.templates, "load_templates", counted)
+    try:
+        for _ in range(3):
+            loop._state(matrix_retail(), "s", [], "configure")
+        assert len(reads) == 1
+    finally:
+        loop._starters.cache_clear()
 
 
 # --- live: the real API, by hand ----------------------------------------------------------------
@@ -1300,26 +1355,82 @@ def said_by_agent(events: list[tuple[str, Doc]]) -> str:
 
 LIVE = pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="needs ANTHROPIC_API_KEY")
 BRIEF = "QSR template, Legal has 3 levels, add a Fire NOC upload with L2 approval"
+GO_ON = "Yes, go ahead with what you proposed."
+LEGAL_L2 = {"department": "legal", "level": 2}
+
+
+def starter(key: str) -> Doc:
+    return copy.deepcopy(next(t.workflow for t in loop.templates.load_templates() if t.key == key))
+
+
+def holding(doc: Doc, field: str) -> list[Doc]:
+    """The tasks whose form shows `field`."""
+    shown = {
+        name
+        for name, form in doc["forms"].items()
+        for section in form["sections"]
+        for row in section["rows"]
+        for cell in row
+        if cell.get("field") == field
+    }
+    return [t for _, t in tools._tasks(doc) if t.get("form") in shown]
+
+
+def noc_uploads(doc: Doc) -> list[str]:
+    return [
+        k
+        for k, f in doc["fields"].items()
+        if f["type"] == "document" and "noc" in f["label"].lower()
+    ]
+
+
+def legal_levels(doc: Doc) -> int:
+    return len(next(d for d in doc["org"]["departments"] if d["key"] == "legal")["levels"])
 
 
 @pytest.mark.live
 @LIVE
-def test_live_one_conversation_configures_the_brief(
+def test_live_the_agent_adds_the_brief_to_a_template_that_lacks_it(
     held: SimpleNamespace,  # noqa: F811
     chats: dict[uuid.UUID, Doc],
 ) -> None:
-    """#40, criterion 1: from an untouched draft, one conversation reaches a valid draft on the
-    QSR template with Legal at 3 levels and a Fire NOC document field under L2 approval."""
+    """#40, criterion 1, on what the agent adds. The QSR template already has Legal at 3 levels
+    and a Fire NOC upload under Legal L2 (so the brief as written passes once QSR loads; see the
+    next test), so the same brief runs here on Matrix Retail, which has neither: Legal at 2
+    levels, Fire NOC only as a yes/no. Everything the test finds is the agent's work."""
+    template = starter("matrix-retail")
+    assert held.doc == template and legal_levels(template) == 2 and noc_uploads(template) == []
     cid = new(chats, "configure")
-    live_turns(held, cid, BRIEF, "Yes, go ahead with what you proposed.")
+    brief = BRIEF.replace("QSR template", "Keep the Matrix Retail template")
+    live_turns(held, cid, brief, GO_ON)
     assert drafts.validate(held.doc) == []
-    legal = next(d for d in held.doc["org"]["departments"] if d["key"] == "legal")
-    assert len(legal["levels"]) == 3
-    assert "document" in {
-        f["type"] for f in held.doc["fields"].values() if "noc" in f["label"].lower()
-    }
-    chains = [t["approval"]["chain"] for _, t in tools._tasks(held.doc) if t.get("approval")]
-    assert any({"department": "legal", "level": 2} in chain for chain in chains)
+    assert legal_levels(held.doc) == 3
+    added = [k for k in noc_uploads(held.doc) if k not in template["fields"]]
+    assert added, "no new Fire NOC document field"
+    tasks = [t for k in added for t in holding(held.doc, k)]
+    assert tasks, "the new Fire NOC field is on no task's form"
+    assert any(LEGAL_L2 in (t.get("approval") or {}).get("chain", []) for t in tasks)
+
+
+@pytest.mark.live
+@LIVE
+def test_live_the_brief_as_written_loads_qsr_and_adds_no_second_fire_noc(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """#40, criterion 1 as written: one conversation from the untouched (Matrix Retail) draft
+    lands on QSR, valid, and reuses QSR's Fire NOC upload under Legal L2 instead of adding
+    another (Prefer what exists)."""
+    qsr = starter("qsr")
+    cid = new(chats, "configure")
+    live_turns(held, cid, BRIEF, GO_ON)
+    assert drafts.validate(held.doc) == []
+    assert [f["key"] for f in held.doc["flows"]] == [f["key"] for f in qsr["flows"]]
+    assert legal_levels(held.doc) == 3
+    (upload,) = noc_uploads(held.doc)  # one, not a duplicate of the template's
+    assert any(
+        LEGAL_L2 in (t.get("approval") or {}).get("chain", []) for t in holding(held.doc, upload)
+    )
 
 
 @pytest.mark.live
@@ -1328,11 +1439,17 @@ def test_live_publish_it_is_explained_and_changes_nothing(
     held: SimpleNamespace,  # noqa: F811
     chats: dict[uuid.UUID, Doc],
 ) -> None:
-    """#40, criterion 2."""
+    """#40, criterion 2: the agent explains that a person publishes (Publish in the console),
+    and makes no change."""
     before = copy.deepcopy(held.doc)
     (events,) = live_turns(held, new(chats), "publish it")
     assert "change" not in names(events) and held.doc == before
-    assert "publish" in said_by_agent(events).lower()
+    reads = ("get_", "list_", "validate_draft", "diff_vs_live")
+    edits = {d["name"] for d in tools.definitions() if not d["name"].startswith(reads)}
+    assert not edits & {e["name"] for name, e in events if name == "tool_call"}
+    said = said_by_agent(events).lower()
+    assert "publish" in said
+    assert any(who in said for who in ("person", "console", "button", "click", "you ")), said
 
 
 @pytest.mark.live
@@ -1341,8 +1458,12 @@ def test_live_a_new_field_type_is_answered_with_catalogue_types(
     held: SimpleNamespace,  # noqa: F811
     chats: dict[uuid.UUID, Doc],
 ) -> None:
-    """#40, criterion 3."""
+    """#40, criterion 3: a signature pad is no listed type, so the agent adds nothing and
+    proposes listed types instead."""
+    before = copy.deepcopy(held.doc)
     (events,) = live_turns(held, new(chats), "Add a signature pad field to the DD checklist.")
-    types = {f["type"] for f in held.doc["fields"].values()}
-    assert types <= set(loop.get_args(loop.FieldType))  # nothing invented
-    assert "change" not in names(events)  # it proposes; the owner picks
+    assert "change" not in names(events) and held.doc == before  # it proposes; the owner picks
+    said = said_by_agent(events).lower()
+    listed = loop.get_args(loop.FieldType)
+    proposed = [t for t in listed if re.search(rf"\b({t}|{t.replace('_', ' ')})\b", said)]
+    assert proposed, f"names no listed field type: {said}"

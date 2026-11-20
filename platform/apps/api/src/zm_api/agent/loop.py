@@ -88,6 +88,13 @@ PROMPTS = Path(__file__).parent / "prompts"
 
 
 @cache
+def _starters() -> tuple[templates.Template, ...]:
+    """The starter templates, read and validated once: they change only with a platform release,
+    and `_state` compares the draft with them on every turn."""
+    return tuple(templates.load_templates())
+
+
+@cache
 def system() -> list[Doc]:
     """The system block: the prompt (`prompts/configure.md`, #40; one for both modes, which the
     turn's draft state names) and what the tools can place. It changes only with a platform
@@ -101,7 +108,7 @@ def system() -> list[Doc]:
             name: {v: {k: m[k] for k in m if k != "regions"} for v, m in versions.items()}
             for name, versions in ui["blocks"].items()
         },
-        "templates": {t.key: t.name for t in templates.load_templates()},
+        "templates": {t.key: t.name for t in _starters()},
     }
     prompt = (PROMPTS / "configure.md").read_text().strip()
     body = f"{prompt}\n\nReference: {json.dumps(reference, sort_keys=True)}"
@@ -127,16 +134,19 @@ def _last_read(rows: list[Doc]) -> str | None:
 
 def _state(doc: Doc, sha: str, rows: list[Doc], mode: str) -> Doc:
     """The turn's system message: the conversation's mode, the draft as it is now, in brief
-    (configuration only; `template` while it is still an untouched starter template, when a
-    configure session starts by settling the template, #40), and whether it changed since the
-    model's last read. Never the sha: an edit with one it didn't get
-    from a read would overwrite a person's edit unseen."""
+    (configuration only), and whether it changed since the model's last read. `template` names
+    the starter template while the draft is still exactly that template (`load_template` only
+    works then), and `template_settled` says whether an earlier turn of this conversation was
+    answered: a configure session settles the template on its first turn, then not again (#40).
+    Never the sha: an edit with one it didn't get from a read would overwrite a person's edit
+    unseen."""
     o = tools.overview(doc)
     read = _last_read(rows)
-    untouched = (t.key for t in templates.load_templates() if t.workflow == doc)
+    untouched = (t.key for t in _starters() if t.workflow == doc)
     brief = {
         "mode": mode,
         "template": next(untouched, None),
+        "template_settled": any(r["role"] == "assistant" and r["content"] for r in rows),
         "draft": READ_FIRST if read is None else UNCHANGED if read == sha else CHANGED,
         "departments": [d["key"] for d in o["departments"]],
         "stages": {f["key"]: [s["key"] for s in f["stages"]] for f in o["flows"]},
