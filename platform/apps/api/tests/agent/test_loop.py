@@ -266,9 +266,11 @@ def chats(held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> dict[uuid.U
     monkeypatch.setattr(loop, "_append", append)
     monkeypatch.setattr(loop, "_request", requested)
 
-    async def status(_platform: Any, cr: uuid.UUID) -> str | None:
+    async def status(_platform: Any, client: uuid.UUID, cr: uuid.UUID) -> str | None:
+        assert client == held.ctx.client.id  # read for the conversation's client only
         return held.statuses.get(str(cr), "in_review")
 
+    held.ctx.client = SimpleNamespace(slug="pilot-local", id=uuid.uuid4())
     held.statuses = {}  # a change request's status in the control plane, by id (in_review)
     monkeypatch.setattr(loop, "_status", status)
 
@@ -877,6 +879,24 @@ def test_a_decided_change_request_leaves_the_state_and_links_no_more_edits(
     run(fake, held, cid, FIRE_NOC)
     said = [m for m in fake.requests[0]["messages"] if m["role"] == "system"][-1]["content"]
     assert "rejected" in said and CHANGE_REQUEST["id"] in said
+    assert "<client_request>" not in said and "The city now asks for it" not in said
+    assert len(held.log) == 2
+    assert {c["change_request_id"] for c in held.log} == {None}
+
+
+def test_a_change_request_gone_from_the_control_plane_reads_as_decided(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """A request the control plane no longer has for this client (deleted, or another client's):
+    the turn tells the agent it is gone and links no edit to it."""
+    cid = new(chats)
+    chats[cid]["change_request"] = CHANGE_REQUEST
+    held.statuses[CHANGE_REQUEST["id"]] = None
+    fake = Fake(*fire_noc())
+    run(fake, held, cid, FIRE_NOC)
+    said = [m for m in fake.requests[0]["messages"] if m["role"] == "system"][-1]["content"]
+    assert f"Change request {CHANGE_REQUEST['id']} is gone" in said
     assert "<client_request>" not in said and "The city now asks for it" not in said
     assert len(held.log) == 2
     assert {c["change_request_id"] for c in held.log} == {None}

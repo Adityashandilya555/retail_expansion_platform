@@ -202,15 +202,19 @@ async def _request(ctx: ClientContext, conversation_id: UUID) -> Doc | None:
         ).scalar_one_or_none()
 
 
-async def _status(platform: PlatformRegistry | None, cr: UUID) -> str | None:
-    """The change request's status now, from the control plane; None if it is gone."""
+async def _status(platform: PlatformRegistry | None, client_id: UUID, cr: UUID) -> str | None:
+    """The change request's status now, from the control plane; None if it is gone (or isn't
+    `client_id`'s)."""
     if platform is None:
         raise RuntimeError("A change request conversation needs the control plane")
     async with platform.engine().connect() as conn:
         return (
             await conn.execute(
-                text("select status::text from platform.change_requests where id = :id"),
-                {"id": cr},
+                text(
+                    "select status::text from platform.change_requests"
+                    " where id = :id and client_id = :client"
+                ),
+                {"id": cr, "client": client_id},
             )
         ).scalar_one_or_none()
 
@@ -376,7 +380,7 @@ async def load(
     the turn neither offers it to the agent nor links edits to it."""
     mode, rows = await _stored(ctx, conversation_id, owner)
     request = await _request(ctx, conversation_id)
-    status = await _status(platform, UUID(request["id"])) if request else None
+    status = await _status(platform, ctx.client.id, UUID(request["id"])) if request else None
     async with ctx.db.connect() as conn:
         doc, sha = await drafts.read(conn)
     state = _state(doc, sha, rows, request, status)
