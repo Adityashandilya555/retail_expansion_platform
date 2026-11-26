@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.143",
     "httpx>=0.28",
     "jsonpatch>=1.33",
+    "jsonpointer>=3.0",
     "pyjwt>=2.10",
     "sqlalchemy[asyncio]>=2.0",
     "uvicorn[standard]>=0.54",
