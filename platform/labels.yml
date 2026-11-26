@@ -1,5 +1,6 @@
 - {name: "sprint:1", color: "0F5D5C", description: "Sprint 1 — Foundation"}
 - {name: "sprint:2", color: "B0712E", description: "Sprint 2 — Configure and run"}
+- {name: "sprint:3", color: "2E7D32", description: "Sprint 3 — Final: every open issue"}
 - {name: "area:infra", color: "6B4789", description: "Supabase, Railway, Vercel, CI, environments"}
 - {name: "area:engine", color: "2A4FA0", description: "Operaton image, config, REST integration"}
 - {name: "area:backend", color: "1D76DB", description: "Platform API, worker, compiler"}

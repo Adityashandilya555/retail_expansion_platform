@@ -10,7 +10,7 @@ for line in open("platform/labels.yml"):
         n, c, d = m.groups()
         subprocess.run(["gh", "label", "create", n, "--repo", repo, "--color", c, "--description", d, "--force"], check=True)
         print("label", n)
-for t in ["Sprint 1 — Foundation", "Sprint 2 — Configure and run", "Backlog"]:
+for t in ["Sprint 1 — Foundation", "Sprint 2 — Configure and run", "Backlog", "Sprint 3 — Final"]:
     r = subprocess.run(["gh", "api", f"repos/{repo}/milestones", "-f", f"title={t}"], capture_output=True, text=True)
     print("milestone", t, "created" if r.returncode == 0 else "exists")
 PY
