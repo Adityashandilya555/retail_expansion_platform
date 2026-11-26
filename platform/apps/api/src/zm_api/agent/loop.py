@@ -132,12 +132,27 @@ def _last_read(rows: list[Doc]) -> str | None:
     return next((r["draft_sha256"] for r in reversed(results) if "draft_sha256" in r), None)
 
 
+def _settled(rows: list[Doc]) -> bool:
+    """Whether an earlier turn settled the template: one answered without `list_templates`. A
+    turn that asks which template to start from calls it, so the owner's reply to that question
+    still reads as unsettled and is acted on (#40)."""
+    # ponytail: a turn that calls list_templates only to look settles nothing either; at worst the
+    # agent asks once more
+    kept = [r for r in rows if r["content"] is not None]
+    opens = [i for i, r in enumerate(kept) if _opens(r)]
+    for i, j in zip(opens, [*opens[1:], len(kept)], strict=False):  # no turns yet: nothing
+        said = [b for r in kept[i:j] if r["role"] == "assistant" for b in r["content"]]
+        if said and all(b.get("name") != "list_templates" for b in said):
+            return True
+    return False
+
+
 def _state(doc: Doc, sha: str, rows: list[Doc], mode: str) -> Doc:
     """The turn's system message: the conversation's mode, the draft as it is now, in brief
     (configuration only), and whether it changed since the model's last read. `template` names
     the starter template while the draft is still exactly that template (`load_template` only
-    works then), and `template_settled` says whether an earlier turn of this conversation was
-    answered: a configure session settles the template on its first turn, then not again (#40).
+    works then), and `template_settled` whether an earlier turn settled it (`_settled`): a
+    configure session settles the template first, then not again (#40).
     Never the sha: an edit with one it didn't get from a read would overwrite a person's edit
     unseen."""
     o = tools.overview(doc)
@@ -146,7 +161,7 @@ def _state(doc: Doc, sha: str, rows: list[Doc], mode: str) -> Doc:
     brief = {
         "mode": mode,
         "template": next(untouched, None),
-        "template_settled": any(r["role"] == "assistant" and r["content"] for r in rows),
+        "template_settled": _settled(rows),
         "draft": READ_FIRST if read is None else UNCHANGED if read == sha else CHANGED,
         "departments": [d["key"] for d in o["departments"]],
         "stages": {f["key"]: [s["key"] for s in f["stages"]] for f in o["flows"]},

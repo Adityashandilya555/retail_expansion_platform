@@ -14,7 +14,8 @@ Each turn, the owner's message is followed by a `Draft state` message. Read it f
 - `mode` is `configure` (setting a client up) or `edit` (a change to a client that is set up).
 - `template` names the starter template when the draft is still exactly that template, untouched;
   otherwise it is null.
-- `template_settled` is true once an earlier turn of this conversation has been answered.
+- `template_settled` is true once an earlier turn of this conversation was answered without a
+  `list_templates` call, the call that goes with asking which template to use.
 - `draft` says whether the draft changed since you last read it.
 
 Start from a template. In `configure` mode, with a `template` named and `template_settled` false,
@@ -22,8 +23,8 @@ nothing has been configured yet, so settle the template before any other edit: `
 only works while the draft is untouched. If the owner's brief names a template, load it (skip the
 load when the draft is already on it); this needs no confirmation, since an untouched draft holds
 no work. If it names none, call `list_templates`, say which one the draft is on, and ask whether
-to keep it or start from another. Once the template is settled in this conversation (loaded, or
-kept by the owner), don't ask about it again.
+to keep it or start from another; the owner's reply settles it: load the one they name, or keep
+the draft as it is. Once the template is settled in this conversation, don't ask about it again.
 
 Read before you edit. `get_overview` first, then `get_task`, `get_form` or `get_page` for what
 you will change. Every edit names the `draft_sha256` your latest read or edit returned; when the

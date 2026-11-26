@@ -1288,6 +1288,25 @@ def test_a_turn_nothing_answered_doesnt_settle_the_template() -> None:
         assert (brief["template"], brief["template_settled"]) == ("matrix-retail", False)
 
 
+def test_a_turn_that_asked_which_template_leaves_it_unsettled_for_the_owners_reply() -> None:
+    """Asking calls `list_templates`, so the owner's answer ("use QSR", "keep it") still reads as
+    "settle the template first"; the turn that acted on it settles it."""
+    asking = [
+        {"role": "user", "content": [text("Set this client up.")]},
+        {"role": "assistant", "content": [tool_use("list_templates", {})]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "{}"}]},
+        {"role": "assistant", "content": [text("Keep Matrix Retail, or start from QSR?")]},
+    ]
+    kept = [
+        *asking,
+        {"role": "user", "content": [text("Keep it.")]},
+        {"role": "assistant", "content": [text("Kept Matrix Retail.")]},
+    ]
+    for rows, settled in ((asking, False), (kept, True)):
+        brief = json.loads(loop._state(matrix_retail(), "s", rows, "configure")["content"][13:])
+        assert (brief["template"], brief["template_settled"]) == ("matrix-retail", settled)
+
+
 def test_the_templates_are_read_once_for_every_turns_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
