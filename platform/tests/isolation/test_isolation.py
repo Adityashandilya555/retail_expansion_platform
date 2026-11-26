@@ -3,6 +3,7 @@ plus a negative control proving check 1 catches a leak. Check 7 runs last: a wro
 password makes Operaton refuse that account for a few seconds, so it waits for it to recover."""
 
 import time
+import uuid
 
 import httpx
 import jwt
@@ -14,7 +15,7 @@ from zm_api.context import Resolver
 from zm_api.main import create_app
 
 from . import checks
-from .conftest import JWT_SECRET, PILOT, QSR, World, engine_client
+from .conftest import JWT_SECRET, PILOT, QSR, World, engine_client, token
 
 pytestmark = pytest.mark.isolation
 
@@ -137,6 +138,33 @@ def test_8_negative_control_a_leaky_resolver_is_caught(world: World) -> None:
     assert any("answered 200" in leak for leak in leaks), leaks
     # the same probe on the real app is the 404 check 1 asserts
     assert checks.cross_client_ids(world.http, auth, world.qsr.task_id) == []
+
+
+def test_9_a_preview_token_for_one_client_cant_reach_the_other(world: World) -> None:
+    """A preview token (#42) minted for pilot-local shows pilot's draft only: qsr-local's task
+    and case ids aren't found through it, its UI is pilot's, and a write is still refused."""
+    claims = {"kind": "preview", "as": {"department": "legal", "level": 1}, "label": "Legal L1"}
+    preview = {"Authorization": f"Bearer {token(PILOT, uuid.uuid4(), **claims)}"}
+    # positive control: the preview answers, from pilot's draft
+    own = world.http.get("/app/cases", headers=preview)
+    assert own.status_code == 200, own.text
+    codes = {c["code"] for c in own.json()}
+    assert codes and world.qsr.case["code"] not in codes
+    ui = world.http.get("/app/ui", headers=preview)
+    assert ui.status_code == 200, ui.text
+    pages = {p["key"] for p in ui.json()["pages"]}
+    assert pages and "stores" not in pages  # qsr's page
+
+    other_task = world.http.get(f"/app/tasks/{world.qsr.task_id}", headers=preview)
+    assert other_task.status_code in {401, 403, 404}, other_task.text
+    other_case = world.http.get(f"/app/cases/{world.qsr.case['code']}", headers=preview)
+    assert other_case.status_code in {401, 403, 404}, other_case.text
+    sent = world.http.post(
+        f"/app/tasks/{world.qsr.task_id}/submit",
+        json={"values": {}},
+        headers={**preview, "Idempotency-Key": f"isolation-{uuid.uuid4()}"},
+    )
+    assert sent.status_code in {401, 403, 404}, sent.text
 
 
 def test_7_one_clients_service_account_cant_use_the_others_engine(world: World) -> None:

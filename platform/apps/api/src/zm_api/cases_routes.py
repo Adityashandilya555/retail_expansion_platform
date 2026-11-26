@@ -7,8 +7,8 @@ from uuid import UUID
 from fastapi import Response
 from pydantic import BaseModel, ConfigDict
 
-from zm_api import cases
-from zm_api.context import ClientCtx, UserId, client_router
+from zm_api import cases, preview
+from zm_api.context import ClientCtx, Preview, Viewer, client_router
 
 routes = client_router()
 
@@ -117,12 +117,16 @@ def _row(row: cases.CaseRow) -> dict[str, Any]:
 )
 async def list_cases(
     ctx: ClientCtx,
-    uid: UserId,
+    uid: Viewer,
     response: Response,
     flow: str | None = None,
     status: Literal["open", "completed", "closed"] | None = None,
 ) -> list[CaseRow]:
-    """Every case of the client (newest first, up to 500) with its stage states."""
+    """Every case of the client (newest first, up to 500) with its stage states. Under a preview
+    token (#42): made-up cases of the draft's flows, one per stage."""
+    if isinstance(uid, Preview):
+        release = await preview.draft_release(ctx)
+        return [CaseRow(**_row(r)) for r in preview.list_cases(release, uid, flow, status)]
     found, truncated = await cases.list_cases(ctx, uid, flow, status)
     if truncated:
         response.headers["X-Truncated"] = "true"
@@ -130,9 +134,12 @@ async def list_cases(
 
 
 @routes.get("/cases/{code}")
-async def get_case(code: str, ctx: ClientCtx, uid: UserId) -> CaseDetail:
+async def get_case(code: str, ctx: ClientCtx, uid: Viewer) -> CaseDetail:
     """One case: its stages with times, values by section, open tasks, decisions and activity."""
-    detail = await cases.get_case(ctx, uid, code)
+    if isinstance(uid, Preview):
+        detail = preview.get_case(await preview.draft_release(ctx), uid, code)
+    else:
+        detail = await cases.get_case(ctx, uid, code)
     return CaseDetail(
         **_row(detail.row),
         sections=[s.__dict__ for s in detail.sections],
