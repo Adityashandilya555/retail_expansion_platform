@@ -104,6 +104,25 @@ def _compile(
     return wf, release
 
 
+def release_values(
+    wf: Any, release: Release, published: Sequence[dict[str, Any]], version: int
+) -> dict[str, Any]:
+    """What a release row holds besides who deployed it and where: publish records it, and
+    preview (#42) shows the draft through the very same values."""
+    # the document as published, after any schema migration (D14), stamped (S2-25)
+    workflow = wf.model_dump(mode="json", by_alias=True, exclude_unset=True)
+    versioning.stamp(published, workflow, version)
+    return {
+        "workflow": workflow,
+        "forms": {k: {"schema": f.schema, "layout": f.layout} for k, f in release.forms.items()},
+        "ui": release.ui,
+        "routing_vars": release.routing_vars,
+        "process_keys": release.process_keys,
+        "blocks_used": blocks_used(release.ui),
+        "sha256": release.digest(),
+    }
+
+
 async def _ensure_groups(ctx: ClientContext, release: Release) -> None:
     """Reads before it writes: creating a group twice is refused by Operaton (400 "The group
     already exists"; a true insert race can surface as another error). If our create is refused,
@@ -158,23 +177,12 @@ async def publish(
             row = await releases.release_by_deployment(conn, deployment_id)
             created = row is None
             if row is None:
-                # the document as published, after any schema migration (D14), stamped (S2-25)
-                workflow = wf.model_dump(mode="json", by_alias=True, exclude_unset=True)
-                versioning.stamp(published, workflow, await releases.next_version(conn))
+                version = await releases.next_version(conn)
                 row = await releases.insert_release(
                     conn,
                     {
                         "deployment_id": deployment_id,
-                        "workflow": workflow,
-                        "forms": {
-                            k: {"schema": f.schema, "layout": f.layout}
-                            for k, f in release.forms.items()
-                        },
-                        "ui": release.ui,
-                        "routing_vars": release.routing_vars,
-                        "process_keys": release.process_keys,
-                        "blocks_used": blocks_used(release.ui),
-                        "sha256": release.digest(),
+                        **release_values(wf, release, published, version),
                         "published_by": published_by,
                     },
                 )

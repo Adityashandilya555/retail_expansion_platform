@@ -47,6 +47,13 @@ export function forget() {
 
 export const signedIn = () => token !== null;
 
+/** Preview (#42): the owner console's 15-minute read-only token is this tab's whole session. It
+ * has no refresh cookie, so it ends with the token or a reload. */
+export function startPreview(previewToken: string) {
+  forget();
+  token = previewToken;
+}
+
 export async function findWorkspace(code: string): Promise<Outcome<Workspace>> {
   try {
     const { data, response } = await api.POST("/auth/workspace", { body: { workspace_code: code } });

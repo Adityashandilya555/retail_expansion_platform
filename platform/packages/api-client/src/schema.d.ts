@@ -137,7 +137,8 @@ export interface paths {
         };
         /**
          * List Cases
-         * @description Every case of the client (newest first, up to 500) with its stage states.
+         * @description Every case of the client (newest first, up to 500) with its stage states. Under a preview
+         *     token (#42): made-up cases of the draft's flows, one per stage.
          */
         get: operations["list_cases_app_cases_get"];
         put?: never;
@@ -222,7 +223,8 @@ export interface paths {
         /**
          * List Tasks
          * @description `mine`: the user's tasks and their groups' unclaimed ones. `team` (level 2+): every task
-         *     of their departments. `flow` and `case` (a case code) narrow the list.
+         *     of their departments. `flow` and `case` (a case code) narrow the list. Under a preview token
+         *     (#42): the draft's tasks for the role, on made-up cases.
          */
         get: operations["list_tasks_app_tasks_get"];
         put?: never;
@@ -283,7 +285,8 @@ export interface paths {
         };
         /**
          * App Ui
-         * @description The active release's nav, pages and flows, filtered to the user's departments.
+         * @description The active release's nav, pages and flows, filtered to the user's departments. Under a
+         *     preview token (#42): the draft's, as publishing it now would make them, for the role.
          */
         get: operations["app_ui_app_ui_get"];
         put?: never;
@@ -806,6 +809,27 @@ export interface paths {
         get: operations["get_validation_owner_clients__client_id__draft_validate_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/owner/clients/{client_id}/preview-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Token
+         * @description A 15-minute read-only token for the client app, showing the client's draft as one role
+         *     with made-up cases; 422 when the draft can't be published yet or has no such role.
+         */
+        post: operations["preview_token_owner_clients__client_id__preview_token_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1624,6 +1648,11 @@ export interface components {
             /** Name */
             name: string;
             preferences: components["schemas"]["Preferences"];
+            /**
+             * Preview
+             * @default false
+             */
+            preview: boolean;
         };
         /** Membership */
         Membership: {
@@ -1747,6 +1776,17 @@ export interface components {
             accent?: string | null;
             /** Color Scheme */
             color_scheme?: ("light" | "dark" | "auto") | null;
+        };
+        /** PreviewAs */
+        PreviewAs: {
+            /** Department */
+            department: string;
+            /** Level */
+            level: number;
+        };
+        /** PreviewIn */
+        PreviewIn: {
+            as: components["schemas"]["PreviewAs"];
         };
         /** Probe */
         Probe: {
@@ -3730,6 +3770,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FieldError"][];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    preview_token_owner_clients__client_id__preview_token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenOut"];
                 };
             };
             /** @description Problem details (RFC 9457) */

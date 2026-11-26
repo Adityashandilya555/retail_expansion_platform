@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
 import { formatNum, Notice, StatusPill } from "@zm/ui";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { PreviewPanel } from "../Preview";
 import { PublishDialog } from "../Publish";
 import { api, must } from "../session";
 import { EMPTY, readEvents, step, type Chat, type Entry, type Usage } from "./stream";
@@ -134,10 +135,10 @@ export function Dock({
   const [busy, setBusy] = useState(false);
   const [shown, setShown] = useState<number | null>(null); // the change whose patch is open
   const [confirming, setConfirming] = useState(false);
-  const ids = { preview: useId(), invalid: useId(), turning: useId(), unchecked: useId() };
+  const ids = { invalid: useId(), turning: useId(), unchecked: useId() };
 
   const add = (entry: Entry) => setChat((c) => ({ ...c, open: false, entries: [...c.entries, entry] }));
-  const refresh = () => Promise.all(["changes", "validate", "draft"].map((key) => queries.invalidateQueries({ queryKey: [key, clientId] })));
+  const refresh = () => Promise.all(["changes", "validate", "draft", "diff"].map((key) => queries.invalidateQueries({ queryKey: [key, clientId] })));
   const read = async (id: string): Promise<{ chat: Chat; running: boolean }> => {
     const conversation = { params: { path: { client_id: clientId, conversation_id: id } } };
     const { data: stored, error, response } = await api.GET("/owner/clients/{client_id}/agent/conversations/{conversation_id}", conversation);
@@ -288,9 +289,6 @@ export function Dock({
           <Button variant="default" loading={busy} disabled={turning} onClick={() => void undo()}>
             Undo last change
           </Button>
-          <Button variant="default" disabled aria-describedby={ids.preview}>
-            Preview
-          </Button>
           <Button
             disabled={turning || problems.isFetching || !problems.data || problems.data.length > 0 || unchecked !== null}
             aria-describedby={turning ? ids.turning : unchecked !== null ? ids.unchecked : first && ids.invalid}
@@ -300,9 +298,7 @@ export function Dock({
           </Button>
         </Group>
       </Group>
-      <Text id={ids.preview} size="sm">
-        Preview comes with #42.
-      </Text>
+      <PreviewPanel clientId={clientId} disabled={turning} />
       {turning && (
         <Text id={ids.turning} size="sm">
           Publish waits until the agent's turn ends.

@@ -13,8 +13,8 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from zm_api import releases
-from zm_api.context import ClientCtx, UserId, client_router
+from zm_api import preview, releases
+from zm_api.context import ClientCtx, Preview, Viewer, client_router
 from zm_api.errors import NotFound, Unauthorized
 from zm_api.releases import ReleaseRow
 from zm_schema import WorkflowV1
@@ -125,8 +125,11 @@ routes = client_router()
 
 
 @routes.get("/ui")
-async def app_ui(ctx: ClientCtx, uid: UserId) -> AppUi:
-    """The active release's nav, pages and flows, filtered to the user's departments."""
+async def app_ui(ctx: ClientCtx, uid: Viewer) -> AppUi:
+    """The active release's nav, pages and flows, filtered to the user's departments. Under a
+    preview token (#42): the draft's, as publishing it now would make them, for the role."""
+    if isinstance(uid, Preview):
+        return visible_ui(ctx.client.name, await preview.draft_release(ctx), {uid.department})
     async with ctx.db.connect() as conn:
         mine = await departments(conn, uid)
         release = await releases.active_release(conn)

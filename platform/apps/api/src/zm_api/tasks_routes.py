@@ -7,8 +7,8 @@ from uuid import UUID
 from fastapi import Header
 from pydantic import BaseModel, ConfigDict, Field
 
-from zm_api import tasks
-from zm_api.context import ClientCtx, UserId, client_router
+from zm_api import preview, tasks
+from zm_api.context import ClientCtx, Preview, UserId, Viewer, client_router
 from zm_api.errors import BadRequest
 
 routes = client_router()
@@ -95,23 +95,31 @@ async def start_case(body: CaseIn, ctx: ClientCtx, uid: UserId) -> CaseOut:
 @routes.get("/tasks")
 async def list_tasks(
     ctx: ClientCtx,
-    uid: UserId,
+    uid: Viewer,
     scope: Literal["mine", "team"] = "mine",
     flow: str | None = None,
     case: str | None = None,
 ) -> list[TaskItem]:
     """`mine`: the user's tasks and their groups' unclaimed ones. `team` (level 2+): every task
-    of their departments. `flow` and `case` (a case code) narrow the list."""
+    of their departments. `flow` and `case` (a case code) narrow the list. Under a preview token
+    (#42): the draft's tasks for the role, on made-up cases."""
+    if isinstance(uid, Preview):
+        release = await preview.draft_release(ctx)
+        return [_task(t) for t in preview.list_tasks(release, uid, scope, flow, case)]
     return [_task(t) for t in await tasks.list_tasks(ctx, uid, scope, flow, case)]
 
 
 @routes.get("/tasks/{task_id}")
-async def get_task(task_id: str, ctx: ClientCtx, uid: UserId) -> TaskDetail:
+async def get_task(task_id: str, ctx: ClientCtx, uid: Viewer) -> TaskDetail:
     """One task with its case, its form as this user sees it, and the values it shows."""
-    view = await tasks.open_task(ctx, uid, task_id)
+    made_up = None
+    if isinstance(uid, Preview):
+        view, made_up = preview.open_task(await preview.draft_release(ctx), uid, task_id)
+    else:
+        view = await tasks.open_task(ctx, uid, task_id)
     hidden = tasks.hidden_fields(view.release.workflow, view.me.levels)
     fields = [f for f in view.form["schema"].get("x-zm-show", []) if f not in hidden]
-    show = await tasks.shown_values(ctx, view.case.id, fields)
+    show = made_up if made_up is not None else await tasks.shown_values(ctx, view.case.id, fields)
     return TaskDetail(
         task=_task(view.item),
         case=CaseOut(**view.case.__dict__),
