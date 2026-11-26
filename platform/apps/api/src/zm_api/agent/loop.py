@@ -38,6 +38,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
+from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
 from uuid import UUID
 
@@ -83,19 +84,21 @@ READ_FIRST = "not read yet: read what you'll edit first"
 CHANGED = "changed since your last read: read again what you'll edit"
 UNCHANGED = "unchanged since your last read"
 
-RULES = (
-    "You are the Z-Matrix admin agent. A platform owner describes one client's process; you"
-    " change that client's draft workflow.json, only through your tools. Every edit names the"
-    " draft_sha256 your latest read or edit returned; each turn's draft state message says"
-    " whether the draft has changed since. You can't publish, migrate running sites, manage"
-    " people or change the look (theme preset and accent): a person does those."
-)
+PROMPTS = Path(__file__).parent / "prompts"
+
+
+@cache
+def _starters() -> tuple[templates.Template, ...]:
+    """The starter templates, read and validated once: they change only with a platform release,
+    and `_state` compares the draft with them on every turn."""
+    return tuple(templates.load_templates())
 
 
 @cache
 def system() -> list[Doc]:
-    """The system block: the rules and what the tools can place. It changes only with a platform
-    release, so it is cached (the prompt itself comes with #40)."""
+    """The system block: the prompt (`prompts/configure.md`, #40; one for both modes, which the
+    turn's draft state names) and what the tools can place. It changes only with a platform
+    release, so it is cached."""
     ui = catalogue.load()
     reference = {
         "field_types": {t: {"v1_renders": t in tools.V1_RENDERS} for t in get_args(FieldType)},
@@ -105,9 +108,10 @@ def system() -> list[Doc]:
             name: {v: {k: m[k] for k in m if k != "regions"} for v, m in versions.items()}
             for name, versions in ui["blocks"].items()
         },
-        "templates": {t.key: t.name for t in templates.load_templates()},
+        "templates": {t.key: t.name for t in _starters()},
     }
-    body = f"{RULES}\n\nReference: {json.dumps(reference, sort_keys=True)}"
+    prompt = (PROMPTS / "configure.md").read_text().strip()
+    body = f"{prompt}\n\nReference: {json.dumps(reference, sort_keys=True)}"
     return [{"type": "text", "text": body, "cache_control": {"type": "ephemeral"}}]
 
 
@@ -128,6 +132,21 @@ def _last_read(rows: list[Doc]) -> str | None:
     return next((r["draft_sha256"] for r in reversed(results) if "draft_sha256" in r), None)
 
 
+def _settled(rows: list[Doc]) -> bool:
+    """Whether an earlier turn settled the template: one answered without `list_templates`. A
+    turn that asks which template to start from calls it, so the owner's reply to that question
+    still reads as unsettled and is acted on (#40)."""
+    # ponytail: a turn that calls list_templates only to look settles nothing either; at worst the
+    # agent asks once more
+    kept = [r for r in rows if r["content"] is not None]
+    opens = [i for i, r in enumerate(kept) if _opens(r)]
+    for i, j in zip(opens, [*opens[1:], len(kept)], strict=False):  # no turns yet: nothing
+        said = [b for r in kept[i:j] if r["role"] == "assistant" for b in r["content"]]
+        if said and all(b.get("name") != "list_templates" for b in said):
+            return True
+    return False
+
+
 def _told(rows: list[Doc]) -> bool:
     """Whether a stored reply answered a turn whose draft state gave the change request in full:
     the history sent from then on holds it. A turn no reply answered isn't sent (`_messages`)."""
@@ -145,17 +164,29 @@ def _told(rows: list[Doc]) -> bool:
 
 
 def _state(
-    doc: Doc, sha: str, rows: list[Doc], request: Doc | None = None, status: str | None = None
+    doc: Doc,
+    sha: str,
+    rows: list[Doc],
+    mode: str,
+    request: Doc | None = None,
+    status: str | None = None,
 ) -> Doc:
-    """The turn's system message: the draft as it is now, in brief (configuration only), and
-    whether it changed since the model's last read. Never the sha: an edit with one it didn't get
-    from a read would overwrite a person's edit unseen. A conversation applying a change request
-    (#46) gives the request in full until a reply answered that, then only its id and summary
-    (its payload can run to hundreds of KB, and every turn's state stays in the history); once
-    the owner decided it (`status` no longer open), it says so instead."""
+    """The turn's system message: the conversation's mode, the draft as it is now, in brief
+    (configuration only), and whether it changed since the model's last read. `template` names
+    the starter template while the draft is still exactly that template (`load_template` only
+    works then), and `template_settled` whether an earlier turn settled it (`_settled`): a
+    configure session settles the template first, then not again (#40). Never the sha: an edit
+    with one it didn't get from a read would overwrite a person's edit unseen. A conversation
+    applying a change request (#46) gives the request in full until a reply answered that, then
+    only its id and summary (its payload can run to hundreds of KB, and every turn's state stays
+    in the history); once the owner decided it (`status` no longer open), it says so instead."""
     o = tools.overview(doc)
     read = _last_read(rows)
+    untouched = (t.key for t in _starters() if t.workflow == doc)
     brief = {
+        "mode": mode,
+        "template": next(untouched, None),
+        "template_settled": _settled(rows),
         "draft": READ_FIRST if read is None else UNCHANGED if read == sha else CHANGED,
         "departments": [d["key"] for d in o["departments"]],
         "stages": {f["key"]: [s["key"] for s in f["stages"]] for f in o["flows"]},
@@ -383,7 +414,7 @@ async def load(
     status = await _status(platform, ctx.client.id, UUID(request["id"])) if request else None
     async with ctx.db.connect() as conn:
         doc, sha = await drafts.read(conn)
-    state = _state(doc, sha, rows, request, status)
+    state = _state(doc, sha, rows, mode, request, status)
     return Conversation(
         conversation_id, mode, rows, state, request if status in cr_review.OPEN else None
     )

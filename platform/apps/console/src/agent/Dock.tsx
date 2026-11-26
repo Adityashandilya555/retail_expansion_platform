@@ -115,6 +115,8 @@ export function Dock({
     queryKey: ["changes", clientId],
     queryFn: () => must(api.GET("/owner/clients/{client_id}/draft/changes", { params: { ...path.params, query: { limit: 500 } } })),
   });
+  // the picker's choices (#40); the list is the one the new-client form already loaded
+  const templates = useQuery({ queryKey: ["templates"], queryFn: () => must(api.GET("/owner/templates")) });
   const [current, setCurrent] = useState<string | null>(null); // null: a new conversation, started by its first message
   const showing = useRef<string | null>(null); // the same, for a read landing after the owner moved on
   const [mode, setMode] = useState<Mode>(applying ? "edit" : "configure"); // a request changes a live client
@@ -127,6 +129,7 @@ export function Dock({
   const [said, setSaid] = useState("");
   const [running, setRunning] = useState<string | null>(null); // a turn: "" thinking, else the tool it runs
   const [waiting, setWaiting] = useState(false); // its stream dropped: reading back until it ends
+  const sending = useRef(false); // `running`, already set for a second click in the same render
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -179,7 +182,8 @@ export function Dock({
   async function send(e?: FormEvent, again?: string) {
     e?.preventDefault();
     const text = (again ?? said).trim();
-    if (!text || running !== null) return;
+    if (!text || running !== null || sending.current) return;
+    sending.current = true;
     setRunning("");
     onTurn?.(true);
     let id = current;
@@ -221,6 +225,7 @@ export function Dock({
       }
     } finally {
       setWaiting(false);
+      sending.current = false;
       setRunning(null);
       onTurn?.(false);
       void refresh();
@@ -248,6 +253,8 @@ export function Dock({
   const unchecked = problems.isError ? reason(problems.error, OFFLINE) : null;
   const diff = changes.data?.find((c) => c.id === shown);
   const turning = running !== null;
+  // an empty draft (#40): nothing published, nothing changed; a configure session opens with the template picker
+  const untouched = next === 1 && mode === "configure" && current === null && changes.data?.length === 0;
   // the request this dock applies, while the conversation shown is (or will be) its own
   const appliesTo = current === null ? applying : (conversations.data?.find((c) => c.id === current)?.change_request_id ?? null);
   const shownRequest = appliesTo !== null && appliesTo === applying ? request.data : undefined;
@@ -318,6 +325,16 @@ export function Dock({
       <Paper withBorder p="md">
         <Stack gap="sm" role="log" aria-live="polite" aria-label="Chat" mih={160}>
           {chat.entries.length === 0 && <Text size="sm">Describe the client's process, or what to change; the agent edits the draft.</Text>}
+          {untouched && chat.entries.length === 0 && (templates.data?.length ?? 0) > 0 && (
+            <Group gap="xs" role="group" aria-label="Start from a template">
+              <Text size="sm">Or start from a template:</Text>
+              {templates.data?.map((t) => (
+                <Button key={t.key} size="xs" variant="default" disabled={turning} onClick={() => void send(undefined, `Start from the ${t.name} template (${t.key}).`)}>
+                  {t.name}
+                </Button>
+              ))}
+            </Group>
+          )}
           {chat.entries.map((entry, i) => (
             <Line
               key={"change_id" in entry ? `change-${entry.change_id}` : i}
