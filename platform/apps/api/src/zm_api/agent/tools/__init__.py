@@ -993,14 +993,21 @@ async def call(
     name: str,
     args: Any,
     conversation_id: UUID | None = None,
+    change_request_id: UUID | None = None,
 ) -> Result:
     """Run one tool call for `ctx`'s client; every refusal comes back as `ok: false`. A read of
-    the draft and a done edit answer the draft's `draft_sha256`, which the next edit names."""
-    return _fit(await _call(ctx, author, name, args, conversation_id))
+    the draft and a done edit answer the draft's `draft_sha256`, which the next edit names. An
+    edit is logged with the conversation and, when it applies one, the change request (#46)."""
+    return _fit(await _call(ctx, author, name, args, conversation_id, change_request_id))
 
 
 async def _call(
-    ctx: ClientContext, author: UUID, name: str, args: Any, conversation_id: UUID | None
+    ctx: ClientContext,
+    author: UUID,
+    name: str,
+    args: Any,
+    conversation_id: UUID | None,
+    change_request_id: UUID | None = None,
 ) -> Result:
     tool = TOOLS.get(name)
     if tool is None:
@@ -1016,6 +1023,7 @@ async def _call(
             lambda doc: tool.edit(doc, a),
             tool.summary(a),
             conversation_id,
+            change_request_id,
             draft_sha256=a.draft_sha256,
         )
     except ValidationError as e:

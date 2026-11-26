@@ -260,8 +260,20 @@ def chats(held: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> dict[uuid.U
         log = [{**c, "id": i} for i, c in enumerate(held.log, 1)]
         return [c for c in log if c["conversation_id"] == cid]
 
+    async def requested(_ctx: Any, cid: uuid.UUID) -> Doc | None:
+        return found[cid].get("change_request")
+
     monkeypatch.setattr(loop, "_stored", stored)
     monkeypatch.setattr(loop, "_append", append)
+    monkeypatch.setattr(loop, "_request", requested)
+
+    async def status(_platform: Any, client: uuid.UUID, cr: uuid.UUID) -> str | None:
+        assert client == held.ctx.client.id  # read for the conversation's client only
+        return held.statuses.get(str(cr), "in_review")
+
+    held.ctx.client = SimpleNamespace(slug="pilot-local", id=uuid.uuid4())
+    held.statuses = {}  # a change request's status in the control plane, by id (in_review)
+    monkeypatch.setattr(loop, "_status", status)
 
     async def held_claim(_ctx: Any, cid: uuid.UUID) -> bool:
         return cid in busy
@@ -799,6 +811,108 @@ def test_past_a_clients_turn_limit_a_turn_is_refused_before_its_claim(
             pass
 
     asyncio.run(go())
+
+
+CHANGE_REQUEST = {
+    "id": str(uuid.uuid4()),
+    "kind": "add_document_type",
+    "summary": "Add a Fire NOC upload to the legal_licensing form",
+    "payload": {"kind": "add_document_type", "form": "legal_licensing", "label": "Fire NOC"},
+    "note": "The city now asks for it",
+}
+
+
+def test_a_change_request_conversation_tells_the_agent_and_links_its_edits(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """Apply with agent (#46): the turn's draft state carries the request, as a system message
+    (the operator's channel), and each edit the turn makes is logged against it."""
+    cid = new(chats)
+    chats[cid]["change_request"] = CHANGE_REQUEST
+    fake = Fake(*fire_noc())
+    events = run(fake, held, cid, "Apply the request")
+    assert names(events)[-1] == "done"
+    for request in fake.requests:
+        said = [m for m in request["messages"] if m["role"] == "system"][-1]["content"]
+        assert said.startswith("Draft state: ")
+        assert "Add a Fire NOC upload to the legal_licensing form" in said
+        assert "The city now asks for it" in said
+        assert json.dumps(CHANGE_REQUEST["payload"], sort_keys=True) in said
+    assert len(held.log) == 2
+    assert {c["change_request_id"] for c in held.log} == {uuid.UUID(CHANGE_REQUEST["id"])}
+
+
+def test_a_change_request_is_given_in_full_only_until_a_reply_answers_it(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """The payload can be large (20 fields of 100 options): a turn's state carries it in full
+    only while no stored reply has answered a state that did, then just the request's id and a
+    capped summary, still fenced. A turn that stopped unanswered doesn't count: it isn't sent."""
+    cid = new(chats)
+    chats[cid]["change_request"] = {**CHANGE_REQUEST, "summary": "Add " + "x" * 5000}
+    payload = json.dumps(CHANGE_REQUEST["payload"], sort_keys=True)
+    failed = api_error(anthropic.InternalServerError, 500, "api_error", "Overloaded")
+    fakes = [Fake(failed), Fake(reply(text("Done."))), Fake(reply(text("Sure.")))]
+    for fake in fakes:
+        run(fake, held, cid, "Apply the request")
+    second, third = fakes[1].requests[0]["messages"], fakes[2].requests[0]["messages"]
+    assert payload in [m for m in second if m["role"] == "system"][-1]["content"]
+    now = [m for m in third if m["role"] == "system"][-1]["content"]
+    assert payload not in now and "The city now asks for it" not in now
+    assert CHANGE_REQUEST["id"] in now and "<client_request>" in now and "(cut)" in now
+    assert len(now) < 1500
+    # the history keeps the one full copy a reply answered
+    assert sum(payload in m["content"] for m in third if m["role"] == "system") == 1
+
+
+def test_a_decided_change_request_leaves_the_state_and_links_no_more_edits(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """A request rejected (or otherwise decided) after its conversation started: the next turn
+    reads its status, tells the agent it was decided, and its edits aren't linked to it."""
+    cid = new(chats)
+    chats[cid]["change_request"] = CHANGE_REQUEST
+    held.statuses[CHANGE_REQUEST["id"]] = "rejected"
+    fake = Fake(*fire_noc())
+    run(fake, held, cid, FIRE_NOC)
+    said = [m for m in fake.requests[0]["messages"] if m["role"] == "system"][-1]["content"]
+    assert "rejected" in said and CHANGE_REQUEST["id"] in said
+    assert "<client_request>" not in said and "The city now asks for it" not in said
+    assert len(held.log) == 2
+    assert {c["change_request_id"] for c in held.log} == {None}
+
+
+def test_a_change_request_gone_from_the_control_plane_reads_as_decided(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    """A request the control plane no longer has for this client (deleted, or another client's):
+    the turn tells the agent it is gone and links no edit to it."""
+    cid = new(chats)
+    chats[cid]["change_request"] = CHANGE_REQUEST
+    held.statuses[CHANGE_REQUEST["id"]] = None
+    fake = Fake(*fire_noc())
+    run(fake, held, cid, FIRE_NOC)
+    said = [m for m in fake.requests[0]["messages"] if m["role"] == "system"][-1]["content"]
+    assert f"Change request {CHANGE_REQUEST['id']} is gone" in said
+    assert "<client_request>" not in said and "The city now asks for it" not in said
+    assert len(held.log) == 2
+    assert {c["change_request_id"] for c in held.log} == {None}
+
+
+def test_an_ordinary_conversation_links_no_request(
+    held: SimpleNamespace,  # noqa: F811
+    chats: dict[uuid.UUID, Doc],
+) -> None:
+    cid = new(chats)
+    fake = Fake(*fire_noc())
+    run(fake, held, cid, FIRE_NOC)
+    said = [m for m in fake.requests[0]["messages"] if m["role"] == "system"][-1]["content"]
+    assert "Change request" not in said
+    assert {c["change_request_id"] for c in held.log} == {None}
 
 
 def sse(body: str) -> list[tuple[str, Doc]]:

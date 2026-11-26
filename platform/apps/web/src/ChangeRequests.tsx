@@ -255,7 +255,15 @@ export function ChangeRequests() {
         emptyText="No requests yet"
         columns={[
           { key: "payload", header: "Request", render: (r) => describe(r, targets.data) },
-          { key: "status", header: "Status", render: (r) => <StatusPill tone={STATUS[r.status][0]}>{STATUS[r.status][1]}</StatusPill> },
+          {
+            key: "status",
+            header: "Status",
+            render: (r) => (
+              <StatusPill tone={STATUS[r.status][0]}>
+                {r.status === "shipped" && r.shipped_in_version !== null ? `Shipped in v${r.shipped_in_version}` : STATUS[r.status][1]}
+              </StatusPill>
+            ),
+          },
           { key: "review_note", header: "Review note", render: (r) => r.review_note ?? "—" },
           { key: "created_at", header: "Sent", render: (r) => new Date(r.created_at).toLocaleDateString(), sortValue: (r) => r.created_at },
         ]}

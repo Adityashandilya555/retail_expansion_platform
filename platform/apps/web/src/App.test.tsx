@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { blocks, type AppUi, type UiPage } from "@zm/blocks";
-import { sampleUi, testBlocks } from "@zm/blocks/test";
+import { sampleCase, sampleCases, sampleUi, testBlocks } from "@zm/blocks/test";
 import { accentStorageKey, PRESETS, schemeStorageKey } from "@zm/ui";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
@@ -550,7 +550,7 @@ const REQUESTED = { note: null, review_note: null, shipped_in_version: null, cre
 const REQUESTS = [
   { ...REQUESTED, id: "c2", kind: "add_field", payload: STATE_AND_DISTRICT, status: "submitted" },
   { ...REQUESTED, id: "c1", kind: "rename_field_label", payload: { kind: "rename_field_label", field: "city", label: "Town" }, status: "rejected", review_note: "Reports group by City" },
-  { ...REQUESTED, id: "c0", kind: "add_field", payload: { kind: "add_field", form: "start" }, status: "shipped" }, // stored under older rules
+  { ...REQUESTED, id: "c0", kind: "add_field", payload: { kind: "add_field", form: "start" }, status: "shipped", shipped_in_version: 2 }, // stored under older rules
 ];
 
 /** A client admin with the change-request API; returns the change-request calls it saw. */
@@ -579,6 +579,7 @@ test("a client admin's Change requests page lists each request with its status a
   expect(within(table).getByText("Rejected")).toBeDefined();
   expect(within(table).getByText("Reports group by City")).toBeDefined();
   expect(within(table).getByText("Add fields to a form")).toBeDefined();
+  expect(within(table).getByText("Shipped in v2")).toBeDefined(); // the release that carries it (#46)
 
   cleanup();
   forget();
@@ -808,4 +809,56 @@ test("a saved accent this shell doesn't know (neon) falls back to the client's, 
   expect(primary()).toBe("teal");
   expect(warn).toHaveBeenCalledWith(expect.stringContaining('unknown accent "neon"'));
   warn.mockRestore();
+});
+
+test("/preview#<token> shows the draft as Legal L1 under a banner; Sites and a Site page draw from fixture cases (#42)", async () => {
+  Object.assign(blocks, { case_table: realBlocks.case_table, case_header: realBlocks.case_header });
+  try {
+    const asPreview = (body: unknown) => (r: Request) =>
+      r.headers.get("authorization") === "Bearer p1" ? json(body) : problem(401, "Sign in again");
+    const calls = api({
+      "GET /app/me": asPreview({ ...ME, id: "00000000-0000-0000-0000-000000000000", email: "", name: "Legal L1", preview: true }),
+      "GET /app/ui": asPreview(sampleUi),
+      "GET /app/tasks": asPreview([]),
+      "GET /app/cases": asPreview(sampleCases),
+      "GET /app/cases/MX-0001": asPreview(sampleCase()),
+    });
+    const banner = "Preview — draft of Matrix Retail as Legal L1";
+    localStorage.setItem(accentStorageKey(ME.id), "copper"); // an earlier user's pick is not uploaded as the preview's
+
+    renderAt("/preview#p1");
+    expect(await screen.findByText(banner)).toBeDefined();
+    expect(nav().getByText("Legal")).toBeDefined();
+
+    cleanup();
+    renderAt("/app/legal");
+    const table = await screen.findByRole("table", { name: "Sites" });
+    expect(await within(table).findByText("Indiranagar")).toBeDefined();
+    expect(screen.getByText(banner)).toBeDefined();
+
+    cleanup();
+    renderAt("/app/cases/MX-0001");
+    expect(await screen.findByRole("heading", { level: 1, name: "Indiranagar" })).toBeDefined();
+    expect(screen.getByText(banner)).toBeDefined();
+
+    // leaving forgets the preview token only: no /auth/logout, which would revoke the refresh
+    // cookie of a real client user signed in in this browser
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Account: Legal L1" }));
+    expect(screen.queryByRole("menuitem", { name: "Sign out" })).toBeNull();
+    await user.click(await screen.findByRole("menuitem", { name: "Exit preview" }));
+    expect(await screen.findByLabelText(/Workspace code/)).toBeDefined();
+
+    // the token is the whole session: no refresh cookie is used, and nothing is written
+    expect(calls).not.toContain("POST /auth/refresh");
+    expect(calls.filter((c) => !c.startsWith("GET "))).toEqual([]);
+  } finally {
+    Object.assign(blocks, { case_table: testBlocks.case_table, case_header: testBlocks.case_header });
+  }
+});
+
+test("/preview without a token goes to the landing page", async () => {
+  api({});
+  renderAt("/preview");
+  expect(await screen.findByLabelText(/Workspace code/)).toBeDefined();
 });

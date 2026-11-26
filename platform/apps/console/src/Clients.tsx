@@ -17,7 +17,7 @@ import {
   type StatusTone,
 } from "@zm/ui";
 import { useId, useRef, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import { Dock } from "./agent/Dock";
 import { ClientCards } from "./ClientCards";
 import { PublishDialog } from "./Publish";
@@ -269,6 +269,8 @@ function Look({ clientId }: { clientId: string }) {
 
 export function ClientPage() {
   const { id = "" } = useParams();
+  // Apply with agent (#46): /clients/<id>?apply=<change request id> opens the dock for it
+  const applying = useSearchParams()[0].get("apply");
   const navigate = useNavigate();
   const queries = useQueryClient();
   const client = useQuery({
@@ -329,7 +331,7 @@ export function ClientPage() {
         </Notice>
       )}
 
-      <Tabs defaultValue="overview">
+      <Tabs defaultValue={applying ? "configure" : "overview"}>
         <Tabs.List>
           <Tabs.Tab value="overview">Overview</Tabs.Tab>
           <Tabs.Tab value="configure" disabled={c.status !== "ready"}>
@@ -414,7 +416,7 @@ export function ClientPage() {
         </Tabs.Panel>
         {/* the agent dock (#41); kept mounted, so a conversation survives a look at the overview */}
         <Tabs.Panel value="configure" pt="lg">
-          {c.status === "ready" && <Dock clientId={id} clientName={c.name} next={next} onTurn={setTurning} />}
+          {c.status === "ready" && <Dock clientId={id} clientName={c.name} next={next} applying={applying} onTurn={setTurning} />}
         </Tabs.Panel>
       </Tabs>
 

@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
 import { formatNum, Notice, StatusPill } from "@zm/ui";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { PreviewPanel } from "../Preview";
 import { PublishDialog } from "../Publish";
 import { api, must } from "../session";
 import { EMPTY, readEvents, step, type Chat, type Entry, type Usage } from "./stream";
@@ -87,16 +88,20 @@ function Line({ entry, onOpen, onResend }: { entry: Entry; onOpen: (changeId: nu
 }
 
 /** `onTurn` hears when a turn starts and ends, so the client page's own Publish can wait for it.
- * `next` is the version a publish would create, for the Publish dialog (#43). */
+ * `next` is the version a publish would create, for the Publish dialog (#43). With `applying`
+ * (a change request's id, #46), a new conversation is started for that request: the agent hears
+ * of it each turn, and every edit is linked to it. */
 export function Dock({
   clientId,
   clientName,
   next,
+  applying = null,
   onTurn,
 }: {
   clientId: string;
   clientName: string;
   next: number;
+  applying?: string | null;
   onTurn?: (turning: boolean) => void;
 }) {
   const queries = useQueryClient();
@@ -114,7 +119,12 @@ export function Dock({
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => must(api.GET("/owner/templates")) });
   const [current, setCurrent] = useState<string | null>(null); // null: a new conversation, started by its first message
   const showing = useRef<string | null>(null); // the same, for a read landing after the owner moved on
-  const [mode, setMode] = useState<Mode>("configure");
+  const [mode, setMode] = useState<Mode>(applying ? "edit" : "configure"); // a request changes a live client
+  const request = useQuery({
+    queryKey: ["review", applying],
+    queryFn: () => must(api.GET("/owner/change-requests/{change_request_id}", { params: { path: { change_request_id: applying ?? "" } } })),
+    enabled: applying !== null,
+  });
   const [chat, setChat] = useState<Chat>(EMPTY);
   const [said, setSaid] = useState("");
   const [running, setRunning] = useState<string | null>(null); // a turn: "" thinking, else the tool it runs
@@ -128,10 +138,10 @@ export function Dock({
   const [busy, setBusy] = useState(false);
   const [shown, setShown] = useState<number | null>(null); // the change whose patch is open
   const [confirming, setConfirming] = useState(false);
-  const ids = { preview: useId(), invalid: useId(), turning: useId(), unchecked: useId() };
+  const ids = { invalid: useId(), turning: useId(), unchecked: useId() };
 
   const add = (entry: Entry) => setChat((c) => ({ ...c, open: false, entries: [...c.entries, entry] }));
-  const refresh = () => Promise.all(["changes", "validate", "draft"].map((key) => queries.invalidateQueries({ queryKey: [key, clientId] })));
+  const refresh = () => Promise.all(["changes", "validate", "draft", "diff"].map((key) => queries.invalidateQueries({ queryKey: [key, clientId] })));
   const read = async (id: string): Promise<{ chat: Chat; running: boolean }> => {
     const conversation = { params: { path: { client_id: clientId, conversation_id: id } } };
     const { data: stored, error, response } = await api.GET("/owner/clients/{client_id}/agent/conversations/{conversation_id}", conversation);
@@ -180,7 +190,8 @@ export function Dock({
     let streaming = false;
     try {
       if (!id) {
-        id = (await must(api.POST("/owner/clients/{client_id}/agent/conversations", { ...path, body: { mode } }))).id;
+        const linked = applying ? { change_request_id: applying } : {};
+        id = (await must(api.POST("/owner/clients/{client_id}/agent/conversations", { ...path, body: { mode, ...linked } }))).id;
         showing.current = id;
         setCurrent(id);
         void queries.invalidateQueries({ queryKey: ["conversations", clientId] });
@@ -244,8 +255,20 @@ export function Dock({
   const turning = running !== null;
   // an empty draft (#40): nothing published, nothing changed; a configure session opens with the template picker
   const untouched = next === 1 && mode === "configure" && current === null && changes.data?.length === 0;
+  // the request this dock applies, while the conversation shown is (or will be) its own
+  const appliesTo = current === null ? applying : (conversations.data?.find((c) => c.id === current)?.change_request_id ?? null);
+  const shownRequest = appliesTo !== null && appliesTo === applying ? request.data : undefined;
+
   return (
     <Stack gap="md">
+      {shownRequest && (
+        <Notice tone="warning" title={`Applying change request: ${shownRequest.summary}`}>
+          <Text size="sm">
+            {shownRequest.note ? `The client admin's note: ${shownRequest.note} ` : ""}Ask the agent to apply it; each of its edits is linked to
+            the request. Approve it under Change requests once the edits are right, then publish.
+          </Text>
+        </Notice>
+      )}
       <Group justify="space-between" align="flex-end">
         <Group align="flex-end">
           <NativeSelect
@@ -273,9 +296,6 @@ export function Dock({
           <Button variant="default" loading={busy} disabled={turning} onClick={() => void undo()}>
             Undo last change
           </Button>
-          <Button variant="default" disabled aria-describedby={ids.preview}>
-            Preview
-          </Button>
           <Button
             disabled={turning || problems.isFetching || !problems.data || problems.data.length > 0 || unchecked !== null}
             aria-describedby={turning ? ids.turning : unchecked !== null ? ids.unchecked : first && ids.invalid}
@@ -285,9 +305,7 @@ export function Dock({
           </Button>
         </Group>
       </Group>
-      <Text id={ids.preview} size="sm">
-        Preview comes with #42.
-      </Text>
+      <PreviewPanel clientId={clientId} disabled={turning} />
       {turning && (
         <Text id={ids.turning} size="sm">
           Publish waits until the agent's turn ends.

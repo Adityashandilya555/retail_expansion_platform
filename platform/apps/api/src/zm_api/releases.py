@@ -67,8 +67,10 @@ async def seed_draft(ctx: ClientContext, template_key: str, by: UUID | None = No
         )
 
 
-async def get_draft(conn: AsyncConnection) -> dict[str, Any] | None:
-    result = await conn.execute(text("select workflow from app.drafts where id = 1"))
+async def get_draft(conn: AsyncConnection, *, lock: bool = False) -> dict[str, Any] | None:
+    """`lock`: hold the draft row, so no edit lands until the caller's transaction ends."""
+    sql = "select workflow from app.drafts where id = 1" + (" for update" if lock else "")
+    result = await conn.execute(text(sql))
     return result.scalar_one_or_none()
 
 
@@ -106,17 +108,20 @@ async def next_version(conn: AsyncConnection) -> int:
 
 
 async def insert_release(conn: AsyncConnection, values: dict[str, Any]) -> ReleaseRow:
-    """Next version, made the only active one. Run inside the publish lock and transaction."""
+    """Next version, made the only active one, carrying every draft change logged so far (0011).
+    Run inside the publish lock and transaction, with the draft row locked."""
     version = await next_version(conn)
     await conn.execute(text("update app.releases set active = false where active"))
     params = {k: json.dumps(v) if isinstance(v, dict) else v for k, v in values.items()}
     result = await conn.execute(
         text(
             "insert into app.releases (version, deployment_id, workflow, forms, ui, routing_vars,"
-            " process_keys, blocks_used, sha256, published_by, active) values (:version,"
-            " :deployment_id, cast(:workflow as jsonb), cast(:forms as jsonb), cast(:ui as jsonb),"
+            " process_keys, blocks_used, sha256, published_by, active, last_change_id)"
+            " values (:version, :deployment_id, cast(:workflow as jsonb),"
+            " cast(:forms as jsonb), cast(:ui as jsonb),"
             " cast(:routing_vars as jsonb), cast(:process_keys as jsonb),"
-            f" cast(:blocks_used as jsonb), :sha256, :published_by, true) returning {_COLUMNS}"
+            " cast(:blocks_used as jsonb), :sha256, :published_by, true,"
+            f" (select max(id) from app.draft_changes)) returning {_COLUMNS}"
         ),
         {"version": version, **params},
     )

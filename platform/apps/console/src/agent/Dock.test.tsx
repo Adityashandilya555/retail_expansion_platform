@@ -33,6 +33,12 @@ function change(id: number, summary: string, over: Partial<ChangeOut> = {}): Cha
 
 /** The API as the dock calls it: no conversations yet, a valid draft, `log` as the change log, plus `routes`. */
 const NONE = { added: [], removed: [], changed: [] };
+const ORG = {
+  departments: [
+    { key: "bd", name: "Business development", levels: [{ n: 1, name: "Executive" }] },
+    { key: "legal", name: "Legal", levels: [{ n: 1, name: "Executive" }, { n: 2, name: "Supervisor" }] },
+  ],
+};
 
 function dockApi(routes: Record<string, Handler>, log: () => ChangeOut[] = () => []): string[] {
   const calls: string[] = [];
@@ -40,6 +46,7 @@ function dockApi(routes: Record<string, Handler>, log: () => ChangeOut[] = () =>
     [`GET ${AGENT}`]: () => json([]),
     [`POST ${AGENT}`]: async (r) => json({ id: CID, owner_id: OWNER, mode: ((await r.json()) as { mode: string }).mode, started_at: AT }, 201),
     [`GET ${CLIENT}/draft/validate`]: () => json([]),
+    [`GET ${CLIENT}/draft`]: () => json({ workflow: { org: ORG }, template_key: "matrix-retail", base_version: 2, updated_at: AT, updated_by: OWNER }),
     [`GET ${CLIENT}/draft/diff`]: () =>
       json({ stages: NONE, tasks: NONE, fields: { ...NONE, added: ["fire_noc"] }, blocks: [], theme: null, accent: null }),
     [`GET ${CLIENT}/draft/changes`]: (r) => json(log().slice(0, Number(new URL(r.url).searchParams.get("limit") ?? 100))),
@@ -88,6 +95,7 @@ const log = () => within(screen.getByRole("log", { name: "Chat" }));
 afterEach(() => {
   forget();
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -185,7 +193,7 @@ test("a chip opens its change's diff; Undo reverts the last change with an undon
   expect(log().getAllByRole("button", { name: `Undo: ${NOC}` })).toHaveLength(1);
 });
 
-test("an invalid draft disables Publish and shows its first problem; Preview waits for #42", async () => {
+test("an invalid draft disables Publish and shows its first problem", async () => {
   const problems = [
     { path: "flows[0].stages[1].after[0]", message: "unknown stage 'fitout'" },
     { path: "fields.gst_no.type", message: "second problem" },
@@ -198,9 +206,72 @@ test("an invalid draft disables Publish and shows its first problem; Preview wai
   const publish = screen.getByRole("button", { name: "Publish" });
   expect(publish.hasAttribute("disabled")).toBe(true);
   expect(publish.getAttribute("aria-describedby")).toBe(first.id);
-  const preview = screen.getByRole("button", { name: "Preview" });
-  expect(preview.hasAttribute("disabled")).toBe(true);
-  expect(document.getElementById(preview.getAttribute("aria-describedby") ?? "")?.textContent).toBe("Preview comes with #42.");
+});
+
+test("Preview opens the client app in a new tab as the picked role, beside the changes against live (#42)", async () => {
+  let asked: unknown;
+  const calls = dockApi({
+    [`POST ${CLIENT}/preview-token`]: async (r) => {
+      asked = await r.json();
+      return json({ access_token: "p1", token_type: "bearer", expires_in: 900 });
+    },
+  });
+  const tab = { opener: {} as unknown, location: { replace: vi.fn() }, close: vi.fn() };
+  const open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+  const user = renderDock();
+
+  const changes = await screen.findByRole("list", { name: "Changes against the live release" });
+  expect(within(changes).getByText("Fields: added fire_noc")).toBeDefined();
+  await screen.findByRole("option", { name: "Legal L2" });
+  await user.selectOptions(screen.getByLabelText("Preview as"), "Legal L1");
+  await user.click(screen.getByRole("button", { name: "Preview" }));
+
+  await waitFor(() => expect(tab.location.replace).toHaveBeenCalledWith("http://localhost:5173/preview#p1"));
+  expect(open).toHaveBeenCalledWith("", "_blank");
+  expect(tab.opener).toBeNull();
+  expect(asked).toEqual({ as: { department: "legal", level: 1 } });
+  expect(calls).toContain(`POST ${CLIENT}/preview-token`);
+});
+
+test("a draft that can't be previewed says why, and closes the tab it opened", async () => {
+  dockApi({ [`POST ${CLIENT}/preview-token`]: () => problem(422, "The draft can't be published: unknown stage 'fitout'") });
+  const tab = { opener: {} as unknown, location: { replace: vi.fn() }, close: vi.fn() };
+  vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+  const user = renderDock();
+  await screen.findByRole("option", { name: "Legal L2" });
+  await user.click(screen.getByRole("button", { name: "Preview" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("The draft can't be published: unknown stage 'fitout'");
+  expect(tab.close).toHaveBeenCalled();
+  expect(tab.location.replace).not.toHaveBeenCalled();
+});
+
+test("applying a change request starts its conversation for the request and says so", async () => {
+  const CR = "3b9a1c2d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+  const bodies: unknown[] = [];
+  const turn = sse();
+  dockApi({
+    [`GET /owner/change-requests/${CR}`]: () =>
+      json({ id: CR, client_id: ID, client_slug: "pilot", client_name: "Pilot", kind: "add_field", payload: {}, summary: "Add State, District to the start form", note: null, status: "submitted", review_note: null, shipped_in_version: null, created_at: AT, updated_at: AT, impact: null, linked_changes: 0 }),
+    [`POST ${AGENT}`]: async (r) => {
+      const body = (await r.json()) as { mode: string };
+      bodies.push(body);
+      return json({ id: CID, owner_id: OWNER, mode: body.mode, started_at: AT, change_request_id: CR }, 201);
+    },
+    [`POST ${AGENT}/${CID}/messages`]: () => turn.response(),
+  });
+  const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderWithZm(
+    <QueryClientProvider client={queries}>
+      <Dock clientId={ID} clientName="Pilot" next={3} applying={CR} />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  expect(await screen.findByText(/Applying change request: Add State, District to the start form/)).toBeDefined();
+  await user.type(screen.getByRole("textbox", { name: "Message" }), "Apply it");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(bodies).toEqual([{ mode: "edit", change_request_id: CR }]));
+  turn.send("done", { usage: USAGE });
+  turn.end();
 });
 
 test("an empty draft opens the dock with the template picker; a pick asks the agent to load it (#40)", async () => {

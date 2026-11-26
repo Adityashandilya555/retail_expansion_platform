@@ -13,7 +13,10 @@
    fields it adds, `required_from_version` on those it makes required.
    Steps 1-4 run in one client-database transaction under a per-client advisory lock, so two
    publishes at once deploy and number their versions in the same order.
-5. Index it in `platform.releases` (idempotent, so a retried publish repairs a missing row).
+5. Index it in `platform.releases` (idempotent, so a retried publish repairs a missing row), and
+   ship the client's approved change requests whose edits a release carries (S2-24b,
+   `cr_review.ship`): `shipped`, with the first release that carried them as
+   `shipped_in_version`. A retried publish ships what the failed one didn't.
 
 Operaton failing in steps 2-3 raises before anything is written (502); a database failure after
 the deploy is a 503, and publishing again completes it (the deploy is then a duplicate).
@@ -31,7 +34,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from zm_api import releases, versioning
+from zm_api import cr_review, releases, versioning
 from zm_api.clients import forget_overview
 from zm_api.context import ClientContext, OwnerCtx, owner_router
 from zm_api.errors import (
@@ -101,6 +104,25 @@ def _compile(
     return wf, release
 
 
+def release_values(
+    wf: Any, release: Release, published: Sequence[dict[str, Any]], version: int
+) -> dict[str, Any]:
+    """What a release row holds besides who deployed it and where: publish records it, and
+    preview (#42) shows the draft through the very same values."""
+    # the document as published, after any schema migration (D14), stamped (S2-25)
+    workflow = wf.model_dump(mode="json", by_alias=True, exclude_unset=True)
+    versioning.stamp(published, workflow, version)
+    return {
+        "workflow": workflow,
+        "forms": {k: {"schema": f.schema, "layout": f.layout} for k, f in release.forms.items()},
+        "ui": release.ui,
+        "routing_vars": release.routing_vars,
+        "process_keys": release.process_keys,
+        "blocks_used": blocks_used(release.ui),
+        "sha256": release.digest(),
+    }
+
+
 async def _ensure_groups(ctx: ClientContext, release: Release) -> None:
     """Reads before it writes: creating a group twice is refused by Operaton (400 "The group
     already exists"; a true insert race can surface as another error). If our create is refused,
@@ -140,7 +162,8 @@ async def publish(
             await conn.execute(
                 text("select pg_advisory_xact_lock(hashtext(:k))"), {"k": f"zm_publish:{slug}"}
             )
-            draft = await releases.get_draft(conn)
+            # locked: the release's last_change_id (0011) is exactly what it carries
+            draft = await releases.get_draft(conn, lock=True)
             if draft is None:
                 raise Conflict("This client has no draft to publish yet")
             published = await releases.published_fields(conn)
@@ -154,23 +177,12 @@ async def publish(
             row = await releases.release_by_deployment(conn, deployment_id)
             created = row is None
             if row is None:
-                # the document as published, after any schema migration (D14), stamped (S2-25)
-                workflow = wf.model_dump(mode="json", by_alias=True, exclude_unset=True)
-                versioning.stamp(published, workflow, await releases.next_version(conn))
+                version = await releases.next_version(conn)
                 row = await releases.insert_release(
                     conn,
                     {
                         "deployment_id": deployment_id,
-                        "workflow": workflow,
-                        "forms": {
-                            k: {"schema": f.schema, "layout": f.layout}
-                            for k, f in release.forms.items()
-                        },
-                        "ui": release.ui,
-                        "routing_vars": release.routing_vars,
-                        "process_keys": release.process_keys,
-                        "blocks_used": blocks_used(release.ui),
-                        "sha256": release.digest(),
+                        **release_values(wf, release, published, version),
                         "published_by": published_by,
                     },
                 )
@@ -179,6 +191,9 @@ async def publish(
             await conn.execute(
                 text("update app.drafts set base_version = :v where id = 1"), {"v": row.version}
             )
+            # read on every publish, not only a new release: a retry after the control plane
+            # failed still ships them (`ship` only touches approved requests)
+            shipping = await cr_review.carried(conn)
 
         async with platform.begin() as conn:
             await conn.execute(
@@ -191,6 +206,7 @@ async def publish(
                     "sha": row.sha256,
                 },
             )
+            await cr_review.ship(conn, ctx.client.id, shipping)
     except (SQLAlchemyError, OSError) as e:
         # Operaton may already hold the deployment; publishing again is safe and completes it.
         raise ServiceUnavailable("Couldn't record the release; publish again to retry") from e
