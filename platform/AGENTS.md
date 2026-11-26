@@ -41,7 +41,7 @@ Who builds what: **we** (developers with Claude) build the packages — tokens, 
 - **One pilot client, fully provisioned by the worker**: Supabase **platform project** (control plane: `platform` schema — clients, requests, admins, templates, releases index) + **one client project** created by the provisioning worker (schemas `app`, `operaton`, private bucket) = 2 projects (fits the Supabase free tier). One Operaton service on Railway for the pilot, also started by the worker.
 - The platform project is created once by hand via the Supabase MCP (`needs:human` for org/billing); everything per-client is created **by code**, never by hand, so client #2 is just another approval.
 - Isolation tests that need a second client run **locally** (Supabase CLI + Operaton in Docker Compose) until we decide to provision a second cloud client.
-- Blueprint items outside the POC go to the `Backlog` milestone.
+- Blueprint items outside the POC go on the umbrella issue #68 in `Sprint 3 — Final`; there is no Backlog milestone (closed 2026-11-26).
 
 ## Operaton: bring it in, don't rebuild it
 - Operaton is used as an engine, not rewritten. **Default: run it unmodified** (official image or this fork's `distro/run` build) configured by env vars; talk to it over REST (`/engine-rest`).
@@ -174,8 +174,8 @@ Template: `.github/ISSUE_TEMPLATE/zm_spec.yml` — Context (§ref) · Spec · Ho
 Implementing: restate the spec → failing tests from acceptance criteria → implement → green → PR. If the spec is wrong, comment and stop.
 
 ### Labels (`platform/labels.yml`, synced by `platform/scripts/sync-labels.sh`)
-`sprint:1` `sprint:2` · `area:infra` `area:engine` `area:backend` `area:frontend` `area:agent` `area:qa` `area:design` · `type:feature` `type:chore` `type:spike` `type:test` `type:docs` · `priority:P0|P1|P2` · `size:S` (≤½ day) `size:M` (1–2 days) `size:L` (~3 days; split bigger) · `via:supabase-mcp` `via:railway-mcp` `via:vercel-mcp` `via:github-mcp` · `needs:human` `blocked` `good-first-agent-task`
-Milestones: `Sprint 1 — Foundation`, `Sprint 2 — Configure and run`, `Backlog`.
+`sprint:1` `sprint:2` `sprint:3` · `area:infra` `area:engine` `area:backend` `area:frontend` `area:agent` `area:qa` `area:design` · `type:feature` `type:chore` `type:spike` `type:test` `type:docs` · `priority:P0|P1|P2` · `size:S` (≤½ day) `size:M` (1–2 days) `size:L` (~3 days; split bigger) · `via:supabase-mcp` `via:railway-mcp` `via:vercel-mcp` `via:github-mcp` · `needs:human` `blocked` `good-first-agent-task`
+Milestones: `Sprint 3 — Final` holds every open issue (order: #7). `Sprint 1 — Foundation`, `Sprint 2 — Configure and run` and `Backlog` are closed (2026-11-26).
 
 ## Git and PRs
 Branch `<issue#>-<slug>` from `main`; one issue per PR; title `#<n> <title>`; body `Closes #<n>`, summary, test evidence, env vars. Conventional commits. No direct pushes to `main` or `release`, no force-push on shared branches. Feature PRs target `main`; production moves only by a `main` → `release` PR (merge commit, 1 review; `platform/docs/ENVIRONMENTS.md`). Adi (repo owner) merges: his own PRs to `main` need no second approval once CI is green, and other collaborators' PRs need his review. A `main` → `release` promotion always needs another collaborator's approval (GitHub doesn't count the author's own; no bypass).
