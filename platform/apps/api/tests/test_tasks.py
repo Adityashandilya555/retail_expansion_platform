@@ -652,7 +652,9 @@ def test_the_start_form_in_app_ui_starts_a_case_for_starters_only(world: World, 
         return next(f for f in response.json()["flows"] if f["key"] == "store_launch")
 
     form = flow("bd1")["start_form"]
-    assert list(form["schema"]["properties"]) == list(START)
+    # the release's forms are JSONB, which keeps no key order: the layout carries the form order
+    assert [c["field"] for s in form["layout"] for row in s["rows"] for c in row] == list(START)
+    assert set(form["schema"]["properties"]) == set(START)
     assert form["schema"]["required"] == list(START)
     assert flow("legal1")["start_form"] is None
     assert world.start("legal1", "store_launch", START).status_code == 403

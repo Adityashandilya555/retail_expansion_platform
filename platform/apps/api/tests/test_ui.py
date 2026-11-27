@@ -132,12 +132,17 @@ def start_form(out: ui.AppUi) -> dict[str, Any] | None:
     return None if flow.start_form is None else flow.start_form.model_dump(by_alias=True)
 
 
+def laid_out(form: dict[str, Any]) -> list[str]:
+    """A form's fields in layout order (a stored release's JSONB schema keeps no key order)."""
+    return [c["field"] for s in form["layout"] for row in s["rows"] for c in row]
+
+
 def test_bd_l1_and_above_get_the_start_form_start_case_validates() -> None:
     """Matrix Retail lets BD L1 and above start a site: the four start fields, all required."""
     shown = release()
     form = start_form(ui.visible_ui("Matrix Retail", shown, {"bd": 1}))
     assert form == tasks.visible_form(shown.forms["start:store_launch"], {"bd": 1})
-    assert list(form["schema"]["properties"]) == START_FIELDS
+    assert laid_out(form) == START_FIELDS and set(form["schema"]["properties"]) == set(START_FIELDS)
     assert form["schema"]["required"] == START_FIELDS
     assert [s["key"] for s in form["layout"]] == ["site"]
     assert start_form(ui.visible_ui("Matrix Retail", shown, {"bd": 2, "legal": 1})) == form
@@ -244,7 +249,7 @@ def test_app_ui_sends_the_start_form_only_to_who_may_start_the_flow(
     assert "start_form" not in json.dumps(vault["release"].ui)
     vault["levels"] = {"bd": 1}
     (flow,) = api.get("/app/ui", headers=bearer(token())).json()["flows"]
-    assert list(flow["start_form"]["schema"]["properties"]) == START_FIELDS
+    assert laid_out(flow["start_form"]) == START_FIELDS
     assert [s["key"] for s in flow["start_form"]["layout"]] == ["site"]
     assert [f["key"] for f in flow["start_fields"]] == START_FIELDS  # kept for the other blocks
 
