@@ -114,10 +114,14 @@ def clear() -> None:
     vault_sql("pilot", "delete from app.users where email like %s", f"%@{DOMAIN}")
 
 
-def storage(method: str, path: str, **kwargs: Any) -> httpx.Response:
+def storage(
+    method: str, path: str, headers: dict[str, str] | None = None, **kwargs: Any
+) -> httpx.Response:
     """Storage as the service (tests only): see what the API left in the bucket."""
-    headers = auth_headers(STORAGE_KEY)
-    return httpx.request(method, f"{STORAGE_URL}/storage/v1/{path}", headers=headers, **kwargs)
+    url = f"{STORAGE_URL}/storage/v1/{path}"
+    return httpx.request(
+        method, url, headers={**auth_headers(STORAGE_KEY), **(headers or {})}, **kwargs
+    )
 
 
 async def register() -> tuple[uuid.UUID, str]:
