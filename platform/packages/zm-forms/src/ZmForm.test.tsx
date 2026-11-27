@@ -238,6 +238,13 @@ describe("field types", () => {
       expect(screen.getAllByText("Required")).toHaveLength(2);
     });
 
+    test("shows a stored value read-only, and the placeholder when there is none", () => {
+      renderForm({ schema: CANT, layout: rows, values: { where: { name: "12th Main, Indiranagar" } } });
+      const where = screen.getByLabelText(/Shop address/) as HTMLInputElement;
+      expect([where.value, where.disabled]).toEqual(["12th Main, Indiranagar", true]);
+      expect((screen.getByLabelText(/Site deck/) as HTMLInputElement).value).toBe("");
+    });
+
     test.each(["light", "dark"] as const)("has no axe violations with the errors shown (%s)", async (scheme) => {
       const { container, user } = renderForm({ schema: CANT, layout: rows }, scheme);
       await user.click(screen.getByRole("button", { name: "Submit" }));

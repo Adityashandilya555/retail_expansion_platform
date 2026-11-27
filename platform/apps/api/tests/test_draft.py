@@ -134,8 +134,8 @@ SHOP_ADDRESS = [  # a required field the app can't fill (#172), placed on a form
 ]
 CANT_FILL = (
     "forms.bd_site_details.sections[0].rows[5][0].field",
-    "'shop_address' is a address field the app can't fill yet: make it optional or pick another"
-    " type",
+    "'shop_address' (type: address) can't be filled in the app yet: make it optional or pick"
+    " another type",
 )
 
 
@@ -153,6 +153,26 @@ def test_a_required_field_the_app_cant_fill_placed_on_a_form_is_422() -> None:
     for kind in ("info", "computed"):  # a compiled form never asks for one
         retype = {"op": "replace", "path": "/fields/shop_address/type", "value": kind}
         drafts.patched(unplaced, [retype, place])
+
+
+def test_only_forms_cases_reach_count_and_a_field_placed_twice_counts_once() -> None:
+    add, place = SHOP_ADDRESS
+    orphan = {"sections": [{"key": "x", "title": "X", "rows": [[{"field": "shop_address"}]]}]}
+    drafts.patched(  # a form no flow's start or task points to stops no case
+        matrix_retail(), [add, {"op": "add", "path": "/forms/orphan", "value": orphan}]
+    )
+    with pytest.raises(UnprocessableContent) as e:
+        drafts.patched(matrix_retail(), [*SHOP_ADDRESS, place])
+    assert [(x.path, x.message) for x in e.value.errors or []] == [CANT_FILL]
+
+
+def test_a_draft_that_isnt_an_object_is_422() -> None:
+    with pytest.raises(UnprocessableContent) as e:
+        drafts.patched(matrix_retail(), [{"op": "replace", "path": "", "value": [1]}])
+    assert [(x.path, x.message) for x in e.value.errors or []] == [
+        ("$", "a workflow document must be a JSON object")
+    ]
+    assert drafts.fill_errors([1]) == []
 
 
 def test_a_required_document_slot_waits_for_uploads() -> None:

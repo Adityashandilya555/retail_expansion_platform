@@ -805,7 +805,7 @@ def test_every_tool_schema_is_strict_and_names_no_client_or_tenant() -> None:
 
 def test_v1_renders_exactly_what_zm_forms_draws() -> None:
     drawn = set(re.findall(r'case "(\w+)":', ZM_FORM.read_text()))
-    assert drawn == tools.V1_RENDERS
+    assert drawn == drafts.V1_RENDERS
     assert drawn < set(get_args(FieldType))
 
 

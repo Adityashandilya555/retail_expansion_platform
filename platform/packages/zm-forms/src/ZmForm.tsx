@@ -36,7 +36,13 @@ function display(v: unknown): string {
   return String(v);
 }
 
-/** A type the app can't draw yet: a disabled input, so a required one still shows its asterisk and its error. */
+/** A stored value as a disabled input's text; empty (so the placeholder shows) when there is none. */
+function stored(v: unknown): string {
+  const shown = display(v);
+  return shown === "—" ? "" : shown;
+}
+
+/** A type the app can't draw yet: a disabled input showing any stored value, so a required one still shows its asterisk and its error. */
 function Unsupported({ name, type, ...input }: TextInputProps & { name: string; type: string }) {
   useEffect(() => {
     if (import.meta.env.DEV) console.warn(`@zm/forms: ${name} is a ${type} field, unsupported in v1`);
@@ -78,9 +84,9 @@ function Field({ name, field, form, required, readOnly }: { name: string; field:
         </Radio.Group>
       );
     case "document":
-      return <TextInput {...common} disabled value={display(value) === "—" ? "" : display(value)} placeholder="No file yet" description="Uploads arrive with Files" />;
+      return <TextInput {...common} disabled value={stored(value)} placeholder="No file yet" description="Uploads arrive with Files" />;
     default:
-      return <Unsupported {...common} name={name} type={type} />;
+      return <Unsupported {...common} name={name} type={type} value={stored(value)} />;
   }
 }
 

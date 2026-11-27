@@ -36,7 +36,6 @@ from zm_schema.models import FieldType
 Doc = dict[str, Any]
 Patch = drafts.Patch
 Result = dict[str, Any]
-V1_RENDERS = drafts.V1_RENDERS
 
 
 # --- arguments: strict schemas, every value given (null only where it means "none") -------------

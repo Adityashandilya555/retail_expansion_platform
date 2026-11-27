@@ -1355,7 +1355,11 @@ def test_the_system_block_is_the_prompt_file_then_the_reference() -> None:
     # a template the brief names on an untouched draft loads without a confirm, and only once
     assert "don't ask about it again" in prompt and "`template_settled`" in prompt
     # #172: a field the app can't fill is placed optional; `v1_renders` says which those are
-    assert "Place only field types with `v1_renders` true" in prompt
+    assert (
+        "Make a field required only if its type has `v1_renders` true. Any other type, document"
+        " slots included until uploads ship, may be placed but stays optional; tell the owner it"
+        " shows as not available in the app yet."
+    ) in " ".join(prompt.split())
     ref = json.loads(body.split("Reference: ", 1)[1])["field_types"]
     assert ref == {t: {"v1_renders": t in drafts.FILLABLE} for t in loop.get_args(loop.FieldType)}
     assert ref["document"] == {"v1_renders": False}  # until uploads ship (#51)

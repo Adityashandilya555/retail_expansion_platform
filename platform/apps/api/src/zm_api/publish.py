@@ -40,7 +40,6 @@ from zm_api.clients import forget_overview
 from zm_api.context import ClientContext, OwnerCtx, owner_router
 from zm_api.errors import (
     Conflict,
-    FieldError,
     NotFound,
     ServiceUnavailable,
     UnprocessableContent,
@@ -96,17 +95,11 @@ def _compile(
         release = compile(wf, slug)
     except (SchemaVersionError, ValueError, CompileError) as e:  # ValidationError is a ValueError
         raise UnprocessableContent(f"The draft can't be published: {e}") from None
-    errors = drafts.fill_errors(draft)
+    # every problem at once, as /validate lists them
+    errors = drafts.fill_errors(draft) + versioning.errors(published, draft)
     if errors:
         raise UnprocessableContent(
-            "The draft can't be published: it requires fields the app can't fill",
-            errors=drafts._errors(errors),
-        )
-    errors = versioning.errors(published, draft)
-    if errors:
-        raise UnprocessableContent(
-            "The draft can't be published: it changes released fields",
-            errors=[FieldError(path=e.path, message=e.message) for e in errors],
+            "The draft can't be published: fix the problems listed", errors=drafts._errors(errors)
         )
     return wf, release
 

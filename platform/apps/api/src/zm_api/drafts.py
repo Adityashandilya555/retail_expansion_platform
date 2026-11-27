@@ -159,32 +159,48 @@ def _apply(doc: dict[str, Any], patch: Patch) -> dict[str, Any]:
         raise _invalid([Error("$", f"the patch doesn't apply: {e}")]) from None
 
 
-def fill_errors(doc: dict[str, Any]) -> list[Error]:
-    """Each place a form puts a required field the client app can't fill (#172): it would stop
-    every case at that form, so it is a problem. A compiled form never asks for a hidden, `info`
-    or `computed` field (`zm_compiler.forms`). A broken draft has none: validate says why."""
+def fill_errors(doc: Any) -> list[Error]:
+    """Each place a form that cases reach (a flow's start form or a task's) puts a required field
+    the client app can't fill (#172): it would stop every case at that form, so it is a problem.
+    As in a compiled form (`zm_compiler.forms.build_form`), a hidden, `info` or `computed` field
+    is never asked for, and a field placed twice counts once. A broken draft has none: validate
+    says why."""
+    if not isinstance(doc, dict):
+        return []
     try:
         wf = WorkflowV1.model_validate(upgrade(dict(doc)), context={"structural_only": True})
     except ValueError:  # ValidationError and SchemaVersionError are ValueErrors
         return []
+    reached = {flow.start.form for flow in wf.flows} | {
+        t.form for flow in wf.flows for stage in flow.stages for t, _, _ in stage_tasks(stage, "")
+    }
     passes = FILLABLE | {"info", "computed"}
     found = []
     for name, form in wf.forms.items():
+        if name not in reached:
+            continue
+        seen: set[str] = set()
         for i, section in enumerate(form.sections):
             for j, row in enumerate(section.rows):
                 for k, cell in enumerate(row):
                     f = wf.fields.get(cell.field)
-                    if f and f.required and not f.hidden and f.type not in passes:
+                    if f is None or f.hidden or cell.field in seen:
+                        continue
+                    seen.add(cell.field)
+                    if f.required and f.type not in passes:
                         where = join("forms", name, "sections", i, "rows", j, k, "field")
-                        why = f"'{cell.field}' is a {f.type} field the app can't fill yet"
+                        why = f"'{cell.field}' (type: {f.type}) can't be filled in the app yet"
                         found.append(Error(where, f"{why}: make it optional or pick another type"))
     return found
 
 
-def problems(doc: dict[str, Any], published: Sequence[dict[str, Any]]) -> list[Error]:
+def problems(doc: Any, published: Sequence[dict[str, Any]]) -> list[Error]:
     """The draft's schema problems, the required fields the app can't fill, then what it does to
-    the published fields (S2-25)."""
-    return validate(doc) + fill_errors(doc) + versioning.errors(published, doc)
+    the published fields (S2-25). A draft that isn't an object has only the first."""
+    errors = validate(doc)
+    if not isinstance(doc, dict):  # "a workflow document must be a JSON object"
+        return errors
+    return errors + fill_errors(doc) + versioning.errors(published, doc)
 
 
 def patched(
