@@ -29,7 +29,7 @@ test.each(matrix)("/dev/ui draws every component in $preset.key · $scheme (#34)
     "Data table",
     "Sign-in form (AuthCard frames it on /, /login and the console's /login)",
     "Numbers",
-    "Forms (@zm/forms): Legal DD checklist, QSR licences, a Legal L3 approval",
+    "Forms (@zm/forms): Legal DD checklist, QSR licences, a Legal L3 approval, a person picker",
     "Mantine inputs (used directly, styled by the theme)",
   ]);
   expect(screen.getByRole("table", { name: "Sites" })).toBeDefined();

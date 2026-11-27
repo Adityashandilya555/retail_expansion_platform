@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { sampleAllocate } from "@zm/forms/samples";
 import { expectNoAxeViolations } from "@zm/ui/test";
 import { afterEach, expect, test, vi } from "vitest";
 import { problem, sampleCase, sampleTask } from "../../src/test";
@@ -111,6 +112,34 @@ test("a teammate's task opened from the team inbox (?task=) shows read-only", as
   expect(await screen.findByRole("group", { name: "Fill DD checklist" })).toBeDefined(); // its form, read-only
   expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
   expect(screen.queryByText("Nothing for you to do on this site")).toBeNull();
+});
+
+test("a user field picks from the people the API lists for this task, and sends the id", async () => {
+  const allocate = { ...sampleTask, task: { ...sampleTask.task, id: "t-alloc", name: "Allocate design executive" }, form: { schema: sampleAllocate, layout: sampleAllocate["x-zm-layout"] ?? [] }, show: {}, show_labels: {} };
+  let sent: unknown;
+  const calls = drawPage(tasksPage, {
+    path: `${PATH}?tab=tasks&task=t-alloc`,
+    routes: {
+      "GET /app/cases/MX-0001": () => sampleCase({ tasks: [{ id: "t-alloc", name: "Allocate design executive", stage: "design", assignee: null, can_act: true }] }),
+      "GET /app/tasks/t-alloc": () => allocate,
+      "GET /app/fields/design_exec/people": () => [
+        { id: "u-asha", name: "Asha Rao" },
+        { id: "u-dev", name: "Dev Menon" },
+      ],
+      "POST /app/tasks/t-alloc/submit": async (r) => {
+        sent = await r.json();
+        return committed;
+      },
+    },
+  });
+  const picker = await screen.findByLabelText(/Design executive/, { selector: "input" });
+  const user = userEvent.setup();
+  await user.click(picker);
+  await user.click(await screen.findByRole("option", { name: "Asha Rao" }));
+  await user.click(screen.getByRole("button", { name: "Submit" }));
+  await waitFor(() => expect(sent).toEqual({ values: { design_exec: "u-asha" } }));
+  const people = calls.find((c) => new URL(c.url).pathname === "/app/fields/design_exec/people");
+  expect(new URL(people?.url ?? "").searchParams.get("task_id")).toBe("t-alloc");
 });
 
 test.each(["light", "dark"] as const)("axe passes in %s with a form open", async (scheme) => {

@@ -41,7 +41,7 @@ Result = dict[str, Any]
 # zm_schema's FieldType are valid in a draft but show as "unsupported in v1". A test keeps the two
 # in step.
 V1_RENDERS = frozenset(
-    {"text", "textarea", "number", "currency", "date", "select", "yes_no", "document"}
+    {"text", "textarea", "number", "currency", "date", "select", "yes_no", "document", "user"}
 )
 
 

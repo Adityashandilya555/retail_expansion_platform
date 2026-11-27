@@ -128,13 +128,18 @@ def _sees(
     workflow: Mapping[str, Any], flow: Mapping[str, Any], task: Mapping[str, Any], who: Preview
 ) -> Literal["mine", "team"] | None:
     """How the role meets a task: `mine` (they can do it), `team` (level 2+ reads their
-    department's), or not at all. The candidate-group rule is the compiler's (`level_groups`).
-    # ponytail: approval-chain steps and `from_field` assignees aren't generated; add them when a
-    # preview has to show an approver's inbox."""
+    department's), or not at all. The candidate-group rule is the compiler's (`level_groups`);
+    a step assigned from a field is `mine` for the department its picker lists
+    (`tasks.pickable_department`), since any of them could be the one picked (#171).
+    # ponytail: approval-chain steps aren't generated; add them when a preview has to show an
+    # approver's inbox."""
     performer = task["performer"]
     me = group_id(who.department, who.level)
     if performer.get("initiator"):  # the role is the one who started the fixture case
         return "mine" if me in tasks.starter_groups(workflow, flow) else None
+    if "from_field" in performer:
+        picked = tasks.pickable_department(flow, performer["from_field"]) == who.department
+        return "mine" if picked else None
     if performer.get("department") != who.department:
         return None
     groups = level_groups(

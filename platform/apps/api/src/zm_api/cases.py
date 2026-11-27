@@ -288,6 +288,11 @@ async def list_cases(
     picked = picked[:MAX_CASES]
     async with ctx.db.connect() as conn:
         values = await _start_values(conn, [c.id for c in picked])
+        ids = [
+            tasks.person_ids(workflows[c.release_version].get("fields", {}), values.get(c.id, {}))
+            for c in picked
+        ]
+        names = await tasks.names_of(conn, set().union(*ids))
     closed = [c for c in picked if case_status(history.get(c.process_instance_id, {})) == "closed"]
     activities = await _closed_activities(ctx, closed)
     open_counts = await _task_counts(ctx, [c.code for c in picked])
@@ -302,8 +307,12 @@ async def list_cases(
         if flow_def is None:
             continue
         variables = history.get(c.process_instance_id, {})
-        shown = masked_start_values(
-            start_forms.get((c.release_version, c.flow)), values.get(c.id, {}), me.levels
+        shown = tasks.named(
+            workflow.get("fields", {}),
+            masked_start_values(
+                start_forms.get((c.release_version, c.flow)), values.get(c.id, {}), me.levels
+            ),
+            names,
         )
         out.append(
             CaseRow(
@@ -489,6 +498,8 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
             )
         ).one_or_none()
         values = (await _start_values(conn, [case.id])).get(case.id, {})
+        defs = release.workflow.get("fields", {})  # the case's release recorded the values
+        names = await tasks.names_of(conn, tasks.person_ids(defs, values))
         decisions = (
             await conn.execute(
                 text(
@@ -519,7 +530,7 @@ async def get_case(ctx: ClientContext, user_id: UUID, code: str) -> CaseDetail:
     activities = await ctx.operaton.history_activities(case.process_instance_id)
     key = f"start:{case.flow}"
     start = forms.get(key)
-    shown = masked_start_values(start, values, me.levels)
+    shown = tasks.named(defs, masked_start_values(start, values, me.levels), names)
     # the active release's start form when it is newer than the case's own (an older one, after
     # a rollback, lacks fields the case has) and still has the flow; else the case's own
     now = newer if newer is not None and key in newer.forms else release

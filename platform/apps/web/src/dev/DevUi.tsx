@@ -20,7 +20,7 @@ import {
   Title,
 } from "@mantine/core";
 import { ZmForm } from "@zm/forms";
-import { sampleApproval, sampleDdChecklist, sampleLicences } from "@zm/forms/samples";
+import { sampleAllocate, sampleApproval, sampleDdChecklist, sampleLicences, samplePeople } from "@zm/forms/samples";
 import {
   AppFrame,
   DataTable,
@@ -130,7 +130,7 @@ export default function DevUi() {
             </Group>
           </Section>
 
-          <Section title="Forms (@zm/forms): Legal DD checklist, QSR licences, a Legal L3 approval">
+          <Section title="Forms (@zm/forms): Legal DD checklist, QSR licences, a Legal L3 approval, a person picker">
             <Stack gap="xl">
               <ZmForm
                 schema={sampleDdChecklist}
@@ -152,6 +152,14 @@ export default function DevUi() {
                 caseLabel="Store"
                 caseData={{ store_name: { label: "Store name", value: "Indiranagar" } }}
                 onSubmit={onSubmit}
+              />
+              <ZmForm
+                schema={sampleAllocate}
+                layout={sampleAllocate["x-zm-layout"] ?? []}
+                caseLabel="Site"
+                caseData={{ store_model: { label: "Store model", value: "Kiosk" } }}
+                onSubmit={onSubmit}
+                loadPeople={samplePeople}
               />
               <Code block>Submitted: {submitted}</Code>
             </Stack>

@@ -81,6 +81,11 @@ class SubmitOut(_Model):
     release_version: int
 
 
+class PersonOut(_Model):
+    id: UUID
+    name: str
+
+
 def _task(item: tasks.TaskItem) -> TaskItem:
     return TaskItem(**item.__dict__)
 
@@ -119,7 +124,12 @@ async def get_task(task_id: str, ctx: ClientCtx, uid: Viewer) -> TaskDetail:
         view = await tasks.open_task(ctx, uid, task_id)
     hidden = tasks.hidden_fields(view.release.workflow, view.me.levels)
     fields = [f for f in view.form["schema"].get("x-zm-show", []) if f not in hidden]
-    show = made_up if made_up is not None else await tasks.shown_values(ctx, view.case.id, fields)
+    defs = view.release.workflow.get("fields", {})
+    show = (
+        made_up
+        if made_up is not None
+        else await tasks.shown_values(ctx, view.case.id, fields, defs)
+    )
     return TaskDetail(
         task=_task(view.item),
         case=CaseOut(**view.case.__dict__),
@@ -128,6 +138,27 @@ async def get_task(task_id: str, ctx: ClientCtx, uid: Viewer) -> TaskDetail:
         show=show,
         show_labels=tasks.field_labels(view.release.workflow, fields),
     )
+
+
+@routes.get("/fields/{field}/people")
+async def people_to_pick(
+    field: str,
+    ctx: ClientCtx,
+    uid: UserId,
+    task_id: str | None = None,
+    flow: str | None = None,
+) -> list[PersonOut]:
+    """Who may be picked for a `user` field, by name: on an open task the user may submit
+    (`task_id`, by the task's own release) or on the start form of a flow they may start
+    (`flow`); send exactly one. The active members of the departments of the stages whose steps
+    the field assigns, or anyone active when it assigns none. Any other task, flow or field: 404."""
+    if task_id is not None and flow is None:
+        found = await tasks.people_for_task(ctx, uid, task_id, field)
+    elif flow is not None and task_id is None:
+        found = await tasks.people_for_start(ctx, uid, flow, field)
+    else:
+        raise BadRequest("Send exactly one of task_id or flow")
+    return [PersonOut(id=UUID(i), name=name) for i, name in found.items()]
 
 
 @routes.post("/tasks/{task_id}/submit")

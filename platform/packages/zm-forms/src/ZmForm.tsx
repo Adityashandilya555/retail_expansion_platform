@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Fieldset, Grid, Group, Input, NumberInput, Paper, Radio, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title } from "@mantine/core";
+import { Alert, Box, Button, Fieldset, Grid, Group, Input, NumberInput, Paper, Radio, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title, type SelectProps } from "@mantine/core";
 import { useForm, type UseFormReturnType } from "@mantine/form";
 import { useEffect, useId, useRef, useState } from "react";
 import { formErrors, type FieldError, type FieldSchema, type FormSchema, type FormSection } from "./validate";
@@ -17,7 +17,11 @@ export type ZmFormProps = {
   caseData?: Record<string, { label: string; value: unknown }>;
   /** Gets values that passed the schema (unanswered fields left out); resolves with the API's 422 errors, if any. */
   onSubmit: (values: Values) => Promise<FieldError[] | undefined> | Promise<void>;
+  /** Who a `user` field may pick (`GET /app/fields/{field}/people`); keep it stable (useCallback). Without it the picker is disabled. */
+  loadPeople?: (field: string) => Promise<Person[]>;
 };
+
+export type Person = { id: string; name: string };
 
 // ponytail: reject-type by outcome id (the compiler's and both templates' id); flag it in x-zm-options if others appear.
 const isReject = (id: string) => id === "reject";
@@ -49,7 +53,65 @@ function Unsupported({ name, label, type }: { name: string; label: string; type:
   );
 }
 
-function Field({ name, field, form, required, readOnly }: { name: string; field: FieldSchema; form: UseFormReturnType<Values>; required: boolean; readOnly: boolean }) {
+/** A `user` field's value: an id, or `{id, name}` as the API's read-only answers give one. */
+function personOf(value: unknown): { id: string; name?: string } | null {
+  if (typeof value === "string") return value ? { id: value } : null;
+  if (value && typeof value === "object" && "id" in value && typeof value.id === "string") {
+    return { id: value.id, name: "name" in value && typeof value.name === "string" ? value.name : undefined };
+  }
+  return null;
+}
+
+/** A `user` field: a searchable list from `load`, fetched once per field (again on opening it after a failure);
+ * disabled without one. The value it holds always shows: by its name when known. */
+function PersonPicker({ name, load, value, editable, ...props }: Omit<SelectProps, "value"> & { name: string; load?: ZmFormProps["loadPeople"]; value: unknown; editable: boolean }) {
+  const [attempt, setAttempt] = useState(0);
+  // what a load gave (people, or null when it failed), kept with the loader and attempt it answers:
+  // a new loader or a retry makes it stale, so the list and the failure reset without a setState here
+  const [loaded, setLoaded] = useState<{ load: unknown; attempt: number; people: Person[] | null } | null>(null);
+  useEffect(() => {
+    if (!load) return;
+    let live = true;
+    load(name).then(
+      (people) => {
+        if (live) setLoaded({ load, attempt, people });
+      },
+      () => {
+        if (live) setLoaded({ load, attempt, people: null });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [load, name, attempt]);
+  const settled = loaded && loaded.load === load && loaded.attempt === attempt ? loaded : null;
+  const people = settled?.people ?? null;
+  const failed = settled !== null && settled.people === null;
+  const retry = () => {
+    if (failed) setAttempt((n) => n + 1);
+  };
+  const current = personOf(value);
+  const data = (people ?? []).map((p) => ({ value: p.id, label: p.name }));
+  if (current && !data.some((o) => o.value === current.id)) {
+    data.unshift({ value: current.id, label: current.name ?? (people ? "Someone no longer on the list" : "Someone picked earlier") });
+  }
+  return (
+    <Select
+      {...props}
+      value={current?.id ?? null}
+      error={props.error ?? (failed && "Couldn't load the people to pick from: open the list to try again")}
+      description={editable && !load ? "Can't load people here" : undefined}
+      searchable
+      clearable
+      disabled={!load}
+      onDropdownOpen={retry}
+      nothingFoundMessage="Nobody by that name"
+      data={data}
+    />
+  );
+}
+
+function Field({ name, field, form, required, readOnly, loadPeople }: { name: string; field: FieldSchema; form: UseFormReturnType<Values>; required: boolean; readOnly: boolean; loadPeople?: ZmFormProps["loadPeople"] }) {
   const { value, onChange, error, onFocus, onBlur } = form.getInputProps(name);
   const type = field["x-zm-type"] ?? "text";
   const common = { label: field.title ?? name, withAsterisk: required, error, readOnly, onFocus, onBlur };
@@ -82,6 +144,8 @@ function Field({ name, field, form, required, readOnly }: { name: string; field:
           </Group>
         </Radio.Group>
       );
+    case "user":
+      return <PersonPicker {...common} name={name} load={readOnly ? undefined : loadPeople} editable={!readOnly} value={value} onChange={onChange} />;
     case "document":
       return <TextInput label={common.label} disabled value={display(value) === "—" ? "" : display(value)} placeholder="No file yet" description="Uploads arrive with Files" />;
     default:
@@ -90,7 +154,7 @@ function Field({ name, field, form, required, readOnly }: { name: string; field:
 }
 
 /** A compiled form (#19): sections → rows → a 12-column grid (one column on phones), outcomes as buttons, Ajv checks before `onSubmit`. */
-export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabel = "Case", caseData, onSubmit }: ZmFormProps) {
+export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabel = "Case", caseData, onSubmit, loadPeople }: ZmFormProps) {
   const id = useId();
   const root = useRef<HTMLFormElement>(null);
   const form = useForm<Values>({ initialValues: values });
@@ -180,7 +244,7 @@ export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabe
                     const field = props[cell.field]; // absent when the field is hidden
                     return field ? (
                       <Grid.Col key={cell.field} span={{ base: 12, sm: cell.span ?? 12 }} data-zm-field={cell.field}>
-                        <Field name={cell.field} field={field} form={form} required={required.has(cell.field)} readOnly={readOnly} />
+                        <Field name={cell.field} field={field} form={form} required={required.has(cell.field)} readOnly={readOnly} loadPeople={loadPeople} />
                       </Grid.Col>
                     ) : null;
                   })}

@@ -38,6 +38,18 @@ def test_1_another_clients_case_is_404(world: World) -> None:
         assert checks.cross_client_case(world.http, me.auth(), other.case["code"]) == []
 
 
+def test_1_another_clients_task_has_nobody_to_pick(world: World) -> None:
+    """#171: the people picker opens the task first, so another client's task id is 404 there
+    too, whatever the field."""
+    for me, other in ((world.qsr, world.pilot), (world.pilot, world.qsr)):
+        found = world.http.get(
+            "/app/fields/design_exec/people",
+            params={"task_id": other.task_id},
+            headers=me.auth(),
+        )
+        assert found.status_code == 404, found.text
+
+
 def test_1_ui_is_the_clients_own(world: World) -> None:
     pilot_pages = {"home", "sites", "bd", "legal", "design", "pe", "project", "nso", "management"}
     pages = {"pilot": pilot_pages | {"site"}, "qsr": {"home", "stores", "store"}}
