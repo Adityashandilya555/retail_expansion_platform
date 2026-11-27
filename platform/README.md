@@ -19,7 +19,7 @@ docker compose down && supabase --workdir infra stop   # data volumes are kept; 
 
 | Service | URL / port | What |
 |---|---|---|
-| Supabase CLI (`infra/supabase`, project `zm-local-pilot`) | Postgres `:54322`, API `:54321` | pilot client vault (`pilot-local`) |
+| Supabase CLI (`infra/supabase`, project `zm-local-pilot`) | Postgres `:54322`, API and Storage `:54321` | pilot client vault (`pilot-local`) and its bucket (Files below) |
 | `api` | http://localhost:8000/healthz | FastAPI platform API |
 | `worker` | — | worker loop (JSON logs) |
 | `operaton-pilot` | http://localhost:8080/engine-rest | pilot engine, DB = Supabase CLI Postgres, schema `operaton`. Our image (`infra/operaton`): REST only, service account `zm-service` / `zm-local-only`, `/health` open |
@@ -119,9 +119,9 @@ CI fails if either generated file is stale. In Python, use `zm_schema.validate(d
 Golden files live in `packages/compiler/tests/golden/`, and the shared form fixtures in `packages/schema/tests/fixtures/*.schema.json`. After an intended change, regenerate both with `ZM_UPDATE_GOLDEN=1 uv run pytest packages/compiler`. `pytest -m integration packages/compiler` deploys both templates to the local `operaton-pilot` and runs cases to `closed:legal` and `completed`.
 
 ## Forms
-`@zm/forms` (#28) renders a compiled form: `<ZmForm schema layout values? readOnly? caseLabel? caseData? onSubmit>`.
+`@zm/forms` (#28) renders a compiled form: `<ZmForm schema layout values? readOnly? caseLabel? caseData? onSubmit files?>`.
 - Sections become fieldsets; each row is a Mantine `Grid` with `span={{ base: 12, sm: n }}`, so phones get one column.
-- Fields by `x-zm-type`: `text`, `textarea`, `number`, `currency` (₹, lakh grouping), `date` (native), `select`, `yes_no` (Yes/No radios). `document` shows "Uploads arrive with Files"; any other type shows "unsupported in v1".
+- Fields by `x-zm-type`: `text`, `textarea`, `number`, `currency` (₹, lakh grouping), `date` (native), `select`, `yes_no` (Yes/No radios). `document` is a `FileSlot` that uploads through `files` (Files below); any other type shows "unsupported in v1".
 - The outcome becomes buttons (the first is primary, `reject` is red) with the comment field above them. `caseData` fills the read-only "<case_label> data" panel for `x-zm-show`.
 - Ajv 2020 (`ajv`, `formErrors`, both exported) checks the values first. `onSubmit` gets them without unanswered fields and can resolve with the API's 422 errors (`[{path, message}]`) to show them under their fields.
 
@@ -228,7 +228,7 @@ One bad row doesn't stop the pass. The worker needs `PLATFORM_DATABASE_URL` and 
 1. `supabase_project`: create the project, or find the one this client created before, then wait for `ACTIVE_HEALTHY`. A same-named project the client didn't create is never adopted; the step goes `needs_human` instead;
 2. `vault_migrations`: apply `infra/supabase/client` through the session pooler;
 3. `data_api_off`: expose no schema, then probe with the anon key;
-4. `bucket`: create the private bucket `files`;
+4. `bucket`: create the private bucket `files`, with a 100 MB file size limit (the schema's `max_mb` ceiling; a project whose own limit is lower keeps that one);
 5. `registry`: write `supabase_ref` and `bucket`.
 
 Steps 6–8 start its Operaton on Railway:
@@ -250,6 +250,31 @@ For test clients only, `zm-worker deprovision <slug> --yes` deletes `operaton-<s
 **Stage states** come from Operaton's history of the main process: `case_status` and one `m_<stage>` per stage, set by the compiler. The list makes one variable request for all cases. A closed case also reads its call activities' history, so a stage the close cancelled shows `closed`, not `done`. Field values follow level masking; everyone in the client sees every case (scope rules: #56).
 
 **Department overview (#94):** a `standard` page's `hero` takes `kpi_strip`: 2 to 4 tiles (`open_cases`, `in_stage`, `awaiting_me`, `overdue`, `done`, each optionally narrowed to a `stage`) counted in the browser from `GET /app/cases`. Past its 500 cases, the tiles show "N+" (at least N) and `case_table` says it shows the newest 500; exact counts come with #55. Picking a tile puts `?kpi=` in the URL, and the page's `case_table` then shows exactly the cases it counts. An optional `stages[].sla_days` in `workflow.json` makes a case `overdue` once it has spent more whole days in that stage, shown as a pill in `case_table`. The sidebar shows the user's open tasks per department page (`GET /app/tasks?scope=mine`, one request; a dot when collapsed), and the `case` page's Activity tab is `case_activity`, drawn from `events`.
+
+## Files (#51)
+A `document` field is a slot with its own rule (`x-zm-document`: `accept` extensions, `max_mb` ≤ 100, `keep_versions`). Files go straight from the browser into the client's private bucket `files`; `app.files` (vault migration `0012`) keeps each object's key, size and sha256, never a URL.
+
+| Endpoint | What it does |
+|---|---|
+| `POST /app/files/upload {task_id \| flow, field, name, size_bytes}` | The user must be able to submit that task (as for submit) or start that flow, and `field` must be a document field of that form as they see it. The extension and size must fit the rule. Records a `pending` row and answers `{file_id, upload_url, key, expires_at}`: PUT the file to `upload_url`. |
+| `POST /app/files/{id}/confirm` | Streams the object back without holding it in memory, checks its size is the one announced, hashes it, and checks the first bytes of a PDF, JPG or PNG (other types by name only, S3-D2). A file that fails is deleted and `rejected` (422 with the reason). One that passes is `confirmed` as the next version of its (case, field) and answers the form's value `{key, sha256, name}`. Only the uploader can confirm; repeating a confirm answers the same value. |
+| `GET /app/files/{id}/download?attachment=` | A signed URL that works for 60 s, inline (the preview) or as a download, for anyone who can see the case and the field. A start upload no case has claimed yet is its uploader's only. |
+| `GET /app/cases/{code}/files?field=` | The case's confirmed files by field, newest version first; `keep_versions: false` lists only the latest (older ones are kept, S3-D1). Fields hidden from the user's level are left out; asking for one is 404. |
+
+- **Keys:** `cases/<case code>/<task>/<field>/<uuid>-<safe name>`; a start form's are `start/<flow>/<user id>/<field>/<uuid>-<safe name>` until `POST /app/cases` claims them in the case's transaction (S3-D3). Keys never move.
+- **Submit and start** take a document value only if it is a confirmed upload of that case, task and field (start: the user's own, unclaimed); anything else is 422 on the field.
+- **Without Storage** (qsr-local, D11) the routes answer 503 and the slot says uploads aren't available; a preview token gets 403 (the routes aren't in `PREVIEW_ROUTES`) and the slot says uploads are off. Another client's file id is 404.
+- **Storage** is Supabase's REST API (`zm_api.storage`, httpx) with the project's sealed service key, at `https://<ref>.supabase.co`, or the sealed `storage_url` locally. Logs carry `op`, `status` and `ms`, never a service key or a signed URL. The bucket's 100 MB limit is a backstop; the API holds each slot to its own rule.
+- **`FileSlot`** (`@zm/forms`): pick or drop a file; the rule is checked in the browser first, then the upload shows and announces its progress, and the slot confirms it into the form. It lists the case's versions with download and preview (PDF in an `<iframe>`, images in an `<img>`). `case_tasks` passes the callbacks (`fileApi` in `@zm/blocks`).
+
+**Locally,** pilot-local uses the Supabase CLI's Storage. Register it with Storage before you start the stack's API:
+```bash
+export LOCAL_STORAGE_URL=http://127.0.0.1:54321
+export LOCAL_STORAGE_SERVICE_KEY=$(supabase --workdir infra status -o env | sed -n 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/p')
+export LOCAL_STORAGE_CONTAINER_URL=http://host.docker.internal:54321   # the compose api reaches the host by this name
+uv run zm-worker provision-local pilot-local --dsn postgresql://postgres:postgres@localhost:54322/postgres --operaton-url http://localhost:8080/engine-rest
+```
+This creates the private bucket and seals the URLs and the key. The browser uses `LOCAL_STORAGE_URL`, and the API uses `LOCAL_STORAGE_CONTAINER_URL` when it is set. The CLI stack's own upload limit is 50 MiB (`[storage] file_size_limit` in `infra/supabase/config.toml`), below the bucket's 100 MB backstop: the bucket keeps the stack's limit, so a 50–100 MB file a rule allows fails at the upload here. `pytest -m integration` needs `LOCAL_STORAGE_SERVICE_KEY` too (CI reads it from `supabase status`).
 
 ## Isolation and compatibility (#31)
 **Two local clients**, each with its own vault, engine and credentials (`ZM_ISO_*` for qsr-local):
