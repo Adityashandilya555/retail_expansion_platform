@@ -56,9 +56,8 @@ export function StartCase({ flow, ...form }: StartCaseProps) {
         title={title}
         size="lg"
         fullScreen={fullScreen}
+        // replaces the theme's closeButtonProps, so it keeps the label
         closeButtonProps={{ "aria-label": "Close", disabled: sending }}
-        // Mantine draws the dialog's header as <header>, which reads as a second page banner
-        attributes={{ header: { role: "presentation" } }}
       >
         <ZmForm
           caseLabel={flow.case_label}
