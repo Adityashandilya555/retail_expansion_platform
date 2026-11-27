@@ -192,13 +192,18 @@ function EditPerson({
     onDone();
   }
 
-  /** Someone who never accepted: the same invite again, with a new link (the old one stops working). */
+  /** Someone who never accepted: the same invite again, with a new link (the old one stops working).
+   * Memberships are left out, so the API keeps the saved ones and unsaved edits stay unsaved. */
   async function resend() {
     setPending(true);
-    const call = api.POST("/app/admin/users", { body: { email: user.email, name: user.name, memberships } });
+    const call = api.POST("/app/admin/users", { body: { email: user.email, name: user.name } });
     const failed = await save(call);
     setPending(false);
-    if (failed) return setErrors(failed);
+    if (failed) {
+      // e.g. a 409 on /email when they accepted meanwhile: the drawer has no email field to show it on
+      for (const message of Object.values(failed)) notifyError(message);
+      return;
+    }
     setSent((await call).data ?? null);
     onInvited();
   }
@@ -225,7 +230,8 @@ function EditPerson({
             </Button>
           )
         )}
-        {user.status === "invited" && (
+        {/* a client admin's invite is the platform owner's to renew (the API answers 403) */}
+        {user.status === "invited" && !user.is_client_admin && (
           <Button variant="default" loading={pending} onClick={() => void resend()}>
             Resend invite
           </Button>

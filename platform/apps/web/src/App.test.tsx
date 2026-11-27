@@ -532,7 +532,7 @@ test("moving Priya to L2, and deactivating her after a confirmation, PATCH her",
   ]);
 });
 
-test("resending an invite POSTs the invited person's email, name and memberships again, and shows the new link", async () => {
+test("resending an invite POSTs only the email and name, so an unsaved level stays unsaved, and shows the new link", async () => {
   const seen = adminApi({
     "GET /app/admin/users": () => json([{ ...PRIYA, status: "invited" }]),
     "POST /app/admin/users": () => json(invited(PRIYA, "new456"), 201),
@@ -541,11 +541,38 @@ test("resending an invite POSTs the invited person's email, name and memberships
   const user = userEvent.setup();
   await user.click(await screen.findByText("Priya"));
   const drawer = within(await screen.findByRole("dialog", { name: "Priya" }));
+  await user.selectOptions(drawer.getByLabelText("Level in Legal"), "2"); // not saved
   await user.click(drawer.getByRole("button", { name: "Resend invite" }));
   expect((await inviteLink(drawer)).value).toBe(`${location.origin}/invite/pilot-local.new456`);
   expect(screen.queryByText(/gets a new email/)).toBeNull();
-  expect(await bodies(seen, "POST")).toEqual([{ email: PRIYA.email, name: "Priya", memberships: PRIYA.memberships }]);
+  expect(await bodies(seen, "POST")).toEqual([{ email: PRIYA.email, name: "Priya" }]); // the API keeps her saved L1
+  expect(seen.filter((r) => r.method === "PATCH")).toEqual([]);
   await expectNoAxeViolations();
+});
+
+test("a resend the API refuses says why; a pending client admin has no Resend invite here", async () => {
+  const deputy = { ...PRIYA, id: "0b4c6f2e-1111-4a2b-9c3d-0000000000cc", email: "deputy@pilot.demo", name: "Deputy", is_client_admin: true, memberships: [] };
+  adminApi({
+    "GET /app/admin/users": () => json([{ ...PRIYA, status: "invited" }, { ...deputy, status: "invited" }]),
+    "POST /app/admin/users": () =>
+      json(
+        { type: "about:blank", title: "Conflict", status: 409, detail: "Email taken", request_id: "r", errors: [{ path: "/email", message: "Someone here already uses this email" }] },
+        409,
+      ),
+  });
+  renderAt("/app/admin/people");
+  const user = userEvent.setup();
+  await user.click(await screen.findByText("Priya"));
+  const drawer = within(await screen.findByRole("dialog", { name: "Priya" }));
+  await user.click(drawer.getByRole("button", { name: "Resend invite" })); // she accepted meanwhile
+  expect(await screen.findByText("Someone here already uses this email")).toBeDefined();
+  expect(drawer.queryByRole("textbox", { name: "Invite link" })).toBeNull();
+
+  await user.click(drawer.getByRole("button", { name: "Close" }));
+  await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Priya" })).toBeNull());
+  await user.click(screen.getByText("Deputy"));
+  const admin = within(await screen.findByRole("dialog", { name: "Deputy" }));
+  expect(admin.queryByRole("button", { name: "Resend invite" })).toBeNull(); // the owner renews it
 });
 
 // --- change requests (S2-24a) ---------------------------------------------------------------------
