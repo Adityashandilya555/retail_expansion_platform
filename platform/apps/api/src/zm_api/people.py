@@ -7,7 +7,8 @@ sets their department levels and deactivates them. They can't change the flow, f
   (`zm_api.auth`) sets the password and makes the person `active`.
 - The inviter gets the link once, always (#169): the response that creates or renews an invite
   carries `invite_path` with `Cache-Control: no-store`, so it works without email. No GET answers
-  it, and the request log records route templates only. Inviting again kills the old link.
+  it, and the request log records route templates only. Inviting again kills the old link, so
+  only the owner may (re-)invite a client admin; the client admin's route answers 403.
 - Memberships may only name departments and levels of the active release's org (else 422).
   Every change is mirrored into the client's Operaton at once (`users.sync_user`), and retried by
   the reconciler if that fails; requests read memberships from the database, so a new level
@@ -148,7 +149,11 @@ async def invite(ctx: ClientContext, body: UserIn, *, admin: bool = False) -> In
     """An `invited` person with their memberships and a one-time invite, whose link goes back to
     the inviter and, sealed, to the worker to email. Someone invited who never accepted gets this
     name, these memberships if given (a client admin stays one) and a new invite in place of the
-    old, whose link stops working; anyone else is a 409."""
+    old, whose link stops working; anyone else is a 409.
+
+    `admin` is the owner's route: only it may invite or re-invite a client admin. Otherwise a
+    client admin could renew another admin's pending invite and accept it as them (403). The
+    answer is built before the commit, so a new link is never committed without being returned."""
     raw = token_bytes.token_urlsafe(32)
     token = f"{ctx.client.slug}.{raw}"
     async with ctx.db.begin() as conn:
@@ -158,12 +163,21 @@ async def invite(ctx: ClientContext, body: UserIn, *, admin: bool = False) -> In
                     "insert into app.users (email, name, is_client_admin) values (:e, :n, :a)"
                     " on conflict (email) do update set name = excluded.name,"
                     " is_client_admin = app.users.is_client_admin or excluded.is_client_admin"
-                    " where app.users.status = 'invited' returning id"
+                    " where app.users.status = 'invited' and (:a or not app.users.is_client_admin)"
+                    " returning id"
                 ),
                 {"e": body.email, "n": body.name, "a": admin},
             )
         ).scalar_one_or_none()
         if user_id is None:
+            held_by_admin = (
+                await conn.execute(
+                    text("select is_client_admin from app.users where email = :e"),
+                    {"e": body.email},
+                )
+            ).scalar()
+            if held_by_admin and not admin:
+                raise Forbidden("Only the platform owner can invite or re-invite a client admin")
             raise Conflict(
                 "Email taken",
                 errors=[FieldError(path="/email", message="Someone here already uses this email")],
@@ -180,10 +194,11 @@ async def invite(ctx: ClientContext, body: UserIn, *, admin: bool = False) -> In
                 {"id": user_id, "h": _sha(raw), "sealed": secrets.seal({"token": token})},
             )
         ).scalar_one()
-    person = await _user(ctx, user_id)
-    return InviteOut(
-        **person.model_dump(), invite_path=f"/invite/{token}", invite_expires_at=expires_at
-    )
+        person = (await _users(conn, "u.id = :id", id=user_id))[0]
+        answer = InviteOut(
+            **person.model_dump(), invite_path=f"/invite/{token}", invite_expires_at=expires_at
+        )
+    return answer
 
 
 # --- the owner invites a client's admin --------------------------------------------------------
@@ -234,7 +249,8 @@ async def list_users(ctx: ClientCtx, status: Status | None = None) -> list[UserO
 
 @routes.post("/users", status_code=201, responses=NO_STORE)
 async def invite_user(body: UserIn, ctx: ClientCtx, response: Response) -> InviteOut:
-    """A new invite, or a new link for someone who never accepted (Resend invite)."""
+    """A new invite, or a new link for someone who never accepted (Resend invite). A client admin,
+    pending or not, is the owner's to invite: 403."""
     response.headers["Cache-Control"] = "no-store"
     return await invite(ctx, body)
 

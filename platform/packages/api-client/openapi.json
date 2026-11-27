@@ -3881,7 +3881,7 @@
         ]
       },
       "post": {
-        "description": "A new invite, or a new link for someone who never accepted (Resend invite).",
+        "description": "A new invite, or a new link for someone who never accepted (Resend invite). A client admin,\npending or not, is the owner's to invite: 403.",
         "operationId": "invite_user_app_admin_users_post",
         "requestBody": {
           "content": {

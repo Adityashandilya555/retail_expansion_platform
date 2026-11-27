@@ -101,7 +101,8 @@ export interface paths {
         put?: never;
         /**
          * Invite User
-         * @description A new invite, or a new link for someone who never accepted (Resend invite).
+         * @description A new invite, or a new link for someone who never accepted (Resend invite). A client admin,
+         *     pending or not, is the owner's to invite: 403.
          */
         post: operations["invite_user_app_admin_users_post"];
         delete?: never;
