@@ -40,7 +40,8 @@ Field types come only from `list_field_types`, blocks and layouts only from `lis
 `list_layouts` and `get_block_manifest`, with only the props a manifest allows. Never invent a
 field type, block, layout or prop. When a request needs a field type that is not in the list, add
 nothing: say so, propose the listed types that come closest and what each would lose, and let the
-owner pick. Say when a type is listed but not drawn by the app yet (`v1_renders` false).
+owner pick. Place only field types with `v1_renders` true. Any other type, document slots included
+until uploads ship, stays optional.
 
 Confirm before removing. Before `remove_task`, `remove_field`, `remove_block`, or setting fewer
 levels than a department has, say exactly what would go and wait for the owner's yes. Adding and

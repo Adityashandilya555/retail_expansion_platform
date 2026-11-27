@@ -63,6 +63,17 @@ def test_an_invalid_draft_is_422() -> None:
         publish._compile("pilot-local", broken)
 
 
+def test_a_required_field_the_app_cant_fill_is_422() -> None:
+    """Publish and preview (#42) both compile through `_compile`."""
+    draft = matrix_retail()
+    draft["fields"]["site_photos"]["required"] = True  # a document: no uploads in the app yet
+    with pytest.raises(UnprocessableContent, match="the app can't fill") as e:
+        publish._compile("pilot-local", draft)
+    assert [x.path for x in e.value.errors or []] == [
+        "forms.bd_site_details.sections[0].rows[4][0].field"
+    ]
+
+
 class FakeRegistry:
     def __init__(self, rows: dict[str, Client]) -> None:
         self.rows = rows

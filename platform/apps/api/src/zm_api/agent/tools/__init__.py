@@ -36,13 +36,7 @@ from zm_schema.models import FieldType
 Doc = dict[str, Any]
 Patch = drafts.Patch
 Result = dict[str, Any]
-
-# The field types @zm/forms draws (`Field` in packages/zm-forms/src/ZmForm.tsx); the rest of
-# zm_schema's FieldType are valid in a draft but show as "unsupported in v1". A test keeps the two
-# in step.
-V1_RENDERS = frozenset(
-    {"text", "textarea", "number", "currency", "date", "select", "yes_no", "document"}
-)
+V1_RENDERS = drafts.V1_RENDERS
 
 
 # --- arguments: strict schemas, every value given (null only where it means "none") -------------
@@ -663,7 +657,7 @@ async def get_page(ctx: ClientContext, a: PageRef) -> Result:
 
 
 async def list_field_types(_ctx: ClientContext, _: NoArgs) -> Result:
-    types = [{"type": t, "v1_renders": t in V1_RENDERS} for t in get_args(FieldType)]
+    types = [{"type": t, "v1_renders": t in drafts.FILLABLE} for t in get_args(FieldType)]
     return _ok("Field types", types)
 
 
@@ -759,7 +753,7 @@ TOOLS: dict[str, Tool] = {
     ),
     "list_field_types": Tool(
         "The field types a field can have (the §09 catalogue; no other type exists), each with"
-        " whether the v1 app draws it.",
+        " whether the app can fill it yet.",
         NoArgs,
         read=list_field_types,
     ),

@@ -101,7 +101,7 @@ def system() -> list[Doc]:
     release, so it is cached."""
     ui = catalogue.load()
     reference = {
-        "field_types": {t: {"v1_renders": t in tools.V1_RENDERS} for t in get_args(FieldType)},
+        "field_types": {t: {"v1_renders": t in drafts.FILLABLE} for t in get_args(FieldType)},
         "layouts": ui["layouts"],
         # where a block goes is each layout's `allowed_blocks`; a manifest's regions name no layout
         "blocks": {

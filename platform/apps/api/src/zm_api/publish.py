@@ -1,7 +1,8 @@
 """Publish (#23): the client's draft → a release on that client's own Operaton.
 
-1. Compile the draft (`zm_compiler.compile`, #19) and check it against every published release's
-   fields (S2-25, `zm_api.versioning`).
+1. Compile the draft (`zm_compiler.compile`, #19), refuse a required field the client app can't
+   fill (#172, `drafts.fill_errors`) and check it against every published release's fields
+   (S2-25, `zm_api.versioning`).
 2. Make sure its level groups (`<dept>__L<n>`) exist in the client's Operaton.
 3. Deploy every BPMN resource plus `zm-release.json` as one deployment named `<slug>-release`,
    with duplicate filtering and `deploy-changed-only=false`: an unchanged draft gives back the
@@ -34,7 +35,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from zm_api import cr_review, releases, versioning
+from zm_api import cr_review, drafts, releases, versioning
 from zm_api.clients import forget_overview
 from zm_api.context import ClientContext, OwnerCtx, owner_router
 from zm_api.errors import (
@@ -95,6 +96,12 @@ def _compile(
         release = compile(wf, slug)
     except (SchemaVersionError, ValueError, CompileError) as e:  # ValidationError is a ValueError
         raise UnprocessableContent(f"The draft can't be published: {e}") from None
+    errors = drafts.fill_errors(draft)
+    if errors:
+        raise UnprocessableContent(
+            "The draft can't be published: it requires fields the app can't fill",
+            errors=drafts._errors(errors),
+        )
     errors = versioning.errors(published, draft)
     if errors:
         raise UnprocessableContent(

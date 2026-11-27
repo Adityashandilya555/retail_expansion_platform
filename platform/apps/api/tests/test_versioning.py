@@ -47,15 +47,31 @@ V1 = [LIVE["fields"]]  # the published releases' fields once v1 is out
 TYPE_CHANGE = [{"op": "replace", "path": "/fields/carpet_area/type", "value": "text"}]
 STORE_MODELS = matrix_retail()["fields"]["store_model"]["options"]
 SITE = ["site_name", "city", "address", "store_model"]
+DETAILS_FORM = ["carpet_area", "frontage_ft", "monthly_rent", "nearest_competitor_m", "site_photos"]
 
 # Demo 2's edits, as the agent's tools (#36) make them: state and district from the optional
-# catalogue on the start form, city labelled "Town", address removed, site photos made required
+# catalogue on the start form, landlord PAN on the site details form, city labelled "Town",
+# address removed, landlord PAN made required (site photos can't be until uploads ship, #51)
 # and a store model added.
 DEMO_2: list[tuple[str, Doc]] = [
     *[
         ("add_field", {"key": k, **OPTIONAL[k], "required": False, "options": []})
-        for k in ("state", "district")
+        for k in ("state", "district", "landlord_pan")
     ],
+    (
+        "arrange_form",
+        {
+            "form": "bd_site_details",
+            "sections": [
+                {
+                    "key": "details",
+                    "title": "Submit site details",
+                    "hidden_below_level": None,
+                    "rows": [[{"field": k, "span": 12}] for k in [*DETAILS_FORM, "landlord_pan"]],
+                }
+            ],
+        },
+    ),
     (
         "arrange_form",
         {
@@ -77,7 +93,7 @@ DEMO_2: list[tuple[str, Doc]] = [
     ("remove_field", {"key": "address"}),
     (
         "update_field",
-        {"key": "site_photos", "label": "Site photos / deck", "options": [], "required": True},
+        {"key": "landlord_pan", "label": "Landlord PAN", "options": [], "required": True},
     ),
     (
         "update_field",
@@ -147,12 +163,14 @@ def test_a_published_field_is_hidden_never_deleted() -> None:
 
 
 def test_after_a_rollback_a_newer_releases_fields_still_hold() -> None:
-    """v1 reactivated after v2 added state and district: they are still published, so a draft
-    can't delete or retype them, whichever release is active; a new field is still fine."""
+    """v1 reactivated after v2 added state, district and landlord PAN: they are still published,
+    so a draft can't delete or retype them, whichever release is active; a new field is still
+    fine."""
     published = [*V1, live(demo_2())["fields"]]
     assert [e.path for e in versioning.errors(published, matrix_retail())] == [
         "fields.state",
         "fields.district",
+        "fields.landlord_pan",
     ]
     retype = [{"op": "replace", "path": "/fields/state/type", "value": "number"}]
     with pytest.raises(UnprocessableContent) as e:
@@ -266,14 +284,14 @@ def test_publish_stamps_what_a_release_adds_or_makes_required() -> None:
     versioning.stamp(V1, v2, 2)
     f = v2["fields"]
     assert (f["state"]["since"], f["district"]["since"]) == (2, 2)
-    assert f["site_photos"]["required_from_version"] == 2
+    assert f["landlord_pan"]["required_from_version"] == 2
     assert "since" not in f["city"] and "required_from_version" not in f["city"]  # from the start
     assert "required_from_version" not in f["state"]
     v3 = live(demo_2())
-    v3["fields"]["site_photos"]["required"] = False
+    v3["fields"]["landlord_pan"]["required"] = False
     versioning.stamp([*V1, v2["fields"]], v3, 3)  # whichever is active: v1 after a rollback
     assert v3["fields"]["state"]["since"] == 2  # kept from the release that added it
-    assert "required_from_version" not in v3["fields"]["site_photos"]
+    assert "required_from_version" not in v3["fields"]["landlord_pan"]
 
 
 def test_the_diff_ignores_publishs_stamps() -> None:
@@ -371,7 +389,7 @@ def _start(w: World, values: Doc) -> str:
 
 
 def _submit_details(w: World, case: str) -> httpx.Response:
-    """bd_site_details without site photos, which v2 made required."""
+    """bd_site_details without the landlord PAN, which v2 made required."""
     [task] = [
         t
         for t in w.get("bd2", "/app/tasks", scope="mine", case=case)
@@ -520,8 +538,8 @@ def test_a_field_required_in_v2_binds_v2_sites_only(demo: SimpleNamespace) -> No
     assert demo.submitted[demo.old].status_code == 200, demo.submitted[demo.old].text
     refused = demo.submitted[demo.new]
     assert refused.status_code == 422
-    assert refused.json()["errors"] == [{"path": "/site_photos", "message": "Required"}]
-    assert _release(2)["fields"]["site_photos"]["required_from_version"] == 2
+    assert refused.json()["errors"] == [{"path": "/landlord_pan", "message": "Required"}]
+    assert _release(2)["fields"]["landlord_pan"]["required_from_version"] == 2
 
 
 @pytest.mark.integration
