@@ -1,7 +1,7 @@
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expectNoAxeViolations, renderWithZm } from "@zm/ui/test";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import caEntry from "../../schema/tests/fixtures/fin_ca_entry.schema.json";
 import { sampleApproval as APPR, sampleDdChecklist as DD } from "./samples";
 import type { FormSchema } from "./validate";
@@ -188,7 +188,7 @@ describe("field types", () => {
     const { user, onSubmit } = renderForm({ schema: ALL, layout, values: { rent: 250000 } });
     expect((screen.getByLabelText(/Rent/) as HTMLInputElement).value).toBe("₹ 2,50,000");
     expect(screen.getByLabelText(/Opened/).getAttribute("type")).toBe("date");
-    expect(screen.getByText("checklist fields are unsupported in v1")).toBeDefined();
+    expect(screen.getByLabelText("Checks").getAttribute("placeholder")).toBe("Not available in the app yet");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("checklist"));
     expect(columnCss("Name")).toEqual({ base: expect.stringContaining("100%"), sm: expect.stringContaining("50%") });
     expect(columnCss("Rent").sm).toContain("33.3");
@@ -213,6 +213,43 @@ describe("field types", () => {
     await user.click(screen.getByRole("button", { name: "Submit" }));
     expect(onSubmit).toHaveBeenCalledWith({ name: "Indiranagar", area: -0.5, rent: 150000.5 });
     warn.mockRestore();
+  });
+
+  describe("a required field the app can't fill", () => {
+    const CANT: FormSchema = {
+      type: "object",
+      additionalProperties: false,
+      required: ["where", "deck"],
+      properties: {
+        where: { type: "object", title: "Shop address", "x-zm-type": "address" },
+        deck: { type: "object", title: "Site deck", "x-zm-type": "document" },
+      },
+    };
+    const rows = [{ key: "a", title: "Site", rows: [[{ field: "where" }], [{ field: "deck" }]] }];
+    beforeEach(() => void vi.spyOn(console, "warn").mockImplementation(() => {}));
+    afterEach(() => vi.restoreAllMocks());
+
+    test("shows Required on submit and sends nothing", async () => {
+      const { user, onSubmit } = renderForm({ schema: CANT, layout: rows });
+      for (const label of ["Shop address", "Site deck"]) expect(screen.getByText(label, { selector: "label", exact: false }).textContent).toContain("*");
+      await user.click(screen.getByRole("button", { name: "Submit" }));
+      expect(onSubmit).not.toHaveBeenCalled();
+      for (const label of [/Shop address/, /Site deck/]) expect(screen.getByLabelText(label).getAttribute("aria-invalid")).toBe("true");
+      expect(screen.getAllByText("Required")).toHaveLength(2);
+    });
+
+    test("shows a stored value read-only, and the placeholder when there is none", () => {
+      renderForm({ schema: CANT, layout: rows, values: { where: { name: "12th Main, Indiranagar" } } });
+      const where = screen.getByLabelText(/Shop address/) as HTMLInputElement;
+      expect([where.value, where.disabled]).toEqual(["12th Main, Indiranagar", true]);
+      expect((screen.getByLabelText(/Site deck/) as HTMLInputElement).value).toBe("");
+    });
+
+    test.each(["light", "dark"] as const)("has no axe violations with the errors shown (%s)", async (scheme) => {
+      const { container, user } = renderForm({ schema: CANT, layout: rows }, scheme);
+      await user.click(screen.getByRole("button", { name: "Submit" }));
+      await expectNoAxeViolations(container);
+    });
   });
 
   test("read-only shows values without actions", () => {

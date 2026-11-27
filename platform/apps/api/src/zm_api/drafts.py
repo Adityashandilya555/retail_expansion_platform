@@ -8,7 +8,8 @@ apply, or brings in problems the draft didn't have, writes nothing and comes bac
 them (problems it already had don't block it). A caller that passes the sha256 of the draft it
 read gets a 409 when the draft has changed since. A change is also checked against every
 published release's fields (S2-25, `zm_api.versioning`): a type change or a deleted field is a
-problem like any other, and `/validate` and publish report it too.
+problem like any other, and `/validate` and publish report it too. So is a required field that a
+form places and the client app can't fill (#172, `fill_errors`).
 
 `undo` applies the inverse of the newest change not yet undone, as a new row pointing at it
 (`undoes`), so the log only grows: 0005's trigger refuses updates and deletes, and zm_api has no
@@ -43,11 +44,24 @@ from zm_api.context import ClientContext, OwnerCtx, owner_router
 from zm_api.errors import Conflict, FieldError, NotFound, UnprocessableContent
 from zm_api.registry import get_client
 from zm_schema import Error, SchemaVersionError, WorkflowV1, validate
+from zm_schema.errors import join
 from zm_schema.semantics import stage_tasks
 from zm_schema.versioning import upgrade
 
 Patch = list[dict[str, Any]]
 NO_DRAFT = "This client has no draft yet"
+
+# The field types @zm/forms draws (`Field` in packages/zm-forms/src/ZmForm.tsx); the rest of
+# zm_schema's FieldType are valid in a draft but show as "Not available in the app yet". A test
+# keeps the two in step.
+V1_RENDERS = frozenset(
+    {"text", "textarea", "number", "currency", "date", "select", "yes_no", "document"}
+)
+# What a person can fill in the client app: a required field of any other type stops every case
+# at the form that places it (`fill_errors`).
+# ponytail: documents draw disabled until uploads ship (#51), which removes the subtraction;
+# `user` is drawn from #171, which adds it to V1_RENDERS (this union goes then).
+FILLABLE = (V1_RENDERS | {"user"}) - {"document"}
 
 
 class ChangeOut(BaseModel):
@@ -145,9 +159,48 @@ def _apply(doc: dict[str, Any], patch: Patch) -> dict[str, Any]:
         raise _invalid([Error("$", f"the patch doesn't apply: {e}")]) from None
 
 
-def problems(doc: dict[str, Any], published: Sequence[dict[str, Any]]) -> list[Error]:
-    """The draft's schema problems, then what it does to the published fields (S2-25)."""
-    return validate(doc) + versioning.errors(published, doc)
+def fill_errors(doc: Any) -> list[Error]:
+    """Each place a form that cases reach (a flow's start form or a task's) puts a required field
+    the client app can't fill (#172): it would stop every case at that form, so it is a problem.
+    As in a compiled form (`zm_compiler.forms.build_form`), a hidden, `info` or `computed` field
+    is never asked for, and a field placed twice counts once. A broken draft has none: validate
+    says why."""
+    if not isinstance(doc, dict):
+        return []
+    try:
+        wf = WorkflowV1.model_validate(upgrade(dict(doc)), context={"structural_only": True})
+    except ValueError:  # ValidationError and SchemaVersionError are ValueErrors
+        return []
+    reached = {flow.start.form for flow in wf.flows} | {
+        t.form for flow in wf.flows for stage in flow.stages for t, _, _ in stage_tasks(stage, "")
+    }
+    passes = FILLABLE | {"info", "computed"}
+    found = []
+    for name, form in wf.forms.items():
+        if name not in reached:
+            continue
+        seen: set[str] = set()
+        for i, section in enumerate(form.sections):
+            for j, row in enumerate(section.rows):
+                for k, cell in enumerate(row):
+                    f = wf.fields.get(cell.field)
+                    if f is None or f.hidden or cell.field in seen:
+                        continue
+                    seen.add(cell.field)
+                    if f.required and f.type not in passes:
+                        where = join("forms", name, "sections", i, "rows", j, k, "field")
+                        why = f"'{cell.field}' (type: {f.type}) can't be filled in the app yet"
+                        found.append(Error(where, f"{why}: make it optional or pick another type"))
+    return found
+
+
+def problems(doc: Any, published: Sequence[dict[str, Any]]) -> list[Error]:
+    """The draft's schema problems, the required fields the app can't fill, then what it does to
+    the published fields (S2-25). A draft that isn't an object has only the first."""
+    errors = validate(doc)
+    if not isinstance(doc, dict):  # "a workflow document must be a JSON object"
+        return errors
+    return errors + fill_errors(doc) + versioning.errors(published, doc)
 
 
 def patched(

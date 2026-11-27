@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, get_args
 
+import jsonpatch
 import pytest
 
 from zm_api import drafts, releases
@@ -24,7 +25,13 @@ from zm_api.templates import load_templates
 from zm_schema.models import FieldType
 
 from ..test_catalogue import manifests
-from ..test_draft import CHANGES, canonical, pilot  # noqa: F401 (pilot: the vault fixture)
+from ..test_draft import (  # noqa: F401 (pilot: the vault fixture)
+    CANT_FILL,
+    CHANGES,
+    SHOP_ADDRESS,
+    canonical,
+    pilot,
+)
 from ..test_publish import Clients, Stack, clients, vault_sql  # noqa: F401
 from ..test_publish_unit import matrix_retail
 
@@ -69,7 +76,7 @@ def sent(tool: str, args: Doc) -> Doc:
 
 
 MANAGER = {"department": "management", "level": 1, "or_above": False}
-SLOT = {"accept": ["pdf"], "max_mb": 25, "required": True, "keep_versions": True}
+SLOT = {"accept": ["pdf"], "max_mb": 25, "required": False, "keep_versions": True}
 
 # (tool, arguments as Claude sends them, where to look in the draft after it, what is there)
 EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
@@ -196,7 +203,7 @@ EDITS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
             {
                 "type": "document",
                 "label": "Fire NOC upload",
-                "required": True,
+                "required": False,
                 "document": {"accept": ["pdf"], "max_mb": 25, "keep_versions": True},
             },
             [{"field": "fire_noc"}],
@@ -342,7 +349,7 @@ READS: list[tuple[str, Doc, Callable[[Doc], Any], Any]] = [
         "list_field_types",
         {},
         lambda r: [(t["type"], t["v1_renders"]) for t in r["data"]],
-        [(t, t in tools.V1_RENDERS) for t in get_args(FieldType)],
+        [(t, t in drafts.FILLABLE) for t in get_args(FieldType)],
     ),
     ("list_templates", {}, lambda r: [t["key"] for t in r["data"]], ["matrix-retail", "qsr"]),
     ("validate_draft", {}, lambda r: (r["ok"], "errors" in r), (True, False)),
@@ -638,6 +645,38 @@ def test_update_field_never_changes_a_key(held: SimpleNamespace) -> None:
     assert held.doc == matrix_retail() and held.log == []
 
 
+def test_a_required_field_the_app_cant_fill_is_refused_on_a_form_and_an_optional_one_isnt(
+    held: SimpleNamespace,
+) -> None:
+    address = {"key": "shop_address", "type": "address", "label": "Shop address", "options": []}
+    section = ARGS["arrange_form"]["sections"][0]
+    rows = [*section["rows"], [{"field": "shop_address", "span": 12}]]
+    placed = {**ARGS["arrange_form"], "sections": [{**section, "rows": rows}]}
+    assert call(held, "add_field", sent("add_field", {**address, "required": True}))["ok"]
+    refused = call(held, "arrange_form", placed)
+    assert refused["ok"] is False
+    assert refused["errors"] == [
+        {
+            "path": "forms.bd_upload_loi.sections[0].rows[1][0].field",
+            "message": CANT_FILL[1],
+        }
+    ]
+    slot = call(held, "add_document_slot", {**ARGS["add_document_slot"], "required": True})
+    assert slot["ok"] is False  # until uploads ship (#51)
+    optional = {**ARGS["update_field"], "key": "shop_address", "label": "Shop address"}
+    assert call(held, "update_field", optional)["ok"]
+    assert call(held, "arrange_form", placed)["ok"]
+    assert [c["tool"] for c in held.log] == ["add_field", "update_field", "arrange_form"]
+
+
+def test_validate_lists_a_field_the_app_cant_fill_written_outside_the_log(
+    held: SimpleNamespace,
+) -> None:
+    held.doc = jsonpatch.apply_patch(matrix_retail(), SHOP_ADDRESS)
+    problems = asyncio.run(drafts.validate_draft(held.ctx))
+    assert [(e.path, e.message) for e in problems] == [CANT_FILL]
+
+
 def test_update_task_sets_every_value_so_a_form_or_shown_fields_can_be_cleared(
     held: SimpleNamespace,
 ) -> None:
@@ -766,7 +805,7 @@ def test_every_tool_schema_is_strict_and_names_no_client_or_tenant() -> None:
 
 def test_v1_renders_exactly_what_zm_forms_draws() -> None:
     drawn = set(re.findall(r'case "(\w+)":', ZM_FORM.read_text()))
-    assert drawn == tools.V1_RENDERS
+    assert drawn == drafts.V1_RENDERS
     assert drawn < set(get_args(FieldType))
 
 

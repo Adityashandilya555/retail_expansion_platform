@@ -18,6 +18,7 @@ from zm_api.context import Resolver
 from zm_api.errors import UnprocessableContent
 from zm_api.main import create_app
 from zm_api.registry import Client
+from zm_api.templates import load_templates
 from zm_schema import migrate
 
 from .conftest import bearer, token
@@ -120,6 +121,73 @@ def test_an_inverse_that_jsonpatch_gets_wrong_replaces_the_whole_document() -> N
     assert jsonpatch.apply_patch(after, inverse) == before
     small = drafts.inverse({"a": 1}, {"a": 2})
     assert small == [{"op": "replace", "path": "/a", "value": 1}]  # usually just the difference
+
+
+ADDRESS = {"type": "address", "label": "Shop address", "required": True}
+SHOP_ADDRESS = [  # a required field the app can't fill (#172), placed on a form
+    {"op": "add", "path": "/fields/shop_address", "value": ADDRESS},
+    {
+        "op": "add",
+        "path": "/forms/bd_site_details/sections/0/rows/-",
+        "value": [{"field": "shop_address"}],
+    },
+]
+CANT_FILL = (
+    "forms.bd_site_details.sections[0].rows[5][0].field",
+    "'shop_address' (type: address) can't be filled in the app yet: make it optional or pick"
+    " another type",
+)
+
+
+def test_a_required_field_the_app_cant_fill_placed_on_a_form_is_422() -> None:
+    with pytest.raises(UnprocessableContent) as e:
+        drafts.patched(matrix_retail(), SHOP_ADDRESS)
+    assert e.value.status == 422
+    assert [(x.path, x.message) for x in e.value.errors or []] == [CANT_FILL]
+    add, place = SHOP_ADDRESS
+    optional = {**add, "value": {**ADDRESS, "required": False}}
+    drafts.patched(matrix_retail(), [optional, place])  # it shows "Not available in the app yet"
+    unplaced, _ = drafts.patched(matrix_retail(), [add])  # on no form: nobody is asked for it
+    hidden = {"op": "add", "path": "/fields/shop_address/hidden", "value": True}
+    drafts.patched(unplaced, [hidden, place])  # hidden: off every form
+    for kind in ("info", "computed"):  # a compiled form never asks for one
+        retype = {"op": "replace", "path": "/fields/shop_address/type", "value": kind}
+        drafts.patched(unplaced, [retype, place])
+
+
+def test_only_forms_cases_reach_count_and_a_field_placed_twice_counts_once() -> None:
+    add, place = SHOP_ADDRESS
+    orphan = {"sections": [{"key": "x", "title": "X", "rows": [[{"field": "shop_address"}]]}]}
+    drafts.patched(  # a form no flow's start or task points to stops no case
+        matrix_retail(), [add, {"op": "add", "path": "/forms/orphan", "value": orphan}]
+    )
+    with pytest.raises(UnprocessableContent) as e:
+        drafts.patched(matrix_retail(), [*SHOP_ADDRESS, place])
+    assert [(x.path, x.message) for x in e.value.errors or []] == [CANT_FILL]
+
+
+def test_a_draft_that_isnt_an_object_is_422() -> None:
+    with pytest.raises(UnprocessableContent) as e:
+        drafts.patched(matrix_retail(), [{"op": "replace", "path": "", "value": [1]}])
+    assert [(x.path, x.message) for x in e.value.errors or []] == [
+        ("$", "a workflow document must be a JSON object")
+    ]
+    assert drafts.fill_errors([1]) == []
+
+
+def test_a_required_document_slot_waits_for_uploads() -> None:
+    required = [{"op": "replace", "path": "/fields/site_photos/required", "value": True}]
+    with pytest.raises(UnprocessableContent) as e:
+        drafts.patched(matrix_retail(), required)
+    assert [x.path for x in e.value.errors or []] == [
+        "forms.bd_site_details.sections[0].rows[4][0].field"
+    ]
+
+
+def test_both_templates_ask_only_for_fields_the_app_can_fill() -> None:
+    # Matrix Retail's required `user` fields among them (#171)
+    found = {t.key: drafts.fill_errors(t.workflow) for t in load_templates()}
+    assert found == {"matrix-retail": [], "qsr": []}
 
 
 def live(doc: dict[str, Any]) -> dict[str, Any]:
@@ -480,6 +548,21 @@ def test_the_theme_picker_works_on_a_draft_without_apps(pilot: Clients) -> None:
         response = api.patch(f"{url}/theme", headers=auth, json={"theme": "warm"})
     assert response.status_code == 200
     assert response.json()["workflow"]["apps"] == {"theme": "warm"}
+
+
+@pytest.mark.integration
+def test_a_field_the_app_cant_fill_written_outside_the_log_blocks_validate_and_publish(
+    pilot: Clients,
+) -> None:
+    unfillable = jsonpatch.apply_patch(matrix_retail(), SHOP_ADDRESS)
+    vault_sql("pilot", "update app.drafts set workflow = %s", json.dumps(unfillable))
+    api, auth, url = owner_api(pilot)
+    with api:
+        problems = api.get(f"{url}/validate", headers=auth)
+        published = api.post(f"{url.removesuffix('/draft')}/publish", headers=auth)
+    assert [(e["path"], e["message"]) for e in problems.json()] == [CANT_FILL]
+    assert published.status_code == 422, published.text
+    assert [(e["path"], e["message"]) for e in published.json()["errors"]] == [CANT_FILL]
 
 
 def test_an_old_problem_whose_message_names_a_position_doesnt_block_a_shift() -> None:

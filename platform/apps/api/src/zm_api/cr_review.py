@@ -191,7 +191,8 @@ def _notes(payload: Mapping[str, Any]) -> list[str]:
 class Impact:
     problems: list[FieldError] = field(default_factory=list)
     """What would stop the draft from publishing with the request applied: the draft's schema
-    problems and S2-25's versioning rules, or a form or field the draft no longer has."""
+    problems, a required field the app can't fill (#172) and S2-25's versioning rules, or a form
+    or field the draft no longer has."""
     notes: list[str] = field(default_factory=list)
 
 
