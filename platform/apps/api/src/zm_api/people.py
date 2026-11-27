@@ -5,6 +5,9 @@ sets their department levels and deactivates them. They can't change the flow, f
   sha256 is kept; the whole token is sealed (`zm_api.secrets`) until the worker has emailed
   `CLIENT_APP_BASE_URL/invite/<token>` (`zm_worker.invites`). `POST /auth/invite/accept`
   (`zm_api.auth`) sets the password and makes the person `active`.
+- The inviter gets the link once, always (#169): the response that creates or renews an invite
+  carries `invite_path` with `Cache-Control: no-store`, so it works without email. No GET answers
+  it, and the request log records route templates only. Inviting again kills the old link.
 - Memberships may only name departments and levels of the active release's org (else 422).
   Every change is mirrored into the client's Operaton at once (`users.sync_user`), and retried by
   the reconciler if that fails; requests read memberships from the database, so a new level
@@ -15,11 +18,11 @@ sets their department levels and deactivates them. They can't change the flow, f
 
 import secrets as token_bytes
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, StringConstraints
+from fastapi import APIRouter, Depends, Request, Response
+from pydantic import BaseModel, ConfigDict, StringConstraints
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -63,6 +66,21 @@ class UserOut(BaseModel):
     is_client_admin: bool
     memberships: list[Membership]
     created_at: datetime
+
+
+class InviteOut(UserOut):
+    """The invited person and their new link, answered once, to the inviter only."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
+    invite_path: str
+    """`/invite/<token>` on the client app. It works once; inviting again kills it."""
+    invite_expires_at: datetime
+
+
+NO_STORE: dict[int | str, dict[str, Any]] = {
+    201: {"headers": {"Cache-Control": {"description": "`no-store`: the body holds the link."}}}
+}
 
 
 _USERS = (
@@ -126,12 +144,13 @@ async def _set_memberships(conn: AsyncConnection, user_id: UUID, ms: list[Member
         )
 
 
-async def invite(ctx: ClientContext, body: UserIn, *, admin: bool = False) -> UserOut:
-    """An `invited` person with their memberships and a one-time invite for the worker to email.
-    Someone invited who never accepted gets this name, these memberships if given (a client admin
-    stays one) and a new invite in place of the old, whose link stops working; anyone else is a
-    409."""
+async def invite(ctx: ClientContext, body: UserIn, *, admin: bool = False) -> InviteOut:
+    """An `invited` person with their memberships and a one-time invite, whose link goes back to
+    the inviter and, sealed, to the worker to email. Someone invited who never accepted gets this
+    name, these memberships if given (a client admin stays one) and a new invite in place of the
+    old, whose link stops working; anyone else is a 409."""
     raw = token_bytes.token_urlsafe(32)
+    token = f"{ctx.client.slug}.{raw}"
     async with ctx.db.begin() as conn:
         user_id = (
             await conn.execute(
@@ -152,18 +171,19 @@ async def invite(ctx: ClientContext, body: UserIn, *, admin: bool = False) -> Us
         if body.memberships is not None:
             await _set_memberships(conn, user_id, body.memberships)
         await conn.execute(text("delete from app.invites where user_id = :id"), {"id": user_id})
-        await conn.execute(
-            text(
-                "insert into app.invites (user_id, token_hash, sealed, expires_at)"
-                " values (:id, :h, :sealed, now() + interval '7 days')"
-            ),
-            {
-                "id": user_id,
-                "h": _sha(raw),
-                "sealed": secrets.seal({"token": f"{ctx.client.slug}.{raw}"}),
-            },
-        )
-    return await _user(ctx, user_id)
+        expires_at = (
+            await conn.execute(
+                text(
+                    "insert into app.invites (user_id, token_hash, sealed, expires_at)"
+                    " values (:id, :h, :sealed, now() + interval '7 days') returning expires_at"
+                ),
+                {"id": user_id, "h": _sha(raw), "sealed": secrets.seal({"token": token})},
+            )
+        ).scalar_one()
+    person = await _user(ctx, user_id)
+    return InviteOut(
+        **person.model_dump(), invite_path=f"/invite/{token}", invite_expires_at=expires_at
+    )
 
 
 # --- the owner invites a client's admin --------------------------------------------------------
@@ -171,14 +191,17 @@ async def invite(ctx: ClientContext, body: UserIn, *, admin: bool = False) -> Us
 owner_routes = owner_router()
 
 
-@owner_routes.post("/clients/{client_id}/client-admin", status_code=201)
-async def invite_client_admin(client_id: UUID, body: InviteIn, request: Request) -> UserOut:
-    """The client's admin, invited by email (they manage people, never the flow, forms or UI)."""
+@owner_routes.post("/clients/{client_id}/client-admin", status_code=201, responses=NO_STORE)
+async def invite_client_admin(
+    client_id: UUID, body: InviteIn, request: Request, response: Response
+) -> InviteOut:
+    """The client's admin (they manage people, never the flow, forms or UI), with their link."""
     async with request.app.state.platform.engine().connect() as conn:
         row = await get_client(conn, "id", client_id)
     if row is None:
         raise NotFound("No such client")
     ctx = await request.app.state.resolver.context(row)  # 503 until it's provisioned
+    response.headers["Cache-Control"] = "no-store"
     return await invite(ctx, UserIn(**body.model_dump()), admin=True)
 
 
@@ -209,8 +232,10 @@ async def list_users(ctx: ClientCtx, status: Status | None = None) -> list[UserO
         return await _users(conn, "u.status = :status" if status else "true", status=status)
 
 
-@routes.post("/users", status_code=201)
-async def invite_user(body: UserIn, ctx: ClientCtx) -> UserOut:
+@routes.post("/users", status_code=201, responses=NO_STORE)
+async def invite_user(body: UserIn, ctx: ClientCtx, response: Response) -> InviteOut:
+    """A new invite, or a new link for someone who never accepted (Resend invite)."""
+    response.headers["Cache-Control"] = "no-store"
     return await invite(ctx, body)
 
 

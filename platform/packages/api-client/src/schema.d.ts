@@ -99,7 +99,10 @@ export interface paths {
         /** List Users */
         get: operations["list_users_app_admin_users_get"];
         put?: never;
-        /** Invite User */
+        /**
+         * Invite User
+         * @description A new invite, or a new link for someone who never accepted (Resend invite).
+         */
         post: operations["invite_user_app_admin_users_post"];
         delete?: never;
         options?: never;
@@ -685,7 +688,7 @@ export interface paths {
         put?: never;
         /**
          * Invite Client Admin
-         * @description The client's admin, invited by email (they manage people, never the flow, forms or UI).
+         * @description The client's admin (they manage people, never the flow, forms or UI), with their link.
          */
         post: operations["invite_client_admin_owner_clients__client_id__client_admin_post"];
         delete?: never;
@@ -1595,6 +1598,45 @@ export interface components {
             email: string;
             /** Name */
             name: string;
+        };
+        /**
+         * InviteOut
+         * @description The invited person and their new link, answered once, to the inviter only.
+         */
+        InviteOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Email */
+            email: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Invite Expires At
+             * Format: date-time
+             */
+            invite_expires_at: string;
+            /**
+             * Invite Path
+             * @description `/invite/<token>` on the client app. It works once; inviting again kills it.
+             */
+            invite_path: string;
+            /** Is Client Admin */
+            is_client_admin: boolean;
+            /** Memberships */
+            memberships: components["schemas"]["Membership"][];
+            /** Name */
+            name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "invited" | "active" | "deactivated";
         };
         /** KeyChanges */
         KeyChanges: {
@@ -2548,10 +2590,12 @@ export interface operations {
             /** @description Successful Response */
             201: {
                 headers: {
+                    /** @description `no-store`: the body holds the link. */
+                    "Cache-Control"?: unknown;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserOut"];
+                    "application/json": components["schemas"]["InviteOut"];
                 };
             };
             /** @description Problem details (RFC 9457) */
@@ -3574,10 +3618,12 @@ export interface operations {
             /** @description Successful Response */
             201: {
                 headers: {
+                    /** @description `no-store`: the body holds the link. */
+                    "Cache-Control"?: unknown;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserOut"];
+                    "application/json": components["schemas"]["InviteOut"];
                 };
             };
             /** @description Problem details (RFC 9457) */

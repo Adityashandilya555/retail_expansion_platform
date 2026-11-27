@@ -2,13 +2,15 @@
 
 pilot runs a small legal flow whose one stage offers a Legal L1 and a Legal L2 task in parallel.
 The owner invites the client admin; the admin invites Priya (Legal L1), moves and deactivates
-her. Invite emails go through the worker's sender on a mock Resend, never the real one. The tests
-share one module world and run in file order.
+her; with email off, the owner hands Ana the link the invite answered. Invite emails go through
+the worker's sender on a mock Resend, never the real one. The tests share one module world and
+run in file order.
 """
 
 import argparse
 import asyncio
 import json
+import logging
 import re
 import time
 import uuid
@@ -16,6 +18,7 @@ from collections import Counter
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +47,7 @@ TEMPLATE = Path(__file__).resolve().parents[3] / "packages/templates/qsr/workflo
 BASE_URL = "https://app.people.test"
 TABLES = ("app.cases", "app.case_counters", "app.releases", "app.drafts")
 ADMIN, PRIYA, DEPUTY = "admin@people.test", "priya@people.test", "deputy@people.test"
+ANA = "ana@people.test"
 PASSWORD = "a-long-enough-password"
 
 
@@ -199,6 +203,7 @@ def test_the_owner_invites_the_client_admin_who_accepts_and_can_sign_in(world: W
     world.ids[ADMIN] = admin["id"]
     again = world.http.post(path, json=body, headers=world.owner)  # not accepted yet: a new link
     assert (again.status_code, again.json()["id"]) == (201, admin["id"]), again.text
+    assert again.json()["invite_path"] != admin["invite_path"]
     unknown = f"/owner/clients/{uuid.uuid4()}/client-admin"
     assert world.http.post(unknown, json=body, headers=world.owner).status_code == 404
 
@@ -209,6 +214,7 @@ def test_the_owner_invites_the_client_admin_who_accepts_and_can_sign_in(world: W
     assert email["to"] == [ADMIN] and email["from"] == "Z-Matrix <noreply@people.test>"
     assert world.slug.upper() in email["text"]  # the workspace code for later sign-ins
     raw = world.token_for(ADMIN)
+    assert again.json()["invite_path"] == f"/invite/{raw}"  # the owner got the emailed link
     stored = vault_sql(
         "pilot",
         "select i.token_hash, i.sealed, i.sent_at from app.invites i join app.users u"
@@ -253,23 +259,33 @@ def test_the_admin_invites_priya_legal_l1_who_then_sees_legal_tasks(world: World
     assert world.tasks(PRIYA) == {"zm:ppl_l1"}
 
 
-def test_listing_filters_by_status(world: World) -> None:
+def test_listing_filters_by_status_and_never_shows_an_invite_token(
+    world: World, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    listings: list[str] = []
+
     def emails(status: str | None) -> set[str]:
         params = {"status": status} if status else {}
         response = world.http.get("/app/admin/users", params=params, headers=world.admin())
         assert response.status_code == 200, response.text
+        listings.append(response.text)
         return {u["email"] for u in response.json()}
 
     pending = {"email": "pending@people.test", "name": "Pending Person"}
-    assert (
-        world.http.post("/app/admin/users", json=pending, headers=world.admin()).status_code == 201
-    )
+    created = world.http.post("/app/admin/users", json=pending, headers=world.admin())
+    assert created.status_code == 201, created.text
+    assert created.headers["cache-control"] == "no-store"
+    secret = created.json()["invite_path"].rsplit(".", 1)[1]  # the token's random part
     assert {ADMIN, PRIYA, "pending@people.test"} <= emails(None)
     assert "pending@people.test" in emails("invited") and PRIYA not in emails("invited")
     assert {ADMIN, PRIYA} <= emails("active")
     listed = world.http.get("/app/admin/users", headers=world.admin()).json()
     priya = next(u for u in listed if u["email"] == PRIYA)
     assert priya["memberships"] == [{"department": "legal", "level": 1, "scope": "own"}]
+    assert all("invite" not in key for key in priya)
+    assert not [text for text in listings if secret in text]
+    assert caplog.records and not [r for r in caplog.records if secret in str(vars(r))]
 
 
 def test_deactivated_priya_cant_refresh_and_leaves_legal_l1(world: World) -> None:
@@ -457,3 +473,33 @@ def test_two_admins_deactivating_each_other_at_once_leave_one_admin(world: World
         DEPUTY,
     )
     assert len(active) == 1
+
+
+def test_with_no_email_the_owner_hands_ana_a_link_that_works_once(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Runs last: Ana becomes one more active client admin, which would let both deactivations in
+    the test above pass."""
+    for name in invites.MAIL_ENV:
+        monkeypatch.delenv(name, raising=False)
+    path = f"/owner/clients/{world.client_id}/client-admin"
+    body = {"email": ANA, "name": "Ana"}
+    first, second = (world.http.post(path, json=body, headers=world.owner) for _ in range(2))
+    for response in (first, second):
+        assert response.status_code == 201, response.text
+        assert response.headers["cache-control"] == "no-store"
+    link = second.json()
+    assert re.fullmatch(rf"/invite/{re.escape(world.slug)}\.[\w-]{{43}}", link["invite_path"])
+    left = datetime.fromisoformat(link["invite_expires_at"]) - datetime.now(UTC)
+    assert timedelta(days=6, hours=23) < left <= timedelta(days=7)
+
+    def accept(invite_path: str) -> httpx.Response:
+        body = {"token": invite_path.removeprefix("/invite/"), "password": PASSWORD}
+        return world.http.post("/auth/invite/accept", json=body)
+
+    assert accept(first.json()["invite_path"]).status_code == 404  # the second invite killed it
+    accepted = accept(link["invite_path"])
+    assert accepted.status_code == 200, accepted.text
+    me = world.http.get("/app/me", headers=bearer(accepted.json()["access_token"])).json()
+    assert (me["email"], me["is_client_admin"]) == (ANA, True)
+    assert accept(link["invite_path"]).status_code == 404  # once
