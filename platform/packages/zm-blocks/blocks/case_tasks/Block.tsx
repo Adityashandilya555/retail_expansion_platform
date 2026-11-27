@@ -2,6 +2,7 @@ import { Accordion, Group, Stack, Text, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ZmForm, type FormSchema, type ZmFormProps } from "@zm/forms";
 import { DataTable, notifyError, notifyInfo, StatusPill } from "@zm/ui";
+import { useCallback } from "react";
 import { useSearchParams } from "react-router";
 import { useBlocksApi } from "../../src/api";
 import { Failed, flowOf, Loading, WithCase, type CaseDetail } from "../../src/cases";
@@ -14,6 +15,15 @@ function TaskForm({ id, caseLabel }: { id: string; caseLabel: string }) {
   const api = useBlocksApi();
   const queries = useQueryClient();
   const [, setParams] = useSearchParams();
+  // the people a `user` field of this task may pick
+  const loadPeople = useCallback<NonNullable<ZmFormProps["loadPeople"]>>(
+    async (field) => {
+      const { data, response } = await api.GET("/app/fields/{field}/people", { params: { path: { field }, query: { task_id: id } } });
+      if (!data) throw new Error(`GET /app/fields/${field}/people answered ${response.status}`);
+      return data;
+    },
+    [api, id],
+  );
   const task = useQuery({
     queryKey: ["app", "task", id],
     queryFn: async () => {
@@ -59,6 +69,7 @@ function TaskForm({ id, caseLabel }: { id: string; caseLabel: string }) {
       caseLabel={caseLabel}
       caseData={caseData}
       onSubmit={submit}
+      loadPeople={loadPeople}
     />
   );
 }

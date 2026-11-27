@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Fieldset, Grid, Group, Input, NumberInput, Paper, Radio, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title } from "@mantine/core";
+import { Alert, Box, Button, Fieldset, Grid, Group, Input, NumberInput, Paper, Radio, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title, type SelectProps } from "@mantine/core";
 import { useForm, type UseFormReturnType } from "@mantine/form";
 import { useEffect, useId, useRef, useState } from "react";
 import { formErrors, type FieldError, type FieldSchema, type FormSchema, type FormSection } from "./validate";
@@ -17,7 +17,11 @@ export type ZmFormProps = {
   caseData?: Record<string, { label: string; value: unknown }>;
   /** Gets values that passed the schema (unanswered fields left out); resolves with the API's 422 errors, if any. */
   onSubmit: (values: Values) => Promise<FieldError[] | undefined> | Promise<void>;
+  /** Who a `user` field may pick (`GET /app/fields/{field}/people`); keep it stable (useCallback). Without it the picker is disabled. */
+  loadPeople?: (field: string) => Promise<Person[]>;
 };
+
+export type Person = { id: string; name: string };
 
 // ponytail: reject-type by outcome id (the compiler's and both templates' id); flag it in x-zm-options if others appear.
 const isReject = (id: string) => id === "reject";
@@ -49,7 +53,39 @@ function Unsupported({ name, label, type }: { name: string; label: string; type:
   );
 }
 
-function Field({ name, field, form, required, readOnly }: { name: string; field: FieldSchema; form: UseFormReturnType<Values>; required: boolean; readOnly: boolean }) {
+/** A `user` field: a searchable list from `load`, fetched once per field; disabled without one. */
+function PersonPicker({ name, load, ...props }: SelectProps & { name: string; load?: ZmFormProps["loadPeople"] }) {
+  const [people, setPeople] = useState<Person[]>([]);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!load) return;
+    let live = true;
+    load(name).then(
+      (found) => {
+        if (live) setPeople(found);
+      },
+      () => {
+        if (live) setFailed(true);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [load, name]);
+  return (
+    <Select
+      {...props}
+      error={props.error ?? (failed && "Couldn't load the people to pick from")}
+      searchable
+      clearable
+      disabled={!load}
+      nothingFoundMessage="Nobody by that name"
+      data={people.map((p) => ({ value: p.id, label: p.name }))}
+    />
+  );
+}
+
+function Field({ name, field, form, required, readOnly, loadPeople }: { name: string; field: FieldSchema; form: UseFormReturnType<Values>; required: boolean; readOnly: boolean; loadPeople?: ZmFormProps["loadPeople"] }) {
   const { value, onChange, error, onFocus, onBlur } = form.getInputProps(name);
   const type = field["x-zm-type"] ?? "text";
   const common = { label: field.title ?? name, withAsterisk: required, error, readOnly, onFocus, onBlur };
@@ -82,6 +118,8 @@ function Field({ name, field, form, required, readOnly }: { name: string; field:
           </Group>
         </Radio.Group>
       );
+    case "user":
+      return <PersonPicker {...common} name={name} load={readOnly ? undefined : loadPeople} value={text || null} onChange={onChange} />;
     case "document":
       return <TextInput label={common.label} disabled value={display(value) === "—" ? "" : display(value)} placeholder="No file yet" description="Uploads arrive with Files" />;
     default:
@@ -90,7 +128,7 @@ function Field({ name, field, form, required, readOnly }: { name: string; field:
 }
 
 /** A compiled form (#19): sections → rows → a 12-column grid (one column on phones), outcomes as buttons, Ajv checks before `onSubmit`. */
-export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabel = "Case", caseData, onSubmit }: ZmFormProps) {
+export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabel = "Case", caseData, onSubmit, loadPeople }: ZmFormProps) {
   const id = useId();
   const root = useRef<HTMLFormElement>(null);
   const form = useForm<Values>({ initialValues: values });
@@ -180,7 +218,7 @@ export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabe
                     const field = props[cell.field]; // absent when the field is hidden
                     return field ? (
                       <Grid.Col key={cell.field} span={{ base: 12, sm: cell.span ?? 12 }} data-zm-field={cell.field}>
-                        <Field name={cell.field} field={field} form={form} required={required.has(cell.field)} readOnly={readOnly} />
+                        <Field name={cell.field} field={field} form={form} required={required.has(cell.field)} readOnly={readOnly} loadPeople={loadPeople} />
                       </Grid.Col>
                     ) : null;
                   })}

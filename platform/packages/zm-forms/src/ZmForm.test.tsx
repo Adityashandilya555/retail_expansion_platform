@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { expectNoAxeViolations, renderWithZm } from "@zm/ui/test";
 import { describe, expect, test, vi } from "vitest";
 import caEntry from "../../schema/tests/fixtures/fin_ca_entry.schema.json";
-import { sampleApproval as APPR, sampleDdChecklist as DD } from "./samples";
+import { sampleAllocate as ALLOC, sampleApproval as APPR, sampleDdChecklist as DD } from "./samples";
 import type { FormSchema } from "./validate";
 import { ZmForm, type ZmFormProps } from "./ZmForm";
 
@@ -161,6 +161,55 @@ describe("approval task", () => {
 
   test.each(["light", "dark"] as const)("has no axe violations (%s)", async (scheme) => {
     const { container } = renderForm({ schema: APPR, caseLabel: "Store", caseData: { store_name: { label: "Store name", value: "Indiranagar" } } }, scheme);
+    await expectNoAxeViolations(container);
+  });
+});
+
+describe("user field", () => {
+  const PEOPLE = [
+    { id: "u-asha", name: "Asha Rao" },
+    { id: "u-dev", name: "Dev Menon" },
+  ];
+  const loader = () => vi.fn<NonNullable<ZmFormProps["loadPeople"]>>(async () => PEOPLE);
+
+  test("a searchable picker of the people loadPeople gives; submits the picked id", async () => {
+    const loadPeople = loader();
+    const { user, onSubmit } = renderForm({ schema: ALLOC, loadPeople });
+    expect(loadPeople).toHaveBeenCalledWith("design_exec");
+    const picker = screen.getByLabelText(/Design executive/, { selector: "input" });
+    expect(screen.getByText("Design executive").closest("label")?.textContent).toContain("*"); // withAsterisk
+    await user.type(picker, "ash");
+    expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Asha Rao"]);
+    await user.click(screen.getByRole("option", { name: "Asha Rao" }));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(onSubmit).toHaveBeenCalledWith({ design_exec: "u-asha" });
+  });
+
+  test.each([
+    ["read-only", { readOnly: true, loadPeople: loader() }],
+    ["without loadPeople", {}],
+  ] as const)("%s: disabled, and nothing is fetched", (_, props) => {
+    renderForm({ schema: ALLOC, ...props });
+    expect((screen.getByLabelText(/Design executive/, { selector: "input" }) as HTMLInputElement).disabled).toBe(true);
+    if ("loadPeople" in props) expect(props.loadPeople).not.toHaveBeenCalled();
+  });
+
+  test("the API's 422 shows on the picker", async () => {
+    const onSubmit = vi.fn(async () => [{ path: "/design_exec", message: "Pick someone from the list" }]);
+    const { user } = renderForm({ schema: ALLOC, loadPeople: loader(), values: { design_exec: "u-gone" }, onSubmit });
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByText("Pick someone from the list")).toBeDefined();
+    expect(screen.getByLabelText(/Design executive/, { selector: "input" }).getAttribute("aria-invalid")).toBe("true");
+  });
+
+  test("a list that doesn't load says so on the picker", async () => {
+    renderForm({ schema: ALLOC, loadPeople: vi.fn(async () => Promise.reject(new Error("503"))) });
+    expect(await screen.findByText("Couldn't load the people to pick from")).toBeDefined();
+  });
+
+  test.each(["light", "dark"] as const)("has no axe violations (%s)", async (scheme) => {
+    const { container } = renderForm({ schema: ALLOC, loadPeople: loader() }, scheme);
+    await screen.findByLabelText(/Design executive/, { selector: "input" });
     await expectNoAxeViolations(container);
   });
 });

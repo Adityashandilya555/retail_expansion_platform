@@ -63,6 +63,7 @@ def test_forms(form_id: str) -> None:
     [
         ("matrix-retail", "legal_dd_checklist"),
         ("matrix-retail", "fin_ca_entry"),
+        ("matrix-retail", "design_allocate"),
         ("qsr", "qsr_licences"),
         ("qsr", "qsr_licences__appr_legal_L3"),
     ],
