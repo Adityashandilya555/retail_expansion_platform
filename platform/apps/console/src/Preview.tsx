@@ -7,7 +7,8 @@ import { useId, useState } from "react";
 import { summary } from "./Publish";
 import { api, must } from "./session";
 
-const WEB = import.meta.env.VITE_WEB_URL ?? "http://localhost:5173";
+/** The client app (zm-web): where Preview opens and where invite links (#169) point. */
+export const WEB = import.meta.env.VITE_WEB_URL ?? "http://localhost:5173";
 
 type Department = { key: string; name: string; levels: { n: number }[] };
 

@@ -226,9 +226,11 @@ test("creating Matrix Retail queues its provisioning, and the page follows it un
   const provisioning = await screen.findByRole("table", { name: "Provisioning" });
   await waitFor(() => expect(within(provisioning).getByText("Running")).toBeDefined());
   expect(screen.queryByRole("button", { name: /Publish/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Invite client admin" })).toBeNull(); // no vault yet
 
   await act(() => vi.advanceTimersByTimeAsync(5000)); // the page polls every 5 s
   expect(await screen.findByRole("button", { name: "Publish draft as v1" })).toBeDefined();
+  expect(screen.getByRole("button", { name: "Invite client admin" })).toBeDefined();
   expect(within(screen.getByRole("table", { name: "Provisioning" })).getAllByText("Done")).toHaveLength(STEPS.length);
   const polled = calls.filter((c) => c === `GET /owner/clients/${ID}`).length;
   expect(polled).toBeGreaterThanOrEqual(2);
@@ -641,4 +643,48 @@ test("a look the API refuses stays unsaved and says why", async () => {
   await settle();
   expect(await screen.findByText("The change would make the draft invalid")).toBeDefined();
   expect(checkedPreset()).toEqual(["Quartz"]);
+});
+
+// --- the client admin's invite (#169) ---------------------------------------------------------
+
+test("the owner invites Ana as client admin and copies her one-time link; a taken email shows on the field", async () => {
+  let taken = true;
+  const sent: unknown[] = [];
+  signedInApi({
+    [`GET /owner/clients/${ID}`]: ready,
+    [`POST /owner/clients/${ID}/client-admin`]: async (r) => {
+      sent.push(await r.json());
+      if (taken) return problem(409, [{ path: "/email", message: "Someone here already uses this email" }]);
+      const ana = { id: "a", email: "ana@matrix.test", name: "Ana", status: "invited", is_client_admin: true, memberships: [], created_at: AT };
+      return json({ ...ana, invite_path: "/invite/matrix-retail.abc123", invite_expires_at: "2026-10-29T08:00:00Z" }, 201);
+    },
+  });
+  renderAt(`/clients/${ID}`);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Invite client admin" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Invite client admin" }));
+  await user.type(dialog.getByLabelText(/^Email/), "ana@matrix.test");
+  await user.type(dialog.getByLabelText(/^Name/), "Ana");
+  await user.click(dialog.getByRole("button", { name: "Send invite" }));
+  expect(await dialog.findByText("Someone here already uses this email")).toBeDefined();
+  expect(dialog.getByLabelText(/^Email/).getAttribute("aria-invalid")).toBe("true");
+
+  taken = false;
+  await user.click(dialog.getByRole("button", { name: "Send invite" }));
+  const link = await dialog.findByRole<HTMLInputElement>("textbox", { name: "Invite link", description: /^Works once, until .+\. Also emailed if email is set up\.$/ });
+  expect(link.value).toBe("http://localhost:5173/invite/matrix-retail.abc123"); // VITE_WEB_URL + invite_path
+  await user.click(dialog.getByRole("button", { name: "Copy link" }));
+  expect(await navigator.clipboard.readText()).toBe(link.value);
+  expect(sent).toEqual([
+    { email: "ana@matrix.test", name: "Ana" },
+    { email: "ana@matrix.test", name: "Ana" },
+  ]);
+  await expectNoAxeViolations();
+
+  await user.click(dialog.getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Invite client admin" })).toBeNull());
+  await user.click(screen.getByRole("button", { name: "Invite client admin" })); // a fresh form, not the old link
+  const again = within(await screen.findByRole("dialog", { name: "Invite client admin" }));
+  expect(again.getByLabelText<HTMLInputElement>(/^Email/).value).toBe("");
+  expect(again.queryByRole("textbox", { name: "Invite link" })).toBeNull();
 });

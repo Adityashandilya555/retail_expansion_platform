@@ -1,14 +1,16 @@
 // `/app/admin/people` (S2-23): the client admin invites people, sets their department and level and
 // deactivates them. A fixed route of the shell for client admins, not an agent-configured page (D19).
+// An invite answers its one-time link (#169), shown once to copy: email may not be set up.
 import { ActionIcon, Button, Drawer, Group, Modal, NativeSelect, SegmentedControl, Stack, Text, TextInput } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components, Problem } from "@zm/api-client";
-import { DataTable, notifyError, notifyInfo, PageHeader, StatusPill, TONE_COLORS, type StatusTone } from "@zm/ui";
+import { DataTable, InviteLink, notifyError, PageHeader, StatusPill, TONE_COLORS, type StatusTone } from "@zm/ui";
 import { Plus, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { api } from "./session";
 
 type UserOut = components["schemas"]["UserOut"];
+type InviteOut = components["schemas"]["InviteOut"];
 type Membership = components["schemas"]["Membership"];
 type Department = components["schemas"]["Department"];
 type Filter = UserOut["status"] | "all";
@@ -112,23 +114,40 @@ function MembershipsInput({
   );
 }
 
-function InviteForm({ departments, onDone }: { departments: Department[]; onDone: () => void }) {
+/** The one-time link an invite answered, on this app. */
+function SentLink({ invite }: { invite: InviteOut }) {
+  return <InviteLink url={window.location.origin + invite.invite_path} expiresAt={invite.invite_expires_at} />;
+}
+
+function InviteForm({ departments, onInvited, onDone }: { departments: Department[]; onInvited: () => void; onDone: () => void }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
+  const [sent, setSent] = useState<InviteOut | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setPending(true);
-    const failed = await save(api.POST("/app/admin/users", { body: { email: email.trim(), name: name.trim(), memberships } }));
+    const call = api.POST("/app/admin/users", { body: { email: email.trim(), name: name.trim(), memberships } });
+    const failed = await save(call);
     setPending(false);
     if (failed) return setErrors(failed);
-    notifyInfo("Invite sent", `${name.trim()} gets an email to set a password.`);
-    onDone();
+    setSent((await call).data ?? null);
+    onInvited();
   }
 
+  if (sent) {
+    return (
+      <Stack>
+        <SentLink invite={sent} />
+        <Group justify="flex-end">
+          <Button onClick={onDone}>Done</Button>
+        </Group>
+      </Stack>
+    );
+  }
   return (
     <form onSubmit={submit} noValidate>
       <Stack>
@@ -145,11 +164,24 @@ function InviteForm({ departments, onDone }: { departments: Department[]; onDone
   );
 }
 
-function EditPerson({ user, departments, selfId, onDone }: { user: UserOut; departments: Department[]; selfId: string; onDone: () => void }) {
+function EditPerson({
+  user,
+  departments,
+  selfId,
+  onInvited,
+  onDone,
+}: {
+  user: UserOut;
+  departments: Department[];
+  selfId: string;
+  onInvited: () => void;
+  onDone: () => void;
+}) {
   const [memberships, setMemberships] = useState(user.memberships);
   const [errors, setErrors] = useState<Errors>({});
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
+  const [sent, setSent] = useState<InviteOut | null>(null);
 
   async function patch(body: components["schemas"]["UserPatch"]) {
     setPending(true);
@@ -163,11 +195,12 @@ function EditPerson({ user, departments, selfId, onDone }: { user: UserOut; depa
   /** Someone who never accepted: the same invite again, with a new link (the old one stops working). */
   async function resend() {
     setPending(true);
-    const failed = await save(api.POST("/app/admin/users", { body: { email: user.email, name: user.name, memberships } }));
+    const call = api.POST("/app/admin/users", { body: { email: user.email, name: user.name, memberships } });
+    const failed = await save(call);
     setPending(false);
     if (failed) return setErrors(failed);
-    notifyInfo("Invite sent", `${user.name} gets a new email to set a password.`);
-    onDone();
+    setSent((await call).data ?? null);
+    onInvited();
   }
 
   return (
@@ -178,6 +211,7 @@ function EditPerson({ user, departments, selfId, onDone }: { user: UserOut; depa
         </Text>
         <StatusPill tone={STATUS[user.status][0]}>{STATUS[user.status][1]}</StatusPill>
       </Group>
+      {sent && <SentLink invite={sent} />}
       <MembershipsInput departments={departments} value={memberships} onChange={setMemberships} errors={errors} />
       <Group justify="space-between">
         {user.status === "deactivated" ? (
@@ -229,10 +263,11 @@ export function People({ selfId }: { selfId: string }) {
   const departments = useQuery({ queryKey: ["departments"], queryFn: () => must(api.GET("/app/admin/departments")) });
   const org = departments.data ?? [];
   const names = new Map(org.map((d) => [d.key, d.name]));
+  const refresh = () => void queries.invalidateQueries({ queryKey: ["people"] });
   const done = () => {
     setInviting(false);
     setEditing(null);
-    void queries.invalidateQueries({ queryKey: ["people"] });
+    refresh();
   };
 
   return (
@@ -264,10 +299,10 @@ export function People({ selfId }: { selfId: string }) {
         ]}
       />
       <Modal opened={inviting} onClose={() => setInviting(false)} title="Invite person">
-        <InviteForm departments={org} onDone={done} />
+        <InviteForm departments={org} onInvited={refresh} onDone={() => setInviting(false)} />
       </Modal>
       <Drawer opened={editing !== null} onClose={() => setEditing(null)} position="right" title={editing?.name}>
-        {editing && <EditPerson key={editing.id} user={editing} departments={org} selfId={selfId} onDone={done} />}
+        {editing && <EditPerson key={editing.id} user={editing} departments={org} selfId={selfId} onInvited={refresh} onDone={done} />}
       </Drawer>
     </>
   );
