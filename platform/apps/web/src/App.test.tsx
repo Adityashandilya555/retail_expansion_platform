@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { blocks, type AppUi, type UiPage } from "@zm/blocks";
-import { sampleCase, sampleCases, sampleUi, testBlocks } from "@zm/blocks/test";
+import { sampleCase, sampleCases, sampleUi, startableUi, testBlocks } from "@zm/blocks/test";
 import { accentStorageKey, PRESETS, schemeStorageKey } from "@zm/ui";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
@@ -305,6 +305,45 @@ test("without a case page for the flow, /app/cases/:code draws the built-in one"
   expect(await screen.findByRole("region", { name: "case_fields" })).toBeDefined();
   expect(screen.getByRole("region", { name: "case_header" }).textContent).toContain("{}");
   expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Tasks", "Activity"]);
+});
+
+test("BD L1 on Sites: New Site, the four start fields, and the new site's page opens (#170)", async () => {
+  Object.assign(blocks, { case_table: realBlocks.case_table });
+  try {
+    const sites: UiPage = { key: "sites", layout: "standard", regions: { main: [{ block: "case_table", props: { flow: "store_launch" } }] } };
+    const ui: AppUi = { ...startableUi, nav: [...startableUi.nav, { page: "sites", label: "Sites", visible_to: ["*"] }], pages: [...startableUi.pages, sites] };
+    const bd = { ...ME, email: "bd.l1@pilot.demo", name: "BD Executive", memberships: [{ department: "bd", level: 1, scope: "own" }] };
+    const created = { id: "c-1", code: "MX-0001", flow: "store_launch", release_version: 1, process_instance_id: "pi-1", created_at: "2026-10-25T09:00:00Z" };
+    let posted: unknown;
+    const calls = signedInApi(ui, {
+      "GET /app/me": () => json(bd),
+      "GET /app/tasks": () => json([]),
+      "GET /app/cases": () => json([]),
+      "POST /app/cases": async (r) => {
+        posted = await r.json();
+        return json(created, 201);
+      },
+    });
+    renderAt("/app/sites");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "New Site" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "New Site" }));
+    for (const [label, value] of [[/Site name/, "Indiranagar"], [/City/, "Bengaluru"], [/Address/, "12th Main"]] as const) {
+      await user.click(dialog.getByLabelText(label));
+      await user.paste(value);
+    }
+    await user.click(dialog.getByLabelText(/Store model/, { selector: "input" }));
+    // jsdom has no layout, so outside Mantine's test env the dropdown hides itself as "detached"
+    await user.click(await screen.findByRole("option", { name: "Kiosk", hidden: true }));
+    await user.click(dialog.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("region", { name: "case_header" })).toBeDefined(); // /app/cases/MX-0001
+    expect(posted).toEqual({ flow: "store_launch", values: { site_name: "Indiranagar", city: "Bengaluru", address: "12th Main", store_model: "kiosk" } });
+    // the nav's task counts are asked again: the site's first task is in an inbox now
+    await waitFor(() => expect(calls.filter((c) => c === "GET /app/tasks")).toHaveLength(2));
+  } finally {
+    Object.assign(blocks, { case_table: testBlocks.case_table });
+  }
 });
 
 test("a case code no flow uses is not found", async () => {

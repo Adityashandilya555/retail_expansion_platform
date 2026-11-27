@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { ageStage, currentStage, daysSince, display, flowOf, inTableScope, inTile, overdueStage, STATUS, tileOf, trackerStages, useCases, type CaseRow } from "../../src/cases";
 import type { BlockProps } from "../../src/registry";
+import { StartCase } from "../../src/StartCase";
 
 /** `props` as manifest.json allows them (the renderer has already validated them). */
 type Props = { flow?: string; columns?: string[]; stages?: string[] };
@@ -11,7 +12,8 @@ type Props = { flow?: string; columns?: string[]; stages?: string[] };
 
 /** case_table v1 (S1-25, #92): a flow's cases, e.g. the Sites list. A row opens the case page.
  * A kpi_strip tile picked in the URL (`?kpi=`, #94) shows the cases it counts instead of the stage
- * chips, so the table and the tile agree; the table's own `stages` still apply. */
+ * chips, so the table and the tile agree; the table's own `stages` still apply. A user who may
+ * start the flow gets "New <case>" (S3-02). */
 export function CaseTable({ props, ui }: BlockProps) {
   const { flow: flowKey, columns = ["code", "title", "stage", "status", "open_tasks"], stages: only } = props as Props;
   const flow = flowOf(ui, flowKey);
@@ -113,14 +115,17 @@ export function CaseTable({ props, ui }: BlockProps) {
         ) : (
           <span />
         )}
-        <TextInput
-          type="search"
-          aria-label={`Search ${plural}`}
-          placeholder="Search by code or name"
-          value={search}
-          onChange={(e) => setSearch(e.currentTarget.value)}
-          w={240}
-        />
+        <Group gap="sm" align="flex-end">
+          <TextInput
+            type="search"
+            aria-label={`Search ${plural}`}
+            placeholder="Search by code or name"
+            value={search}
+            onChange={(e) => setSearch(e.currentTarget.value)}
+            w={240}
+          />
+          <StartCase flow={flow} />
+        </Group>
       </Group>
       <DataTable
         caption={`${label}s`}

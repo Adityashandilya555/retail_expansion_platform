@@ -16,8 +16,47 @@ type CaseRow = components["schemas"]["CaseRow"];
 type CaseDetail = components["schemas"]["CaseDetail"];
 type StageOut = components["schemas"]["StageOut"];
 type TaskDetail = components["schemas"]["TaskDetail"];
+type FormOut = components["schemas"]["FormOut"];
 
-/** Legal L1's `GET /app/ui` on release v1 (the API has already dropped other departments' pages). */
+const START_LAYOUT = [
+  {
+    key: "site",
+    title: "Site",
+    rows: [[{ field: "site_name", span: 12 }], [{ field: "city", span: 12 }], [{ field: "address", span: 12 }], [{ field: "store_model", span: 12 }]],
+  },
+];
+
+/** Matrix Retail's store launch start form (compiler output), as `GET /app/ui` sends it to whoever
+ * may start a site (BD L1 and above, S3-02). */
+export const sampleStartForm: FormOut = {
+  schema: {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "object",
+    properties: {
+      site_name: { type: "string", title: "Site name", "x-zm-type": "text" },
+      city: { type: "string", title: "City", "x-zm-type": "text" },
+      address: { type: "string", title: "Address", "x-zm-type": "textarea" },
+      store_model: {
+        type: "string",
+        enum: ["btc_cafe", "btc_cafe_plus", "kiosk"],
+        title: "Store model",
+        "x-zm-type": "select",
+        "x-zm-options": [
+          { id: "btc_cafe", label: "BTC Cafe" },
+          { id: "btc_cafe_plus", label: "BTC Cafe+" },
+          { id: "kiosk", label: "Kiosk" },
+        ],
+      },
+    },
+    required: ["site_name", "city", "address", "store_model"],
+    additionalProperties: false,
+    "x-zm-layout": START_LAYOUT,
+  },
+  layout: START_LAYOUT,
+};
+
+/** Legal L1's `GET /app/ui` on release v1 (the API has already dropped other departments' pages,
+ * and Legal may not start a site, so the flow has no start form). */
 export const sampleUi: AppUi = {
   client: { name: "Matrix Retail", theme: "quartz", accent: "teal" },
   release: { version: 1 },
@@ -64,9 +103,13 @@ export const sampleUi: AppUi = {
         { key: "site_name", label: "Site name", type: "text" },
         { key: "city", label: "City", type: "text" },
       ],
+      start_form: null,
     },
   ],
 };
+
+/** `sampleUi` as a user who may start a site gets it: the flow carries its start form. */
+export const startableUi: AppUi = { ...sampleUi, flows: sampleUi.flows.map((f) => ({ ...f, start_form: sampleStartForm })) };
 
 function stub(name: string, regions: string[], properties: Record<string, unknown> = {}): BlockEntry {
   const manifest: BlockManifest = {
