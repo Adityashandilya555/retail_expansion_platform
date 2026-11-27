@@ -3204,6 +3204,16 @@
             },
             "title": "Start Fields",
             "type": "array"
+          },
+          "start_form": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3212,7 +3222,8 @@
           "case_label",
           "case_code",
           "stages",
-          "start_fields"
+          "start_fields",
+          "start_form"
         ],
         "title": "UiFlow",
         "type": "object"
@@ -4343,7 +4354,7 @@
     },
     "/app/ui": {
       "get": {
-        "description": "The active release's nav, pages and flows, filtered to the user's departments. Under a\npreview token (#42): the draft's, as publishing it now would make them, for the role.",
+        "description": "The active release's nav, pages and flows, filtered to the user's departments, with the\nstart forms of the flows they may start. Under a preview token (#42): the draft's, as\npublishing it now would make them, for the role. 401 once the user is deactivated.",
         "operationId": "app_ui_app_ui_get",
         "responses": {
           "200": {
