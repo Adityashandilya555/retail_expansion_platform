@@ -1,4 +1,4 @@
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expectNoAxeViolations, renderWithZm } from "@zm/ui/test";
 import { describe, expect, test, vi } from "vitest";
@@ -185,13 +185,33 @@ describe("user field", () => {
     expect(onSubmit).toHaveBeenCalledWith({ design_exec: "u-asha" });
   });
 
+  const picker = () => screen.getByLabelText(/Design executive/, { selector: "input" }) as HTMLInputElement;
+
+  test("read-only: disabled, nothing fetched, nothing to explain", () => {
+    const loadPeople = loader();
+    renderForm({ schema: ALLOC, readOnly: true, loadPeople });
+    expect(picker().disabled).toBe(true);
+    expect(loadPeople).not.toHaveBeenCalled();
+    expect(screen.queryByText("Can't load people here")).toBeNull();
+  });
+
+  test("an editable form without loadPeople says it can't load people, beside the field's error", async () => {
+    const { user, onSubmit } = renderForm({ schema: ALLOC });
+    expect(picker().disabled).toBe(true);
+    expect(screen.getByText("Can't load people here")).toBeDefined();
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText("Required")).toBeDefined();
+  });
+
   test.each([
-    ["read-only", { readOnly: true, loadPeople: loader() }],
-    ["without loadPeople", {}],
-  ] as const)("%s: disabled, and nothing is fetched", (_, props) => {
+    ["read-only, {id, name} from the API", { readOnly: true, values: { design_exec: { id: "u-asha", name: "Asha Rao" } } }, "Asha Rao"],
+    ["read-only, an id alone", { readOnly: true, values: { design_exec: "u-asha" } }, "Someone picked earlier"],
+    ["an id on the list", { loadPeople: loader(), values: { design_exec: "u-dev" } }, "Dev Menon"],
+    ["an id no longer on the list", { loadPeople: loader(), values: { design_exec: "u-gone" } }, "Someone no longer on the list"],
+  ] as const)("the value it holds shows (%s)", async (_, props, shown) => {
     renderForm({ schema: ALLOC, ...props });
-    expect((screen.getByLabelText(/Design executive/, { selector: "input" }) as HTMLInputElement).disabled).toBe(true);
-    if ("loadPeople" in props) expect(props.loadPeople).not.toHaveBeenCalled();
+    await waitFor(() => expect(picker().value).toBe(shown));
   });
 
   test("the API's 422 shows on the picker", async () => {
@@ -199,12 +219,17 @@ describe("user field", () => {
     const { user } = renderForm({ schema: ALLOC, loadPeople: loader(), values: { design_exec: "u-gone" }, onSubmit });
     await user.click(screen.getByRole("button", { name: "Submit" }));
     expect(await screen.findByText("Pick someone from the list")).toBeDefined();
-    expect(screen.getByLabelText(/Design executive/, { selector: "input" }).getAttribute("aria-invalid")).toBe("true");
+    expect(picker().getAttribute("aria-invalid")).toBe("true");
   });
 
-  test("a list that doesn't load says so on the picker", async () => {
-    renderForm({ schema: ALLOC, loadPeople: vi.fn(async () => Promise.reject(new Error("503"))) });
-    expect(await screen.findByText("Couldn't load the people to pick from")).toBeDefined();
+  test("a list that doesn't load says so, and opening the picker tries again", async () => {
+    const loadPeople = vi.fn<NonNullable<ZmFormProps["loadPeople"]>>().mockRejectedValueOnce(new Error("503")).mockResolvedValue(PEOPLE);
+    const { user } = renderForm({ schema: ALLOC, loadPeople });
+    expect(await screen.findByText(/Couldn't load the people to pick from/)).toBeDefined();
+    await user.click(picker());
+    expect(await screen.findByRole("option", { name: "Asha Rao" })).toBeDefined();
+    expect(screen.queryByText(/Couldn't load the people to pick from/)).toBeNull();
+    expect(loadPeople).toHaveBeenCalledTimes(2);
   });
 
   test.each(["light", "dark"] as const)("has no axe violations (%s)", async (scheme) => {

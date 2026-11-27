@@ -125,16 +125,12 @@ def _levels(who: Preview) -> dict[str, int]:
 
 
 def _sees(
-    workflow: Mapping[str, Any],
-    flow: Mapping[str, Any],
-    stage: Mapping[str, Any],
-    task: Mapping[str, Any],
-    who: Preview,
+    workflow: Mapping[str, Any], flow: Mapping[str, Any], task: Mapping[str, Any], who: Preview
 ) -> Literal["mine", "team"] | None:
-    """How the role meets a task of `stage`: `mine` (they can do it), `team` (level 2+ reads
-    their department's), or not at all. The candidate-group rule is the compiler's
-    (`level_groups`); a step assigned from a field is `mine` for the stage's department, since
-    any of them could be the one picked (#171).
+    """How the role meets a task: `mine` (they can do it), `team` (level 2+ reads their
+    department's), or not at all. The candidate-group rule is the compiler's (`level_groups`);
+    a step assigned from a field is `mine` for the department its picker lists
+    (`tasks.pickable_department`), since any of them could be the one picked (#171).
     # ponytail: approval-chain steps aren't generated; add them when a preview has to show an
     # approver's inbox."""
     performer = task["performer"]
@@ -142,7 +138,8 @@ def _sees(
     if performer.get("initiator"):  # the role is the one who started the fixture case
         return "mine" if me in tasks.starter_groups(workflow, flow) else None
     if "from_field" in performer:
-        return "mine" if stage["department"] == who.department else None
+        picked = tasks.pickable_department(flow, performer["from_field"]) == who.department
+        return "mine" if picked else None
     if performer.get("department") != who.department:
         return None
     groups = level_groups(
@@ -179,7 +176,7 @@ def _fixtures(
                 start, _values(workflow, cases.start_fields(workflow, flow), n), _levels(who)
             )
             found = _stage_tasks(stage)
-            seen = [(t, _sees(workflow, flow, stage, t, who)) for t in found]
+            seen = [(t, _sees(workflow, flow, t, who)) for t in found]
             row = cases.CaseRow(
                 code=code,
                 flow=flow["key"],

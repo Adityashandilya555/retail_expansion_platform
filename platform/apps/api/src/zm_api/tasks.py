@@ -134,18 +134,18 @@ def assignee_fields(flow: Mapping[str, Any]) -> set[str]:
     }
 
 
-def pickable_departments(flow: Mapping[str, Any], field: str) -> set[str]:
-    """The departments of the stages holding the steps a `user` field assigns (`performer:
-    {from_field}`): their members may be picked. Empty when it assigns none: anyone active."""
-    # ponytail: union of the stages' departments; add a per-field constraint if a client needs a
-    # narrower list
-    return {
-        stage["department"]
-        for stage in flow["stages"]
-        for item in stage["tasks"]
-        for t in item.get("parallel", [item])
-        if t["performer"].get("from_field") == field
-    }
+def pickable_department(flow: Mapping[str, Any], field: str) -> str | None:
+    """Whose members a `user` field may pick: the department of the earliest stage, in the
+    flow's order, holding a step it assigns (`performer: {from_field}`). `project_exec` is
+    Project's, though `fc_actuals` (also its) sits in the later Management stage. None when it
+    assigns no step: anyone active."""
+    # ponytail: one department per field, from its first stage; add a per-field constraint if a
+    # client needs another list
+    for stage in flow["stages"]:
+        for item in stage["tasks"]:
+            if any(t["performer"].get("from_field") == field for t in item.get("parallel", [item])):
+                return stage["department"]
+    return None
 
 
 def user_fields(form: Mapping[str, Any]) -> list[str]:
@@ -160,13 +160,13 @@ def pickable(
     people: Iterable[tuple[UUID, str, Iterable[str]]],
 ) -> dict[str, dict[str, str]]:
     """Each of `fields` → who may be picked for it, id → name: the members of its
-    `pickable_departments`, else everyone. `people` are the active ones as `(id, name,
+    `pickable_department`, else everyone. `people` are the active ones as `(id, name,
     departments)`, by name; each list keeps their order."""
     found = [(str(i), name, set(departments)) for i, name, departments in people]
     out: dict[str, dict[str, str]] = {}
     for field in fields:
-        departments = pickable_departments(flow, field)
-        out[field] = {i: name for i, name, ds in found if not departments or ds & departments}
+        department = pickable_department(flow, field)
+        out[field] = {i: name for i, name, ds in found if department is None or department in ds}
     return out
 
 
@@ -647,20 +647,20 @@ async def people_for_start(
 UNKNOWN_PERSON = "Unknown person"
 
 
-def _is_person(defs: Mapping[str, Any], field: str, value: Any) -> bool:
-    return defs.get(field, {}).get("type") == "user" and isinstance(value, str) and value != ""
+def _person_id(defs: Mapping[str, Any], field: str, value: Any) -> UUID | None:
+    """The id a `user` field's value holds; None for any other field, and for the free text
+    such a field took before #171 (e.g. "Ravi Kumar")."""
+    if defs.get(field, {}).get("type") != "user" or not isinstance(value, str):
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
 
 
 def person_ids(defs: Mapping[str, Any], values: Mapping[str, Any]) -> set[UUID]:
     """The ids the `user` fields of `values` hold (`defs`: the release's fields)."""
-    out: set[UUID] = set()
-    for field, value in values.items():
-        if _is_person(defs, field, value):
-            try:
-                out.add(UUID(value))
-            except ValueError:
-                continue  # text a form took before #171: nobody's id
-    return out
+    return {i for f, v in values.items() if (i := _person_id(defs, f, v)) is not None}
 
 
 async def names_of(conn: AsyncConnection, ids: Iterable[UUID]) -> dict[str, str]:
@@ -679,11 +679,13 @@ def named(
     defs: Mapping[str, Any], values: Mapping[str, Any], names: Mapping[str, str]
 ) -> dict[str, Any]:
     """`values` for a read-only response: each `user` field's id as `{id, name}` (`names`, from
-    `names_of`); an id nobody has (any more) reads "Unknown person"."""
-    return {
-        f: {"id": v, "name": names.get(v, UNKNOWN_PERSON)} if _is_person(defs, f, v) else v
-        for f, v in values.items()
-    }
+    `names_of`); an id nobody has (any more) reads "Unknown person". Text that is no id stays
+    as it is: it was the name."""
+    out = dict(values)
+    for f, v in values.items():
+        if (i := _person_id(defs, f, v)) is not None:
+            out[f] = {"id": v, "name": names.get(str(i), UNKNOWN_PERSON)}
+    return out
 
 
 async def shown_values(

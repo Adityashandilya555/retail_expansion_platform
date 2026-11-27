@@ -53,34 +53,60 @@ function Unsupported({ name, label, type }: { name: string; label: string; type:
   );
 }
 
-/** A `user` field: a searchable list from `load`, fetched once per field; disabled without one. */
-function PersonPicker({ name, load, ...props }: SelectProps & { name: string; load?: ZmFormProps["loadPeople"] }) {
-  const [people, setPeople] = useState<Person[]>([]);
-  const [failed, setFailed] = useState(false);
+/** A `user` field's value: an id, or `{id, name}` as the API's read-only answers give one. */
+function personOf(value: unknown): { id: string; name?: string } | null {
+  if (typeof value === "string") return value ? { id: value } : null;
+  if (value && typeof value === "object" && "id" in value && typeof value.id === "string") {
+    return { id: value.id, name: "name" in value && typeof value.name === "string" ? value.name : undefined };
+  }
+  return null;
+}
+
+/** A `user` field: a searchable list from `load`, fetched once per field (again on opening it after a failure);
+ * disabled without one. The value it holds always shows: by its name when known. */
+function PersonPicker({ name, load, value, editable, ...props }: Omit<SelectProps, "value"> & { name: string; load?: ZmFormProps["loadPeople"]; value: unknown; editable: boolean }) {
+  const [attempt, setAttempt] = useState(0);
+  // what a load gave (people, or null when it failed), kept with the loader and attempt it answers:
+  // a new loader or a retry makes it stale, so the list and the failure reset without a setState here
+  const [loaded, setLoaded] = useState<{ load: unknown; attempt: number; people: Person[] | null } | null>(null);
   useEffect(() => {
     if (!load) return;
     let live = true;
     load(name).then(
-      (found) => {
-        if (live) setPeople(found);
+      (people) => {
+        if (live) setLoaded({ load, attempt, people });
       },
       () => {
-        if (live) setFailed(true);
+        if (live) setLoaded({ load, attempt, people: null });
       },
     );
     return () => {
       live = false;
     };
-  }, [load, name]);
+  }, [load, name, attempt]);
+  const settled = loaded && loaded.load === load && loaded.attempt === attempt ? loaded : null;
+  const people = settled?.people ?? null;
+  const failed = settled !== null && settled.people === null;
+  const retry = () => {
+    if (failed) setAttempt((n) => n + 1);
+  };
+  const current = personOf(value);
+  const data = (people ?? []).map((p) => ({ value: p.id, label: p.name }));
+  if (current && !data.some((o) => o.value === current.id)) {
+    data.unshift({ value: current.id, label: current.name ?? (people ? "Someone no longer on the list" : "Someone picked earlier") });
+  }
   return (
     <Select
       {...props}
-      error={props.error ?? (failed && "Couldn't load the people to pick from")}
+      value={current?.id ?? null}
+      error={props.error ?? (failed && "Couldn't load the people to pick from: open the list to try again")}
+      description={editable && !load ? "Can't load people here" : undefined}
       searchable
       clearable
       disabled={!load}
+      onDropdownOpen={retry}
       nothingFoundMessage="Nobody by that name"
-      data={people.map((p) => ({ value: p.id, label: p.name }))}
+      data={data}
     />
   );
 }
@@ -119,7 +145,7 @@ function Field({ name, field, form, required, readOnly, loadPeople }: { name: st
         </Radio.Group>
       );
     case "user":
-      return <PersonPicker {...common} name={name} load={readOnly ? undefined : loadPeople} value={text || null} onChange={onChange} />;
+      return <PersonPicker {...common} name={name} load={readOnly ? undefined : loadPeople} editable={!readOnly} value={value} onChange={onChange} />;
     case "document":
       return <TextInput label={common.label} disabled value={display(value) === "—" ? "" : display(value)} placeholder="No file yet" description="Uploads arrive with Files" />;
     default:

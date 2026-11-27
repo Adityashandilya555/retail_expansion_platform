@@ -188,13 +188,13 @@ def test_a_form_that_shows_an_assignee_field_must_fill_it() -> None:
     tasks._validate(form(doc, "start:store_launch"), START, {"design_exec"})  # not on this form
 
 
-def test_who_can_be_picked_comes_from_the_stages_of_the_tasks_a_field_assigns() -> None:
+def test_who_can_be_picked_is_the_first_stage_of_the_steps_a_field_assigns() -> None:
     flow = matrix_retail()["flows"][0]
-    assert tasks.pickable_departments(flow, "design_exec") == {"design"}
-    assert tasks.pickable_departments(flow, "pe_exec") == {"pe"}
-    # fc_actuals sits in the management stage
-    assert tasks.pickable_departments(flow, "project_exec") == {"project", "management"}
-    assert tasks.pickable_departments(flow, "site_name") == set()  # assigns nothing
+    assert tasks.pickable_department(flow, "design_exec") == "design"
+    assert tasks.pickable_department(flow, "pe_exec") == "pe"
+    # Project's, though fc_actuals (also project_exec's) sits in the later management stage
+    assert tasks.pickable_department(flow, "project_exec") == "project"
+    assert tasks.pickable_department(flow, "site_name") is None  # assigns nothing
 
 
 ASHA, DEV, LENA, MANI, PAT = (uuid.uuid4() for _ in range(5))
@@ -213,7 +213,7 @@ def test_the_people_a_field_lists_are_the_active_members_of_its_departments() ->
     found = tasks.pickable(flow, ["design_exec", "project_exec", "anyone"], ACTIVE)
     assert found == {
         "design_exec": {str(ASHA): "Asha Rao", str(DEV): "Dev Menon"},
-        "project_exec": {str(MANI): "Mani Iyer", str(PAT): "Pat Shah"},
+        "project_exec": {str(PAT): "Pat Shah"},  # no management member
         "anyone": {str(i): name for i, name, _ in ACTIVE},  # assigns no task: anyone active
     }
     assert tasks.user_fields(form(doc, "design_allocate")) == ["design_exec"]
@@ -238,20 +238,25 @@ def test_a_person_outside_the_list_is_422() -> None:
 def test_a_person_reads_by_name_and_an_unknown_id_as_unknown_person() -> None:
     defs = matrix_retail()["fields"]
     gone = str(uuid.uuid4())
+    shouted = str(DEV).upper()  # any spelling of an id finds its person
     values = {
         "design_exec": str(ASHA),
         "pe_exec": gone,
-        "project_exec": "not-an-id",  # any text passed before #171
+        "project_exec": "Ravi Kumar",  # free text a user field took before #171
         "site_name": str(DEV),  # not a user field: left as it is
         "monthly_rent": 5,
     }
+    names = {str(ASHA): "Asha Rao", str(DEV): "Dev Menon"}
     assert tasks.person_ids(defs, values) == {ASHA, uuid.UUID(gone)}
-    assert tasks.named(defs, values, {str(ASHA): "Asha Rao"}) == {
+    assert tasks.named(defs, values, names) == {
         "design_exec": {"id": str(ASHA), "name": "Asha Rao"},
         "pe_exec": {"id": gone, "name": "Unknown person"},
-        "project_exec": {"id": "not-an-id", "name": "Unknown person"},
+        "project_exec": "Ravi Kumar",  # the name it was
         "site_name": str(DEV),
         "monthly_rent": 5,
+    }
+    assert tasks.named(defs, {"pe_exec": shouted}, names) == {
+        "pe_exec": {"id": shouted, "name": "Dev Menon"}
     }
     assert tasks.named(defs, {"design_exec": None}, {}) == {"design_exec": None}
 

@@ -745,18 +745,28 @@ def design3_left(world: World) -> None:
     vault_sql("pilot", sql, world.users["design3"])
 
 
-@pytest.fixture(scope="module")
-def at_design(world: World, design3_left: None) -> str:
-    """A new Matrix Retail case, driven through BD, Legal and Finance to `design_allocate`."""
-    response = world.start("bd1", "store_launch", START)
-    assert response.status_code == 201, response.text
-    code = response.json()["code"]
+def listed(world: World, user: str, field: str, task_id: str) -> list[dict[str, str]]:
+    """The people `field`'s picker offers `user` on the task, only the seeded ones (the vault
+    may hold others)."""
+    found = world.people(user, field, task_id=task_id)
+    assert found.status_code == 200, found.text
+    ours = {str(i) for i in world.users.values()}
+    return [p for p in found.json() if p["id"] in ours]
+
+
+def test_a_matrix_case_through_design_pe_and_project_with_people_picked(
+    world: World, design3_left: None
+) -> None:
+    """One case of its own: who design_allocate's picker lists, refuses and answers; what Asha
+    gets once picked and how a later step names her; then Design, PE and Project to the end, a
+    real person picked for each field."""
+    started = world.start("bd1", "store_launch", START)
+    assert started.status_code == 201, started.text
+    code = started.json()["code"]
     drive(world, code, until="design")
-    return code
+    task = world.task("design2", "zm:design_allocate", code)
 
-
-def test_the_picker_lists_exactly_the_active_design_members(world: World, at_design: str) -> None:
-    task = world.task("design2", "zm:design_allocate", at_design)
+    # exactly the active design members, by name (design3 has left)
     found = world.people("design2", "design_exec", task_id=task["id"])
     assert found.status_code == 200, found.text
     design = vault_sql(
@@ -765,16 +775,13 @@ def test_the_picker_lists_exactly_the_active_design_members(world: World, at_des
         " where m.department = 'design' and u.status = 'active'",
     )
     assert {p["id"] for p in found.json()} == {str(r[0]) for r in design}
-    ours = {str(i) for i in world.users.values()}
-    assert [p for p in found.json() if p["id"] in ours] == [  # by name; design3 has left
+    assert listed(world, "design2", "design_exec", task["id"]) == [
         {"id": str(world.users["design1"]), "name": "Asha Rao"},
         {"id": str(world.users["design2"]), "name": "Design2"},
     ]
 
-
-def test_someone_outside_the_list_is_422(world: World, at_design: str) -> None:
-    task = world.task("design2", "zm:design_allocate", at_design)
-    for outsider in ("legal1", "design3"):  # another department; deactivated
+    # someone from another department, or who has left, is refused
+    for outsider in ("legal1", "design3"):
         values = {"design_exec": str(world.users[outsider])}
         response = world.submit("design2", task["id"], values=values)
         assert response.status_code == 422, response.text
@@ -782,35 +789,54 @@ def test_someone_outside_the_list_is_422(world: World, at_design: str) -> None:
             {"path": "/design_exec", "message": "Pick someone from the list"}
         ]
 
-
-def test_people_for_a_step_the_user_cant_submit_are_404(world: World, at_design: str) -> None:
-    task = world.task("design2", "zm:design_allocate", at_design)
+    # nobody to pick for anyone who can't submit the step, nor for another field or task
     for user in ("bd1", "design1"):  # another department; an L2 step for design L1
         assert world.people(user, "design_exec", task_id=task["id"]).status_code == 404
     assert world.people("design2", "store_model", task_id=task["id"]).status_code == 404
     assert world.people("design2", "design_exec", task_id=world.qsr_task).status_code == 404
-    # not on the flow's start form
-    assert world.people("bd1", "design_exec", flow="store_launch").status_code == 404
+    assert world.people("bd1", "design_exec", flow="store_launch").status_code == 404  # not on it
 
-
-def test_picking_asha_gives_her_the_recce_and_later_steps_read_her_name(
-    world: World, at_design: str
-) -> None:
-    task = world.task("design2", "zm:design_allocate", at_design)
+    # Asha, picked, gets the recce; the review shows her by name
     asha = str(world.users["design1"])
     assert world.submit("design2", task["id"], values={"design_exec": asha}).status_code == 200
-    assert [t["form_key"] for t in world.tasks("design1", case=at_design)] == ["zm:design_recce"]
-    assert "zm:design_recce" not in [t["form_key"] for t in world.tasks("design2", case=at_design)]
-
-    act(world, "design1", "design_recce", at_design)
-    review = world.task("design2", "zm:design_recce_review", at_design)
+    assert [t["form_key"] for t in world.tasks("design1", case=code)] == ["zm:design_recce"]
+    assert "zm:design_recce" not in [t["form_key"] for t in world.tasks("design2", case=code)]
+    act(world, "design1", "design_recce", code)
+    review = world.task("design2", "zm:design_recce_review", code)
     detail = world.http.get(f"/app/tasks/{review['id']}", headers=world.auth("design2")).json()
     assert detail["show"]["design_exec"] == {"id": asha, "name": "Asha Rao"}
 
+    # project_exec lists Project only, though its fc_actuals sits in the management stage
+    drive(world, code, until="project")
+    allocate = world.task("project2", "zm:prj_allocate", code)
+    assert listed(world, "project2", "project_exec", allocate["id"]) == [
+        {"id": str(world.users["project1"]), "name": "Project1"},
+        {"id": str(world.users["project2"]), "name": "Project2"},
+    ]
 
-def test_a_start_form_picker_and_names_in_the_cases_api(
-    world: World, mx1: dict, design3_left: None
-) -> None:
+    drive(world, code, until="nso")
+    case = world.http.get(f"/app/cases/{code}", headers=world.auth("bd1")).json()
+    stages = {s["key"]: s["state"] for s in case["stages"]}
+    assert [stages[k] for k in ("design", "pe_budget", "project")] == ["done"] * 3
+    assert stages["nso"] == "open"
+    submitted = dict(
+        vault_sql(
+            "pilot",
+            "select s.task_def_key, s.submitted_by from app.submissions s"
+            " join app.cases c on c.id = s.case_id where c.code = %s and s.status = 'committed'",
+            code,
+        )
+    )
+    for step, field in (
+        ("design_boq", "design_exec"),
+        ("pe_fill", "pe_exec"),
+        ("prj_accept", "project_exec"),
+        ("prj_complete", "project_exec"),
+    ):
+        assert submitted[step] == world.users[PICKS[field]], step
+
+
+def test_a_start_form_picker_and_names_in_the_cases_api(world: World, design3_left: None) -> None:
     """The audit flow's start form has `audit_owner`, which assigns no step: anyone active."""
     listed = world.people("bd1", "audit_owner", flow="audit")
     assert listed.status_code == 200, listed.text
@@ -840,28 +866,3 @@ def test_a_start_form_picker_and_names_in_the_cases_api(
     assert owner() == [{"id": leaver, "name": "Leaver"}] * 3
     vault_sql("pilot", "delete from app.users where id = %s", world.users["leaver"])
     assert owner() == [{"id": leaver, "name": "Unknown person"}] * 3
-
-
-def test_a_case_passes_design_pe_and_project_with_real_people_picked(
-    world: World, at_design: str
-) -> None:
-    drive(world, at_design, until="nso")
-    case = world.http.get(f"/app/cases/{at_design}", headers=world.auth("bd1")).json()
-    stages = {s["key"]: s["state"] for s in case["stages"]}
-    assert [stages[k] for k in ("design", "pe_budget", "project")] == ["done"] * 3
-    assert stages["nso"] == "open"
-    submitted = dict(
-        vault_sql(
-            "pilot",
-            "select s.task_def_key, s.submitted_by from app.submissions s"
-            " join app.cases c on c.id = s.case_id where c.code = %s and s.status = 'committed'",
-            at_design,
-        )
-    )
-    for step, field in (
-        ("design_boq", "design_exec"),
-        ("pe_fill", "pe_exec"),
-        ("prj_accept", "project_exec"),
-        ("prj_complete", "project_exec"),
-    ):
-        assert submitted[step] == world.users[PICKS[field]], step
