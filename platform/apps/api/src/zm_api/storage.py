@@ -8,26 +8,27 @@ database; signed URLs are made per request and never stored. Each call logs `op`
 Routes as in supabase/storage `src/http/routes/object/` (read on GitHub, 2026-11-27):
 `POST /object/upload/sign/{bucket}/{key}` → `{url}`, `GET /object/authenticated/{bucket}/{key}`,
 `DELETE /object/{bucket}/{key}`, and `POST /object/sign/{bucket}/{key} {expiresIn}` →
-`{signedURL}`. Both URLs are relative to `/storage/v1` and carry a JWT `token` whose `exp` says
-when they stop working; Storage sets the upload URL's lifetime itself
-(`UPLOAD_SIGNED_URL_EXPIRATION_TIME`), so it is read from the token.
+`{signedURL}`. Both URLs are relative to `/storage/v1`.
 """
 
 import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import parse_qs, quote, urlencode, urlsplit
+from urllib.parse import quote, urlencode
 
 import httpx
-import jwt
 
 from zm_api.errors import ApiError
 from zm_api.logs import request_id
 
 DOWNLOAD_TTL = 60  # seconds a signed download URL works (S2-10)
+UPLOAD_TTL = 60
+"""Seconds a signed upload URL surely works: Storage sets its lifetime itself
+(`UPLOAD_SIGNED_URL_EXPIRATION_TIME`, 60 by default, 2 h on hosted projects); the browser PUTs
+at once."""
 _log = logging.getLogger("zm_api.storage")
 
 
@@ -121,24 +122,20 @@ class Storage:
                 raise StorageError()
             return response
 
-    def _signed(self, path: str) -> tuple[str, datetime]:
-        """A signed path from Storage → the browser's URL and when it stops working."""
-        token = parse_qs(urlsplit(path).query)["token"][0]
-        expires = jwt.decode(token, options={"verify_signature": False})["exp"]
-        return self._public + path, datetime.fromtimestamp(expires, UTC)
-
     async def signed_upload(self, key: str) -> tuple[str, datetime]:
-        """A URL the browser PUTs the file to, and when it stops working."""
+        """A URL the browser PUTs the file to, and a time before which it works."""
+        expires = datetime.now(UTC) + timedelta(seconds=UPLOAD_TTL)  # counted from before signing
         response = await self._call("signed_upload", "POST", self._object("upload/sign/", key))
-        return self._signed(response.json()["url"])
+        return self._public + response.json()["url"], expires
 
     async def signed_download(self, key: str, filename: str | None = None) -> tuple[str, datetime]:
         """A URL serving the object for DOWNLOAD_TTL seconds; with `filename`, as an attachment
         of that name (Storage's `download` parameter), else inline (a preview)."""
+        expires = datetime.now(UTC) + timedelta(seconds=DOWNLOAD_TTL)
         response = await self._call(
             "signed_download", "POST", self._object("sign/", key), json={"expiresIn": DOWNLOAD_TTL}
         )
-        url, expires = self._signed(response.json()["signedURL"])
+        url = self._public + response.json()["signedURL"]
         if filename is not None:
             url += "&" + urlencode({"download": filename})
         return url, expires

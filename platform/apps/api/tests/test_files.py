@@ -146,7 +146,8 @@ def test_a_signed_upload_url_is_for_the_browser_and_says_when_it_ends() -> None:
     storage = fake.client(public_url="http://127.0.0.1:54321")
     url, expires = asyncio.run(storage.signed_upload("cases/MX-0001/t/f/1-a b.pdf"))
     assert url.startswith("http://127.0.0.1:54321/storage/v1/object/upload/sign/files/cases/")
-    assert abs((expires - datetime.now(UTC)).total_seconds() - 7200) < 5  # Storage's own TTL
+    # Storage's default lifetime, a lower bound (hosted projects give 2 h)
+    assert 55 < (expires - datetime.now(UTC)).total_seconds() <= 60
     request = fake.requests[0]
     assert str(request.url).startswith("http://kong:8000/storage/v1/object/upload/sign/files/")
     assert request.url.raw_path.endswith(b"/1-a%20b.pdf")
@@ -159,10 +160,8 @@ def test_a_signed_download_works_60_seconds_inline_or_as_an_attachment() -> None
     storage = fake.client()
     url, expires = asyncio.run(storage.signed_download("k/noc.pdf"))
     assert json.loads(fake.requests[0].content) == {"expiresIn": 60}
-    claims = jwt.decode(
-        parse_qs(urlsplit(url).query)["token"][0], options={"verify_signature": False}
-    )
-    assert claims["exp"] - claims["iat"] == 60 and int(expires.timestamp()) == claims["exp"]
+    assert 55 < (expires - datetime.now(UTC)).total_seconds() <= 60
+    assert url.startswith("http://kong:8000/storage/v1/object/sign/files/k/noc.pdf?token=")
     assert "download" not in parse_qs(urlsplit(url).query)
     attached, _ = asyncio.run(storage.signed_download("k/noc.pdf", "Fire NOC.pdf"))
     assert parse_qs(urlsplit(attached).query)["download"] == ["Fire NOC.pdf"]
