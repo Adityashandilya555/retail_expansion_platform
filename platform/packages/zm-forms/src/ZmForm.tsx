@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Fieldset, Grid, Group, Input, NumberInput, Paper, Radio, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title } from "@mantine/core";
+import { Alert, Box, Button, Fieldset, Grid, Group, NumberInput, Paper, Radio, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title, type TextInputProps } from "@mantine/core";
 import { useForm, type UseFormReturnType } from "@mantine/form";
 import { useEffect, useId, useRef, useState } from "react";
 import { formErrors, type FieldError, type FieldSchema, type FormSchema, type FormSection } from "./validate";
@@ -36,17 +36,12 @@ function display(v: unknown): string {
   return String(v);
 }
 
-function Unsupported({ name, label, type }: { name: string; label: string; type: string }) {
+/** A type the app can't draw yet: a disabled input, so a required one still shows its asterisk and its error. */
+function Unsupported({ name, type, ...input }: TextInputProps & { name: string; type: string }) {
   useEffect(() => {
     if (import.meta.env.DEV) console.warn(`@zm/forms: ${name} is a ${type} field, unsupported in v1`);
   }, [name, type]);
-  return (
-    <Input.Wrapper label={label}>
-      <Text size="sm" c="dimmed">
-        {type} fields are unsupported in v1
-      </Text>
-    </Input.Wrapper>
-  );
+  return <TextInput {...input} disabled placeholder="Not available in the app yet" />;
 }
 
 function Field({ name, field, form, required, readOnly }: { name: string; field: FieldSchema; form: UseFormReturnType<Values>; required: boolean; readOnly: boolean }) {
@@ -83,9 +78,9 @@ function Field({ name, field, form, required, readOnly }: { name: string; field:
         </Radio.Group>
       );
     case "document":
-      return <TextInput label={common.label} disabled value={display(value) === "—" ? "" : display(value)} placeholder="No file yet" description="Uploads arrive with Files" />;
+      return <TextInput {...common} disabled value={display(value) === "—" ? "" : display(value)} placeholder="No file yet" description="Uploads arrive with Files" />;
     default:
-      return <Unsupported name={name} label={common.label} type={type} />;
+      return <Unsupported {...common} name={name} type={type} />;
   }
 }
 

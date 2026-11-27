@@ -121,7 +121,7 @@ Golden files live in `packages/compiler/tests/golden/`, and the shared form fixt
 ## Forms
 `@zm/forms` (#28) renders a compiled form: `<ZmForm schema layout values? readOnly? caseLabel? caseData? onSubmit>`.
 - Sections become fieldsets; each row is a Mantine `Grid` with `span={{ base: 12, sm: n }}`, so phones get one column.
-- Fields by `x-zm-type`: `text`, `textarea`, `number`, `currency` (₹, lakh grouping), `date` (native), `select`, `yes_no` (Yes/No radios). `document` shows "Uploads arrive with Files"; any other type shows "unsupported in v1".
+- Fields by `x-zm-type`: `text`, `textarea`, `number`, `currency` (₹, lakh grouping), `date` (native), `select`, `yes_no` (Yes/No radios). `document` shows "Uploads arrive with Files"; any other type shows "Not available in the app yet". Both are disabled inputs that still show a required asterisk and errors; the API refuses a required one placed on a form (#172).
 - The outcome becomes buttons (the first is primary, `reject` is red) with the comment field above them. `caseData` fills the read-only "<case_label> data" panel for `x-zm-show`.
 - Ajv 2020 (`ajv`, `formErrors`, both exported) checks the values first. `onSubmit` gets them without unanswered fields and can resolve with the API's 422 errors (`[{path, message}]`) to show them under their fields.
 
