@@ -639,3 +639,30 @@ def test_a_case_starts_with_its_flows_routing_variables_null(world: World, mx1: 
             params={"processInstanceIdIn": mx1["process_instance_id"], "variableName": "lic_fssai"},
         ).json()
     assert [(v["name"], v["value"]) for v in found] == [("lic_fssai", None)]
+
+
+def test_the_start_form_in_app_ui_starts_a_case_for_starters_only(world: World, mx1: dict) -> None:
+    """#170: BD L1 gets the store launch start form in `GET /app/ui`, and its four fields start a
+    case that lists under Sites with its first task in BD L2's inbox. Legal L1 gets no form, and a
+    direct start is still 403."""
+
+    def flow(user: str) -> dict[str, Any]:
+        response = world.http.get("/app/ui", headers=world.auth(user))
+        assert response.status_code == 200, response.text
+        return next(f for f in response.json()["flows"] if f["key"] == "store_launch")
+
+    form = flow("bd1")["start_form"]
+    # the release's forms are JSONB, which keeps no key order: the layout carries the form order
+    assert [c["field"] for s in form["layout"] for row in s["rows"] for c in row] == list(START)
+    assert set(form["schema"]["properties"]) == set(START)
+    assert form["schema"]["required"] == list(START)
+    assert flow("legal1")["start_form"] is None
+    assert world.start("legal1", "store_launch", START).status_code == 403
+
+    values = {k: START[k] for k in form["schema"]["properties"]}
+    started = world.start("bd1", "store_launch", values)
+    assert started.status_code == 201, started.text
+    code = started.json()["code"]
+    sites = world.http.get("/app/cases", params={"flow": "store_launch"}, headers=world.auth("bd1"))
+    assert code in [c["code"] for c in sites.json()]
+    assert [t["form_key"] for t in world.tasks("bd2", case=code)] == ["zm:bd_review_draft"]

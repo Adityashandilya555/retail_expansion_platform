@@ -289,8 +289,9 @@ export interface paths {
         };
         /**
          * App Ui
-         * @description The active release's nav, pages and flows, filtered to the user's departments. Under a
-         *     preview token (#42): the draft's, as publishing it now would make them, for the role.
+         * @description The active release's nav, pages and flows, filtered to the user's departments, with the
+         *     start forms of the flows they may start. Under a preview token (#42): the draft's, as
+         *     publishing it now would make them, for the role. 401 once the user is deactivated.
          */
         get: operations["app_ui_app_ui_get"];
         put?: never;
@@ -2279,6 +2280,7 @@ export interface components {
             stages: components["schemas"]["UiStage"][];
             /** Start Fields */
             start_fields: components["schemas"]["UiField"][];
+            start_form: components["schemas"]["FormOut"] | null;
         };
         /** UiRelease */
         UiRelease: {

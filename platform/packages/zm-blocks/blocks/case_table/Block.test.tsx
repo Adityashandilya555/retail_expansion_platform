@@ -1,9 +1,9 @@
-import { screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expectNoAxeViolations } from "@zm/ui/test";
 import { afterEach, expect, test, vi } from "vitest";
 import type { AppUi, UiPage } from "../../src";
-import { problem, sampleCases, sampleUi } from "../../src/test";
+import { problem, sampleCases, sampleUi, startableUi } from "../../src/test";
 import { daysSince } from "../../src/cases";
 import { drawPage, location } from "../../src/test/render";
 
@@ -138,6 +138,21 @@ test("daysSince reads the API's ISO times (`Z` or `+00:00`), as every browser pa
   expect(daysSince("2026-10-18T09:00:00.000+00:00")).toBe(7);
   expect(daysSince("2026-10-18T14:30:00+05:30")).toBe(7);
   vi.useRealTimers();
+});
+
+test("New Site shows when the flow has a start form, with the props of a release published before it (S3-02)", async () => {
+  drawPage(sitesPage(SITES), { path: "/app/sites", routes, ui: startableUi });
+  expect(await screen.findByRole("button", { name: "New Site" })).toBeDefined();
+  cleanup();
+  // a department page's table: no `flow` prop, the release's flow
+  drawPage(sitesPage({ stages: ["legal"] }), { path: "/app/legal", routes, ui: startableUi });
+  expect(await screen.findByRole("button", { name: "New Site" })).toBeDefined();
+});
+
+test("no start form (the user may not start a site): no New Site", async () => {
+  drawPage(sitesPage(SITES), { path: "/app/sites", routes });
+  await within(await screen.findByRole("table", { name: "Sites" })).findByText("Indiranagar");
+  expect(screen.queryByRole("button", { name: /^New/ })).toBeNull();
 });
 
 test("no cases says so; an error shows Retry, and Retry loads them", async () => {

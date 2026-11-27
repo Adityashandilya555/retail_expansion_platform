@@ -322,7 +322,25 @@ def test_the_preview_ui_equals_the_live_ui_once_the_draft_is_published(
         published_at=datetime(2026, 11, 14, tzinfo=UTC),
         active=True,
     )
-    assert ui.visible_ui("Pilot-Local", live, {"legal"}).model_dump(mode="json") == shown
+    assert ui.visible_ui("Pilot-Local", live, {"legal": 1}).model_dump(mode="json") == shown
+
+
+def test_a_bd_l1_preview_opens_the_start_form_and_starting_is_read_only(
+    api: TestClient, state: dict[str, Any]
+) -> None:
+    """#170: the role's start form comes from the draft as for a live BD L1; submitting it under
+    the preview token is the usual read-only 403. Legal L1 may not start a site: no form."""
+    bd1 = bearer(preview_token(**{"as": {"department": "bd", "level": 1}, "label": "BD L1"}))
+    (flow,) = api.get("/app/ui", headers=bd1).json()["flows"]
+    required = flow["start_form"]["schema"]["required"]
+    assert required == ["site_name", "city", "address", "store_model"]
+    (legal,) = api.get("/app/ui", headers=bearer(preview_token())).json()["flows"]
+    assert legal["start_form"] is None
+
+    values = {"site_name": "Indiranagar", "city": "Bengaluru", "address": "12th Main"}
+    out = api.post("/app/cases", json={"flow": "store_launch", "values": values}, headers=bd1)
+    assert out.status_code == 403
+    assert out.json()["detail"] == "A preview is read-only"
 
 
 def test_an_unchanged_draft_previews_as_the_live_release() -> None:
