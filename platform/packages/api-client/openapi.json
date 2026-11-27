@@ -1604,6 +1604,72 @@
         "title": "InviteIn",
         "type": "object"
       },
+      "InviteOut": {
+        "description": "The invited person and their new link, answered once, to the inviter only.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invite_expires_at": {
+            "format": "date-time",
+            "title": "Invite Expires At",
+            "type": "string"
+          },
+          "invite_path": {
+            "description": "`/invite/<token>` on the client app. It works once; inviting again kills it.",
+            "title": "Invite Path",
+            "type": "string"
+          },
+          "is_client_admin": {
+            "title": "Is Client Admin",
+            "type": "boolean"
+          },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/Membership"
+            },
+            "title": "Memberships",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "invited",
+              "active",
+              "deactivated"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "name",
+          "status",
+          "is_client_admin",
+          "memberships",
+          "created_at",
+          "invite_path",
+          "invite_expires_at"
+        ],
+        "title": "InviteOut",
+        "type": "object"
+      },
       "KeyChanges": {
         "properties": {
           "added": {
@@ -3815,6 +3881,7 @@
         ]
       },
       "post": {
+        "description": "A new invite, or a new link for someone who never accepted (Resend invite). A client admin,\npending or not, is the owner's to invite: 403.",
         "operationId": "invite_user_app_admin_users_post",
         "requestBody": {
           "content": {
@@ -3831,11 +3898,16 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserOut"
+                  "$ref": "#/components/schemas/InviteOut"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "`no-store`: the body holds the link."
+              }
+            }
           },
           "default": {
             "content": {
@@ -5331,7 +5403,7 @@
     },
     "/owner/clients/{client_id}/client-admin": {
       "post": {
-        "description": "The client's admin, invited by email (they manage people, never the flow, forms or UI).",
+        "description": "The client's admin (they manage people, never the flow, forms or UI), with their link.",
         "operationId": "invite_client_admin_owner_clients__client_id__client_admin_post",
         "parameters": [
           {
@@ -5360,11 +5432,16 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserOut"
+                  "$ref": "#/components/schemas/InviteOut"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "`no-store`: the body holds the link."
+              }
+            }
           },
           "default": {
             "content": {

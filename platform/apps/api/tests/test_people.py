@@ -2,13 +2,15 @@
 
 pilot runs a small legal flow whose one stage offers a Legal L1 and a Legal L2 task in parallel.
 The owner invites the client admin; the admin invites Priya (Legal L1), moves and deactivates
-her. Invite emails go through the worker's sender on a mock Resend, never the real one. The tests
-share one module world and run in file order.
+her; the owner hands Ana the link the invite answered. Invite emails go through
+the worker's sender on a mock Resend, never the real one. The tests share one module world and
+run in file order.
 """
 
 import argparse
 import asyncio
 import json
+import logging
 import re
 import time
 import uuid
@@ -16,6 +18,7 @@ from collections import Counter
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +29,7 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 
-from zm_api import users
+from zm_api import people, users
 from zm_api.main import create_app
 from zm_api.operaton import OperatonError
 from zm_api.publish import publish
@@ -44,6 +47,7 @@ TEMPLATE = Path(__file__).resolve().parents[3] / "packages/templates/qsr/workflo
 BASE_URL = "https://app.people.test"
 TABLES = ("app.cases", "app.case_counters", "app.releases", "app.drafts")
 ADMIN, PRIYA, DEPUTY = "admin@people.test", "priya@people.test", "deputy@people.test"
+ANA = "ana@people.test"
 PASSWORD = "a-long-enough-password"
 
 
@@ -126,6 +130,11 @@ class World:
         body = {"token": self.token_for(email), "password": password}
         return self.http.post("/auth/invite/accept", json=body)
 
+    def accept_link(self, invite_path: str) -> httpx.Response:
+        """Accepts the link an invite answered (#169), as the invitee opening it would."""
+        body = {"token": invite_path.removeprefix("/invite/"), "password": PASSWORD}
+        return self.http.post("/auth/invite/accept", json=body)
+
     def admin(self) -> dict[str, str]:
         return self.access[ADMIN]
 
@@ -199,6 +208,7 @@ def test_the_owner_invites_the_client_admin_who_accepts_and_can_sign_in(world: W
     world.ids[ADMIN] = admin["id"]
     again = world.http.post(path, json=body, headers=world.owner)  # not accepted yet: a new link
     assert (again.status_code, again.json()["id"]) == (201, admin["id"]), again.text
+    assert again.json()["invite_path"] != admin["invite_path"]
     unknown = f"/owner/clients/{uuid.uuid4()}/client-admin"
     assert world.http.post(unknown, json=body, headers=world.owner).status_code == 404
 
@@ -209,6 +219,7 @@ def test_the_owner_invites_the_client_admin_who_accepts_and_can_sign_in(world: W
     assert email["to"] == [ADMIN] and email["from"] == "Z-Matrix <noreply@people.test>"
     assert world.slug.upper() in email["text"]  # the workspace code for later sign-ins
     raw = world.token_for(ADMIN)
+    assert again.json()["invite_path"] == f"/invite/{raw}"  # the owner got the emailed link
     stored = vault_sql(
         "pilot",
         "select i.token_hash, i.sealed, i.sent_at from app.invites i join app.users u"
@@ -253,23 +264,51 @@ def test_the_admin_invites_priya_legal_l1_who_then_sees_legal_tasks(world: World
     assert world.tasks(PRIYA) == {"zm:ppl_l1"}
 
 
-def test_listing_filters_by_status(world: World) -> None:
+def test_listing_filters_by_status_and_never_shows_an_invite_token(
+    world: World, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    listings: list[str] = []
+
     def emails(status: str | None) -> set[str]:
         params = {"status": status} if status else {}
         response = world.http.get("/app/admin/users", params=params, headers=world.admin())
         assert response.status_code == 200, response.text
+        listings.append(response.text)
         return {u["email"] for u in response.json()}
 
     pending = {"email": "pending@people.test", "name": "Pending Person"}
-    assert (
-        world.http.post("/app/admin/users", json=pending, headers=world.admin()).status_code == 201
-    )
+    created = world.http.post("/app/admin/users", json=pending, headers=world.admin())
+    assert created.status_code == 201, created.text
+    assert created.headers["cache-control"] == "no-store"
+    secret = created.json()["invite_path"].rsplit(".", 1)[1]  # the token's random part
     assert {ADMIN, PRIYA, "pending@people.test"} <= emails(None)
     assert "pending@people.test" in emails("invited") and PRIYA not in emails("invited")
     assert {ADMIN, PRIYA} <= emails("active")
     listed = world.http.get("/app/admin/users", headers=world.admin()).json()
     priya = next(u for u in listed if u["email"] == PRIYA)
     assert priya["memberships"] == [{"department": "legal", "level": 1, "scope": "own"}]
+    assert all("invite" not in key for key in priya)
+    assert not [text for text in listings if secret in text]
+    assert caplog.records and not [r for r in caplog.records if secret in str(vars(r))]
+
+
+def test_an_invite_that_fails_before_answering_leaves_the_old_link_working(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    person = {"email": "retry@people.test", "name": "Retry Person"}
+    first = world.http.post("/app/admin/users", json=person, headers=world.admin())
+    assert first.status_code == 201, first.text
+
+    async def read_fails(*_: object, **__: object) -> None:
+        raise RuntimeError("the vault stopped answering")
+
+    with monkeypatch.context() as mp:
+        mp.setattr(people, "_users", read_fails)  # the read that builds the answer
+        again = world.http.post("/app/admin/users", json=person, headers=world.admin())
+    assert again.status_code == 500
+    accepted = world.accept_link(first.json()["invite_path"])  # nothing was committed
+    assert accepted.status_code == 200, accepted.text
 
 
 def test_deactivated_priya_cant_refresh_and_leaves_legal_l1(world: World) -> None:
@@ -376,10 +415,9 @@ def test_an_expired_invite_is_404_until_the_admin_invites_the_person_again(world
 
     deputy = {"email": DEPUTY, "name": "Deputy"}
     owner_path = f"/owner/clients/{world.client_id}/client-admin"
-    assert world.http.post(owner_path, json=deputy, headers=world.owner).status_code == 201
-    by_admin = world.http.post("/app/admin/users", json=deputy, headers=world.admin())
-    assert (by_admin.status_code, by_admin.json()["is_client_admin"]) == (201, True)  # no demotion
-    world.ids[DEPUTY] = by_admin.json()["id"]
+    by_owner = world.http.post(owner_path, json=deputy, headers=world.owner)
+    assert by_owner.status_code == 201, by_owner.text
+    world.ids[DEPUTY] = by_owner.json()["id"]
 
 
 def test_the_owner_inviting_a_pending_admin_again_keeps_the_memberships_set_for_them(
@@ -395,6 +433,28 @@ def test_the_owner_inviting_a_pending_admin_again_keeps_the_memberships_set_for_
     )
     assert again.status_code == 201, again.text
     assert (again.json()["memberships"], again.json()["is_client_admin"]) == (legal, True)
+
+
+def test_a_client_admin_cant_renew_another_admins_invite_to_take_it_over(world: World) -> None:
+    """Renewing an invite kills the old link and answers the new one, so only the owner renews a
+    client admin's: otherwise one admin could accept as a pending other."""
+    owner_path = f"/owner/clients/{world.client_id}/client-admin"
+    renewed = world.http.post(
+        owner_path, json={"email": DEPUTY, "name": "Deputy"}, headers=world.owner
+    )
+    assert renewed.status_code == 201, renewed.text
+    for email in (DEPUTY, ADMIN):  # pending or active
+        taken = world.http.post(
+            "/app/admin/users", json={"email": email, "name": "Mine now"}, headers=world.admin()
+        )
+        assert taken.status_code == 403, taken.text
+        message = "Only the platform owner can invite or re-invite a client admin"
+        assert taken.json()["detail"] == message
+    accepted = world.accept_link(renewed.json()["invite_path"])  # the owner's link still works
+    assert accepted.status_code == 200, accepted.text
+    world.access[DEPUTY] = bearer(accepted.json()["access_token"])
+    me = world.http.get("/app/me", headers=world.access[DEPUTY]).json()
+    assert (me["email"], me["name"], me["is_client_admin"]) == (DEPUTY, "Deputy", True)
 
 
 def test_a_failed_operaton_mirror_is_retried_by_the_reconciler(
@@ -423,10 +483,6 @@ def test_a_failed_operaton_mirror_is_retried_by_the_reconciler(
 
 
 def test_two_admins_deactivating_each_other_at_once_leave_one_admin(world: World) -> None:
-    world.send_invites()
-    accepted = world.accept(DEPUTY)
-    assert accepted.status_code == 200, accepted.text
-    world.access[DEPUTY] = bearer(accepted.json()["access_token"])
     pairs = [(ADMIN, DEPUTY), (DEPUTY, ADMIN)]
     pilot = f"postgresql://postgres:postgres@localhost:{VAULTS['pilot']}/postgres"
     # both rows held, so both requests get past the admin check before either changes anything
@@ -457,3 +513,26 @@ def test_two_admins_deactivating_each_other_at_once_leave_one_admin(world: World
         DEPUTY,
     )
     assert len(active) == 1
+
+
+def test_the_owner_hands_ana_the_link_the_invite_answered_and_it_works_once(world: World) -> None:
+    """No worker runs here: the link needs no email. Runs last, because Ana becomes one more
+    active client admin, which would let both deactivations in the test above pass."""
+    path = f"/owner/clients/{world.client_id}/client-admin"
+    body = {"email": ANA, "name": "Ana"}
+    first, second = (world.http.post(path, json=body, headers=world.owner) for _ in range(2))
+    for response in (first, second):
+        assert response.status_code == 201, response.text
+        assert response.headers["cache-control"] == "no-store"
+    link = second.json()
+    assert re.fullmatch(rf"/invite/{re.escape(world.slug)}\.[\w-]{{43}}", link["invite_path"])
+    left = datetime.fromisoformat(link["invite_expires_at"]) - datetime.now(UTC)
+    assert timedelta(days=6, hours=23) < left <= timedelta(days=7)
+
+    killed = world.accept_link(first.json()["invite_path"])
+    assert killed.status_code == 404  # the second invite killed it
+    accepted = world.accept_link(link["invite_path"])
+    assert accepted.status_code == 200, accepted.text
+    me = world.http.get("/app/me", headers=bearer(accepted.json()["access_token"])).json()
+    assert (me["email"], me["is_client_admin"]) == (ANA, True)
+    assert world.accept_link(link["invite_path"]).status_code == 404  # once

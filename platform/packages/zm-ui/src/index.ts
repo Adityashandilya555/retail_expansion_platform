@@ -4,6 +4,7 @@ export { AppFrame, type NavItem } from "./AppFrame";
 export { AccentSwatches, AppearanceMenu, accentLabel } from "./AppearanceMenu";
 export { AuthCard, SignInForm, notifyError, notifyInfo } from "./SignIn";
 export { DataTable, type Column } from "./DataTable";
+export { InviteLink } from "./InviteLink";
 export { Notice } from "./Notice";
 export { Num, formatNum } from "./Num";
 export { PageHeader } from "./PageHeader";
