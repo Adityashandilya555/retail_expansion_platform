@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from zm_api import preview, releases, tasks, ui
-from zm_api.errors import Unauthorized
+from zm_api.errors import Forbidden, NotFound, Unauthorized
 from zm_api.main import create_app
 from zm_api.registry import Client
 from zm_api.releases import ReleaseRow
@@ -32,14 +32,15 @@ def matrix_retail() -> dict[str, Any]:
 def release(version: int = 1, workflow: dict[str, Any] | None = None) -> ReleaseRow:
     wf = workflow or matrix_retail()
     full = migrate(wf).apps.model_dump(mode="json", by_alias=True)
+    compiled = preview.build("pilot-local", wf)  # forms and process keys as publish stores them
     return ReleaseRow(
         version=version,
         deployment_id=f"dep-{version}",
         workflow=wf,
-        forms=preview.build("pilot-local", wf).forms,  # the compiled forms, as publish stores them
+        forms=compiled.forms,
         ui=full,
         routing_vars={},
-        process_keys={},
+        process_keys=compiled.process_keys,
         blocks_used={},
         sha256="x",
         published_by=None,
@@ -154,6 +155,28 @@ def test_who_may_not_start_the_flow_gets_no_start_form() -> None:
     assert start_form(ui.visible_ui("Matrix Retail", release(), {})) is None
 
 
+def test_a_flow_post_app_cases_would_404_gets_no_start_form() -> None:
+    """The release never deployed the flow: starting it is 404, so no New Site either."""
+    undeployed = release()
+    undeployed.process_keys.pop("store_launch")
+    assert start_form(ui.visible_ui("Matrix Retail", undeployed, {"bd": 1})) is None
+    with pytest.raises(NotFound):
+        tasks.startable_flow(undeployed, "store_launch", {"bd__L1"})
+    with pytest.raises(NotFound):
+        tasks.startable_flow(release(), "nope", {"bd__L1"})
+    with pytest.raises(Forbidden):
+        tasks.startable_flow(release(), "store_launch", {"legal__L1"})
+    assert tasks.startable_flow(release(), "store_launch", {"bd__L1"})["key"] == "store_launch"
+
+
+def test_a_release_without_the_start_form_gets_none_instead_of_failing() -> None:
+    missing = release()
+    del missing.forms["start:store_launch"]
+    out = ui.visible_ui("Matrix Retail", missing, {"bd": 1})
+    assert start_form(out) is None
+    assert [n.page for n in out.nav][:2] == ["home", "sites"]  # the rest of the UI still draws
+
+
 def test_the_start_form_drops_sections_hidden_below_the_users_level() -> None:
     wf = matrix_retail()
     wf["fields"]["site_lead_notes"] = {"type": "textarea", "label": "Lead notes"}
@@ -256,6 +279,13 @@ def test_app_ui_sends_the_start_form_only_to_who_may_start_the_flow(
     vault["levels"] = {"legal": 1}
     (flow,) = api.get("/app/ui", headers=bearer(token())).json()["flows"]
     assert flow["start_form"] is None
+
+    # a release row without the start form still answers, for a starter too
+    vault["levels"] = {"bd": 1}
+    del vault["release"].forms["start:store_launch"]
+    response = api.get("/app/ui", headers=bearer(token()))
+    assert response.status_code == 200
+    assert response.json()["flows"][0]["start_form"] is None
 
 
 def test_app_ui_before_the_first_publish_is_404(api: TestClient, vault: dict[str, Any]) -> None:

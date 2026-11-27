@@ -10,33 +10,40 @@ import { useNavigate } from "react-router";
 import { useBlocksApi } from "./api";
 import type { AppUi } from "./registry";
 
-/** Any other `ZmForm` prop (e.g. a loader for `user` fields) is passed through to the form. */
+/** Extra `ZmForm` props are forwarded to the form (S3-03 adds `loadPeople`). */
 export type StartCaseProps = Omit<ZmFormProps, "schema" | "layout" | "onSubmit"> & { flow: AppUi["flows"][number] };
 
 /** "New <case>" (e.g. "New Site") and its start form, full screen below `sm`; nothing when the
- * flow has no start form. */
+ * flow has no start form. While a submit is in flight the modal can't be closed, so its answer
+ * (the case page, or an error) never lands after the person thinks they cancelled. */
 export function StartCase({ flow, ...form }: StartCaseProps) {
   const api = useBlocksApi();
   const queries = useQueryClient();
   const navigate = useNavigate();
   const [opened, setOpened] = useState(false);
+  const [sending, setSending] = useState(false);
   const fullScreen = useMatches({ base: true, sm: false });
   const start = flow.start_form;
   if (!start) return null;
 
   const title = `New ${flow.case_label}`;
   const submit: ZmFormProps["onSubmit"] = async (values) => {
-    const { data, error, response } = await api.POST("/app/cases", { body: { flow: flow.key, values } });
-    if (!data) {
-      if (response.status === 422 && error?.errors) return error.errors;
-      notifyError(error?.detail ?? `Couldn't start this ${flow.case_label.toLowerCase()}.`);
-      return;
+    setSending(true);
+    try {
+      const { data, error, response } = await api.POST("/app/cases", { body: { flow: flow.key, values } });
+      if (!data) {
+        if (response.status === 422 && error?.errors) return error.errors;
+        notifyError(error?.detail ?? `Couldn't start this ${flow.case_label.toLowerCase()}.`);
+        return;
+      }
+      // the new case lists in every case table, and its first task is in someone's inbox
+      void queries.invalidateQueries({ queryKey: ["app", "cases"] });
+      void queries.invalidateQueries({ queryKey: ["app", "tasks"] });
+      setOpened(false);
+      navigate(`/app/cases/${encodeURIComponent(data.code)}`);
+    } finally {
+      setSending(false);
     }
-    // the new case lists in every case table, and its first task is in someone's inbox
-    void queries.invalidateQueries({ queryKey: ["app", "cases"] });
-    void queries.invalidateQueries({ queryKey: ["app", "tasks"] });
-    setOpened(false);
-    navigate(`/app/cases/${encodeURIComponent(data.code)}`);
   };
   return (
     <>
@@ -44,10 +51,12 @@ export function StartCase({ flow, ...form }: StartCaseProps) {
       <Modal
         opened={opened}
         onClose={() => setOpened(false)}
+        closeOnEscape={!sending}
+        closeOnClickOutside={!sending}
         title={title}
         size="lg"
         fullScreen={fullScreen}
-        closeButtonProps={{ "aria-label": "Close" }}
+        closeButtonProps={{ "aria-label": "Close", disabled: sending }}
         // Mantine draws the dialog's header as <header>, which reads as a second page banner
         attributes={{ header: { role: "presentation" } }}
       >

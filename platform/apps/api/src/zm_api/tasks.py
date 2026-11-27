@@ -108,6 +108,18 @@ def _flow(workflow: Mapping[str, Any], flow_key: str) -> dict[str, Any] | None:
     return next((f for f in workflow["flows"] if f["key"] == flow_key), None)
 
 
+def startable_flow(release: ReleaseRow, flow_key: str, groups: set[str]) -> dict[str, Any]:
+    """The flow a user in `groups` may start on `release`: 404 when the release has no such flow
+    or never deployed it, 403 when the groups aren't among its starter groups. `GET /app/ui`
+    offers a start form by the same rule (#170)."""
+    flow = _flow(release.workflow, flow_key)
+    if flow is None or flow_key not in release.process_keys:
+        raise NotFound("No such flow")
+    if not starter_groups(release.workflow, flow) & groups:
+        raise Forbidden("You can't start this flow")
+    return flow
+
+
 def _flow_tasks(flow: Mapping[str, Any]) -> Iterator[dict[str, Any]]:
     for stage in flow["stages"]:
         for item in stage["tasks"]:
@@ -301,11 +313,7 @@ async def start_case(
     async with ctx.db.connect() as conn:
         me = await person(conn, user_id)
         release = await _active(conn)
-    flow = _flow(release.workflow, flow_key)
-    if flow is None or flow_key not in release.process_keys:
-        raise NotFound("No such flow")
-    if not starter_groups(release.workflow, flow) & me.groups:
-        raise Forbidden("You can't start this flow")
+    flow = startable_flow(release, flow_key, me.groups)
     key = f"start:{flow_key}"
     _validate(visible_form(release.forms[key], me.levels), values, assignee_fields(flow))
 

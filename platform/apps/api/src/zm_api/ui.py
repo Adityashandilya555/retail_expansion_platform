@@ -6,8 +6,8 @@ departments. Pages have no `visible_to` of their own: a page is sent when a nav 
 see points at it, or when no nav item points at it at all (`case` pages, pages only linked to).
 Level-based rules come with #56.
 
-Each flow carries its start form (#170) when the user's levels put them in the flow's starter
-groups, as `tasks.start_case` checks and validates it; it is read from the release's forms, so a
+Each flow carries its start form (#170) when `tasks.start_case` would let the user start it (the
+same `tasks.startable_flow` rule), as it validates it; it is read from the release's forms, so a
 release published before #170 gets it too.
 """
 
@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from zm_api import preview, releases, tasks
 from zm_api.context import ClientCtx, Preview, Viewer, client_router
-from zm_api.errors import NotFound
+from zm_api.errors import Forbidden, NotFound
 from zm_api.releases import ReleaseRow
 from zm_api.tasks_routes import FormOut
 from zm_schema import WorkflowV1, group_id
@@ -84,12 +84,14 @@ def form_fields(wf: WorkflowV1, form: str) -> list[UiField]:
 
 
 def start_form(release: ReleaseRow, flow_key: str, levels: Mapping[str, int]) -> FormOut | None:
-    """The flow's start form as this user fills it, or None when they may not start the flow."""
-    flow = next(f for f in release.workflow["flows"] if f["key"] == flow_key)
-    groups = {group_id(d, n) for d, n in levels.items()}
-    if not tasks.starter_groups(release.workflow, flow) & groups:
+    """The flow's start form as this user fills it; None when `POST /app/cases` would refuse
+    them (`tasks.startable_flow`) or the release has no start form for the flow."""
+    try:
+        tasks.startable_flow(release, flow_key, {group_id(d, n) for d, n in levels.items()})
+    except (NotFound, Forbidden):
         return None
-    return FormOut(**tasks.visible_form(release.forms[f"start:{flow_key}"], levels))
+    form = release.forms.get(f"start:{flow_key}")
+    return None if form is None else FormOut(**tasks.visible_form(form, levels))
 
 
 def visible_ui(client_name: str, release: ReleaseRow, levels: Mapping[str, int]) -> AppUi:
@@ -131,7 +133,8 @@ async def app_ui(ctx: ClientCtx, uid: Viewer) -> AppUi:
     start forms of the flows they may start. Under a preview token (#42): the draft's, as
     publishing it now would make them, for the role. 401 once the user is deactivated."""
     if isinstance(uid, Preview):
-        return visible_ui(ctx.client.name, await preview.draft_release(ctx), preview._levels(uid))
+        draft = await preview.draft_release(ctx)
+        return visible_ui(ctx.client.name, draft, {uid.department: uid.level})
     async with ctx.db.connect() as conn:
         me = await tasks.person(conn, uid)
         release = await releases.active_release(conn)

@@ -122,6 +122,25 @@ test("under a preview the form opens and Submit shows the read-only error", asyn
   expect(location()).toBe("/app/sites");
 });
 
+test("while Submit is in flight the modal can't be closed; the answer then opens the case", async () => {
+  let answer: (r: Response) => void = () => {};
+  drawPage(SITES, {
+    path: "/app/sites",
+    ui: startableUi,
+    routes: { ...reads, "POST /app/cases": () => new Promise<Response>((resolve) => (answer = resolve)) },
+  });
+  const { user, dialog } = await openStart();
+  await fill(user, dialog);
+  await user.click(within(dialog).getByRole("button", { name: "Submit" }));
+  const close = within(dialog).getByRole<HTMLButtonElement>("button", { name: "Close" });
+  await waitFor(() => expect(close.disabled).toBe(true));
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("dialog", { name: "New Site" })).toBe(dialog);
+
+  answer(Response.json(CREATED, { status: 201 }));
+  await waitFor(() => expect(location()).toBe("/app/cases/MX-0004"));
+});
+
 test("the modal keeps focus inside, Escape closes it, and focus goes back to New Site", async () => {
   drawPage(SITES, { path: "/app/sites", ui: startableUi, routes: reads });
   const { user, dialog } = await openStart();
