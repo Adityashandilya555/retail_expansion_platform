@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { blocks, type AppUi, type UiPage } from "@zm/blocks";
 import { sampleCase, sampleCases, sampleUi, startableUi, testBlocks } from "@zm/blocks/test";
 import { accentStorageKey, PRESETS, schemeStorageKey } from "@zm/ui";
+import { expectNoAxeViolations } from "@zm/ui/test";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { ClientApp } from "./App";
@@ -493,6 +494,16 @@ test("the status filter asks the API for that status", async () => {
   await vi.waitFor(() => expect(seen.map((r) => new URL(r.url).search)).toEqual(["", "?status=deactivated"]));
 });
 
+/** What inviting `person` answers: them plus their one-time link (#169). */
+const invited = (person: typeof PRIYA, token = "abc123") => ({
+  ...person,
+  status: "invited",
+  invite_path: `/invite/pilot-local.${token}`,
+  invite_expires_at: "2026-11-08T09:00:00Z",
+});
+const inviteLink = (scope: Pick<typeof screen, "findByRole">) =>
+  scope.findByRole<HTMLInputElement>("textbox", { name: "Invite link", description: /^Works once, until .+\. Also emailed if email is set up\.$/ });
+
 test("inviting Priya, Legal L1, sends her department and level; a taken email shows under the field", async () => {
   let taken = true;
   const seen = adminApi({
@@ -509,7 +520,7 @@ test("inviting Priya, Legal L1, sends her department and level; a taken email sh
             },
             409,
           )
-        : json({ ...PRIYA, status: "invited" }, 201),
+        : json(invited(PRIYA), 201),
   });
   renderAt("/app/admin/people");
   const user = userEvent.setup();
@@ -524,9 +535,19 @@ test("inviting Priya, Legal L1, sends her department and level; a taken email sh
 
   taken = false;
   await user.click(dialog.getByRole("button", { name: "Send invite" }));
-  await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Invite person" })).toBeNull());
+  const link = await inviteLink(dialog);
+  expect(link.value).toBe(`${location.origin}/invite/pilot-local.abc123`);
+  expect(screen.queryByText(/gets an email/)).toBeNull(); // no claim an email went out: it may not have
+  await user.click(dialog.getByRole("button", { name: "Copy link" }));
+  expect(await navigator.clipboard.readText()).toBe(link.value);
+  await expectNoAxeViolations();
   const posted = await bodies(seen, "POST");
   expect(posted[1]).toEqual({ email: "priya@pilot.demo", name: "Priya", memberships: [{ department: "legal", level: 1, scope: "own" }] });
+
+  await user.click(dialog.getByRole("button", { name: "Done" }));
+  await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Invite person" })).toBeNull());
+  await user.click(screen.getByRole("button", { name: "Invite person" })); // a fresh form, not the old link
+  expect(within(await screen.findByRole("dialog", { name: "Invite person" })).queryByRole("textbox", { name: "Invite link" })).toBeNull();
 });
 
 test("moving Priya to L2, and deactivating her after a confirmation, PATCH her", async () => {
@@ -550,15 +571,47 @@ test("moving Priya to L2, and deactivating her after a confirmation, PATCH her",
   ]);
 });
 
-test("resending an invite POSTs the invited person's email, name and memberships again", async () => {
-  const invited = { ...PRIYA, status: "invited" };
-  const seen = adminApi({ "GET /app/admin/users": () => json([invited]), "POST /app/admin/users": () => json(invited, 201) });
+test("resending an invite POSTs only the email and name, so an unsaved level stays unsaved, and shows the new link", async () => {
+  const seen = adminApi({
+    "GET /app/admin/users": () => json([{ ...PRIYA, status: "invited" }]),
+    "POST /app/admin/users": () => json(invited(PRIYA, "new456"), 201),
+  });
   renderAt("/app/admin/people");
   const user = userEvent.setup();
   await user.click(await screen.findByText("Priya"));
-  await user.click(within(await screen.findByRole("dialog", { name: "Priya" })).getByRole("button", { name: "Resend invite" }));
+  const drawer = within(await screen.findByRole("dialog", { name: "Priya" }));
+  await user.selectOptions(drawer.getByLabelText("Level in Legal"), "2"); // not saved
+  await user.click(drawer.getByRole("button", { name: "Resend invite" }));
+  expect((await inviteLink(drawer)).value).toBe(`${location.origin}/invite/pilot-local.new456`);
+  expect(screen.queryByText(/gets a new email/)).toBeNull();
+  expect(await bodies(seen, "POST")).toEqual([{ email: PRIYA.email, name: "Priya" }]); // the API keeps her saved L1
+  expect(seen.filter((r) => r.method === "PATCH")).toEqual([]);
+  await expectNoAxeViolations();
+});
+
+test("a resend the API refuses says why; a pending client admin has no Resend invite here", async () => {
+  const deputy = { ...PRIYA, id: "0b4c6f2e-1111-4a2b-9c3d-0000000000cc", email: "deputy@pilot.demo", name: "Deputy", is_client_admin: true, memberships: [] };
+  adminApi({
+    "GET /app/admin/users": () => json([{ ...PRIYA, status: "invited" }, { ...deputy, status: "invited" }]),
+    "POST /app/admin/users": () =>
+      json(
+        { type: "about:blank", title: "Conflict", status: 409, detail: "Email taken", request_id: "r", errors: [{ path: "/email", message: "Someone here already uses this email" }] },
+        409,
+      ),
+  });
+  renderAt("/app/admin/people");
+  const user = userEvent.setup();
+  await user.click(await screen.findByText("Priya"));
+  const drawer = within(await screen.findByRole("dialog", { name: "Priya" }));
+  await user.click(drawer.getByRole("button", { name: "Resend invite" })); // she accepted meanwhile
+  expect(await screen.findByText("Someone here already uses this email")).toBeDefined();
+  expect(drawer.queryByRole("textbox", { name: "Invite link" })).toBeNull();
+
+  await user.click(drawer.getByRole("button", { name: "Close" }));
   await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Priya" })).toBeNull());
-  expect(await bodies(seen, "POST")).toEqual([{ email: PRIYA.email, name: "Priya", memberships: PRIYA.memberships }]);
+  await user.click(screen.getByText("Deputy"));
+  const admin = within(await screen.findByRole("dialog", { name: "Deputy" }));
+  expect(admin.queryByRole("button", { name: "Resend invite" })).toBeNull(); // the owner renews it
 });
 
 // --- change requests (S2-24a) ---------------------------------------------------------------------

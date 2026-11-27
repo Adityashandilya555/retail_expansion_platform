@@ -1,12 +1,13 @@
-// Clients, their provisioning, look and publishing (#29, #34). Provisioning itself is the worker's
-// (#24, #25): the API queues the steps, and the client page polls them every 5 s.
-import { Button, Code, Group, NativeSelect, Stack, Tabs, Text, TextInput, Title } from "@mantine/core";
+// Clients, their provisioning, look, publishing and client admin (#29, #34, #169). Provisioning
+// itself is the worker's (#24, #25): the API queues the steps, and the client page polls them every 5 s.
+import { Button, Code, Group, Modal, NativeSelect, Stack, Tabs, Text, TextInput, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "@zm/api-client";
 import {
   AccentSwatches,
   accentLabel,
   DataTable,
+  InviteLink,
   isAccent,
   Notice,
   notifyError,
@@ -20,6 +21,7 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { Dock } from "./agent/Dock";
 import { ClientCards } from "./ClientCards";
+import { onWeb } from "./Preview";
 import { PublishDialog } from "./Publish";
 import { api, must } from "./session";
 
@@ -27,6 +29,7 @@ type ClientOut = components["schemas"]["ClientOut"];
 type StepOut = components["schemas"]["StepOut"];
 type ReleaseOut = components["schemas"]["ReleaseOut"];
 type ThemeIn = components["schemas"]["ThemeIn"];
+type InviteOut = components["schemas"]["InviteOut"];
 
 export const CLIENT_STATUS: Record<ClientOut["status"], [StatusTone, string]> = {
   new: ["queued", "New"],
@@ -265,6 +268,86 @@ function Look({ clientId }: { clientId: string }) {
   );
 }
 
+// --- the client admin (#169): invited here, with a one-time link to hand over -------------------
+
+const EMAIL = /^[^@\s]+@[^@\s]+$/; // the API's rule
+
+function InviteAdminForm({ clientId, onDone }: { clientId: string; onDone: () => void }) {
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [errors, setErrors] = useState<Partial<Record<"email" | "name", string>>>({});
+  const [pending, setPending] = useState(false);
+  const [sent, setSent] = useState<InviteOut | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const found: Partial<Record<"email" | "name", string>> = {};
+    if (!EMAIL.test(email.trim())) found.email = "Enter an email address";
+    if (!name.trim()) found.name = "Enter their name";
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
+
+    setPending(true);
+    try {
+      const body = { email: email.trim(), name: name.trim() };
+      const { data, error } = await api.POST("/owner/clients/{client_id}/client-admin", { params: { path: { client_id: clientId } }, body });
+      if (data) return setSent(data);
+      if (error.errors?.length) {
+        return setErrors(Object.fromEntries(error.errors.map((f) => [f.path.slice(1), f.message])));
+      }
+      notifyError(error.detail ?? "Couldn't invite the client admin.");
+    } catch {
+      notifyError("Can't reach Z-Matrix right now. Check your connection and try again.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (sent) {
+    return (
+      <Stack>
+        <InviteLink url={onWeb(sent.invite_path)} expiresAt={sent.invite_expires_at} />
+        <Group justify="flex-end">
+          <Button onClick={onDone}>Done</Button>
+        </Group>
+      </Stack>
+    );
+  }
+  return (
+    <form onSubmit={submit} noValidate>
+      <Stack>
+        <TextInput label="Email" type="email" required autoFocus value={email} onChange={(e) => setEmail(e.currentTarget.value)} error={errors.email} />
+        <TextInput label="Name" required value={name} onChange={(e) => setName(e.currentTarget.value)} error={errors.name} />
+        <Group justify="flex-end">
+          <Button type="submit" loading={pending}>
+            Send invite
+          </Button>
+        </Group>
+      </Stack>
+    </form>
+  );
+}
+
+function ClientAdmin({ clientId }: { clientId: string }) {
+  const [inviting, setInviting] = useState(false);
+  return (
+    <Stack gap="sm">
+      <Group justify="space-between">
+        <Title order={2} size="h3">
+          Client admin
+        </Title>
+        <Button variant="default" onClick={() => setInviting(true)}>
+          Invite client admin
+        </Button>
+      </Group>
+      <Text size="sm">The person who manages the client's people. Inviting someone again replaces their earlier link.</Text>
+      <Modal opened={inviting} onClose={() => setInviting(false)} title="Invite client admin">
+        <InviteAdminForm clientId={clientId} onDone={() => setInviting(false)} />
+      </Modal>
+    </Stack>
+  );
+}
+
 // --- `/clients/:id` ---------------------------------------------------------------------------
 
 export function ClientPage() {
@@ -412,6 +495,8 @@ export function ClientPage() {
                 />
               </Stack>
             )}
+
+            {c.status === "ready" && <ClientAdmin clientId={id} />}
           </Stack>
         </Tabs.Panel>
         {/* the agent dock (#41); kept mounted, so a conversation survives a look at the overview */}

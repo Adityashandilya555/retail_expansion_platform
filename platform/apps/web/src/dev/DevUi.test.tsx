@@ -25,6 +25,7 @@ test.each(matrix)("/dev/ui draws every component in $preset.key · $scheme (#34)
     "Presets (the owner console's picker)",
     "Status pills",
     "Notices",
+    "Invite link (after an invite, in the console and on People)",
     "Stage tracker",
     "Data table",
     "Sign-in form (AuthCard frames it on /, /login and the console's /login)",
@@ -35,4 +36,5 @@ test.each(matrix)("/dev/ui draws every component in $preset.key · $scheme (#34)
   expect(screen.getByRole("table", { name: "Sites" })).toBeDefined();
   expect(screen.getByRole("list", { name: "Stages of MX-0001" })).toBeDefined();
   expect(screen.getByRole("textbox", { name: "Site name" })).toBeDefined();
+  expect(screen.getByRole("textbox", { name: "Invite link" })).toBeDefined();
 });
