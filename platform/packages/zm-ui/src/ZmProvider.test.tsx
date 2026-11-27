@@ -1,3 +1,4 @@
+import { Drawer, Modal } from "@mantine/core";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -117,6 +118,22 @@ test("switching user in place reloads that user's choices", async () => {
     </ZmProvider>,
   );
   expect(screen.getByTestId("probe").textContent).toBe("quartz:slate");
+});
+
+test("the theme gives every Modal and Drawer a named close button and no second page banner", async () => {
+  render(
+    <ZmProvider env="test">
+      <header>Page</header>
+      <Modal opened onClose={() => {}} title="A modal">
+        Body
+      </Modal>
+      <Drawer opened onClose={() => {}} title="A drawer">
+        Body
+      </Drawer>
+    </ZmProvider>,
+  );
+  expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(2);
+  await expectNoAxeViolations();
 });
 
 test("signing out clears the pointer the pre-paint script reads", () => {
