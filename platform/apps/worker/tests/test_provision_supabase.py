@@ -324,12 +324,33 @@ def test_bucket_is_private_whether_new_or_existing(created: httpx.Response) -> N
     supabase.bucket(context(Recorder({"supabase_ref": REF, "service_role_key": "service-jwt"})))
 
     request = post.calls.last.request
-    assert json.loads(request.content) == {"id": "files", "name": "files", "public": False}
+    limit = {"public": False, "file_size_limit": 100 * 1024 * 1024}  # the schema's max_mb ceiling
+    assert json.loads(request.content) == {"id": "files", "name": "files", **limit}
     assert request.headers["apikey"] == "service-jwt"
     assert request.headers["authorization"] == "Bearer service-jwt"
     assert put.called == (created.status_code != 200)
     if put.called:
-        assert json.loads(put.calls.last.request.content) == {"public": False}
+        assert json.loads(put.calls.last.request.content) == limit
+
+
+@pytest.mark.parametrize(
+    "too_high",
+    [
+        httpx.Response(413, json={"error": "Payload too large"}),
+        httpx.Response(400, json={"statusCode": "413", "error": "Payload too large"}),
+    ],
+)
+@respx.mock
+def test_a_project_limit_below_100_mb_stays_the_backstop(too_high: httpx.Response) -> None:
+    """Storage refuses a bucket limit above the project's own (50 MB by default): the bucket is
+    then made without one, and the project's limit holds."""
+    post = respx.post(f"{PROJECT}/storage/v1/bucket").mock(
+        side_effect=[too_high, httpx.Response(200, json={"name": "files"})]
+    )
+    supabase.bucket(context(Recorder({"supabase_ref": REF, "service_role_key": "k"})))
+    bodies = [json.loads(c.request.content) for c in post.calls]
+    assert [b.get("file_size_limit") for b in bodies] == [100 * 1024 * 1024, None]
+    assert bodies[1] == {"id": "files", "name": "files", "public": False}
 
 
 @respx.mock
