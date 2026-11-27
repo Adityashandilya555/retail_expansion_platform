@@ -88,14 +88,7 @@ export function PublishDialog({
   }
 
   return (
-    <Modal
-      opened={opened}
-      onClose={close}
-      title={`Publish v${next}?`}
-      closeButtonProps={{ "aria-label": "Close" }}
-      // Mantine draws the dialog's header as <header>, which reads as a second page banner
-      attributes={{ header: { role: "presentation" } }}
-    >
+    <Modal opened={opened} onClose={close} title={`Publish v${next}?`}>
       <Stack>
         <Text size="sm">The draft is compiled and deployed to {clientName}'s own Operaton as release v{next}.</Text>
         <Text size="sm">Running sites stay on their release; new sites start on v{next}.</Text>

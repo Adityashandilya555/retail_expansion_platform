@@ -96,6 +96,8 @@ export function resolveAccent(options: { user?: string | null; client?: string |
   return options.preset.defaultAccent;
 }
 
+const DIALOG = { closeButtonProps: { "aria-label": "Close" }, attributes: { header: { role: "presentation" } } };
+
 export function createZmTheme({ preset, accent }: { preset: Preset; accent: Accent }): MantineThemeOverride {
   const { gray, dark, radius, headingsFontWeight } = preset.overrides;
   return createTheme({
@@ -115,6 +117,10 @@ export function createZmTheme({ preset, accent }: { preset: Preset; accent: Acce
     components: {
       Table: { defaultProps: { verticalSpacing: "xs", highlightOnHover: true } },
       Badge: { defaultProps: { radius: "sm" } },
+      // Mantine draws a dialog's header as <header>, which reads as a second page banner, and its
+      // close button has no name
+      Modal: { defaultProps: DIALOG },
+      Drawer: { defaultProps: DIALOG },
     },
   });
 }

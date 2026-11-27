@@ -24,6 +24,7 @@ import { sampleApproval, sampleDdChecklist, sampleLicences } from "@zm/forms/sam
 import {
   AppFrame,
   DataTable,
+  InviteLink,
   Notice,
   notifyError,
   Num,
@@ -85,6 +86,10 @@ export default function DevUi() {
                 Dashboard → zm-matrix-retail → Integrations → Data API → off
               </Notice>
             </Stack>
+          </Section>
+
+          <Section title="Invite link (after an invite, in the console and on People)">
+            <InviteLink url="https://app.example.com/invite/matrix-retail.Zx3kQ9-sample" expiresAt="2026-12-04T10:00:00Z" />
           </Section>
 
           <Section title="Stage tracker">
