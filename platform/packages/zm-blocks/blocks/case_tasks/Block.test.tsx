@@ -21,7 +21,10 @@ const done = {
 const rows = (table: HTMLElement) =>
   [...table.querySelectorAll("tbody tr")].map((tr) => [...tr.querySelectorAll("td")].map((td) => td.textContent));
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 test("?tab=tasks&task=<id> opens the DD checklist inline; submitting removes it and adds a history row, no reload", async () => {
   let state = sampleCase();
@@ -71,7 +74,8 @@ test("a task opens from the list and its id goes into the URL", async () => {
   await userEvent.setup().click(await screen.findByRole("button", { name: /Fill DD checklist/ }));
   expect(await screen.findByRole("group", { name: "Fill DD checklist" })).toBeDefined();
   expect(location()).toBe(`${PATH}?tab=tasks&task=t-dd`);
-  expect(calls.map((c) => new URL(c.url).pathname)).toEqual(["/app/cases/MX-0001", "/app/tasks/t-dd"]);
+  // the form's document slot then lists the case's versions of its field
+  await waitFor(() => expect(calls.map((c) => new URL(c.url).pathname)).toEqual(["/app/cases/MX-0001", "/app/tasks/t-dd", "/app/cases/MX-0001/files"]));
 });
 
 test("the API's 422 shows on the field", async () => {
@@ -111,6 +115,86 @@ test("a teammate's task opened from the team inbox (?task=) shows read-only", as
   expect(await screen.findByRole("group", { name: "Fill DD checklist" })).toBeDefined(); // its form, read-only
   expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
   expect(screen.queryByText("Nothing for you to do on this site")).toBeNull();
+});
+
+const DD_VALUE = { key: "cases/MX-0001/legal_dd_checklist/dd_report/1-dd.pdf", sha256: "a".repeat(64), name: "dd.pdf" };
+const DD_V1 = {
+  id: "f1",
+  field: "dd_report",
+  version: 1,
+  name: "dd.pdf",
+  size_bytes: 5,
+  content_type: "application/pdf",
+  uploaded_by: "u-l1",
+  uploaded_by_name: "Legal Executive",
+  uploaded_at: "2026-11-27T10:00:00Z",
+};
+
+/** Storage answering the signed PUT at once. */
+class StorageXhr {
+  static urls: string[] = [];
+  upload = {};
+  status = 200;
+  onload: (() => void) | null = null;
+  open(_: string, url: string) {
+    StorageXhr.urls.push(url);
+  }
+  setRequestHeader() {}
+  send() {
+    queueMicrotask(() => this.onload?.());
+  }
+}
+
+test("a document slot uploads for the task, lists the case's versions and submits the confirmed value", async () => {
+  vi.stubGlobal("XMLHttpRequest", StorageXhr);
+  let uploaded: unknown, sent: unknown;
+  let versions: unknown[] = [];
+  const calls = drawPage(tasksPage, {
+    path: `${PATH}?tab=tasks&task=t-dd`,
+    routes: {
+      "GET /app/cases/MX-0001": () => sampleCase(),
+      "GET /app/tasks/t-dd": () => sampleTask,
+      "GET /app/cases/MX-0001/files": () => versions,
+      "POST /app/files/upload": async (r) => {
+        uploaded = await r.json();
+        return { file_id: "f1", upload_url: "http://storage.test/put?token=t", key: DD_VALUE.key, expires_at: "2026-11-27T12:00:00Z" };
+      },
+      "POST /app/files/f1/confirm": () => {
+        versions = [DD_V1];
+        return DD_VALUE;
+      },
+      "POST /app/tasks/t-dd/submit": async (r) => {
+        sent = await r.json();
+        return committed;
+      },
+    },
+  });
+  await screen.findByRole("group", { name: "Fill DD checklist" });
+  const user = userEvent.setup();
+  const input = document.querySelector("input[type=file]") as HTMLInputElement;
+  await user.upload(input, new File(["%PDF-"], "dd.pdf", { type: "application/pdf" }));
+
+  expect(await screen.findByRole("button", { name: "Download dd.pdf v1" })).toBeDefined();
+  expect(uploaded).toEqual({ task_id: "t-dd", field: "dd_report", name: "dd.pdf", size_bytes: 5 });
+  expect(StorageXhr.urls).toEqual(["http://storage.test/put?token=t"]);
+  const listed = calls.filter((c) => new URL(c.url).pathname === "/app/cases/MX-0001/files");
+  expect(listed.map((c) => new URL(c.url).searchParams.get("field"))).toEqual(["dd_report", "dd_report"]);
+
+  await user.click(screen.getByRole("button", { name: "Submit" }));
+  await waitFor(() => expect(sent).toEqual({ values: { dd_report: DD_VALUE } }));
+});
+
+test("a workspace without Storage: the slot says uploads aren't available", async () => {
+  drawPage(tasksPage, {
+    path: `${PATH}?tab=tasks&task=t-dd`,
+    routes: {
+      "GET /app/cases/MX-0001": () => sampleCase(),
+      "GET /app/tasks/t-dd": () => sampleTask,
+      "GET /app/cases/MX-0001/files": () => problem(503),
+    },
+  });
+  expect(await screen.findByText("Uploads aren't available in this workspace")).toBeDefined();
+  expect(screen.queryByRole("button", { name: "Choose file" })).toBeNull();
 });
 
 test.each(["light", "dark"] as const)("axe passes in %s with a form open", async (scheme) => {

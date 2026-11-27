@@ -2,8 +2,9 @@ import { Accordion, Group, Stack, Text, Title } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ZmForm, type FormSchema, type ZmFormProps } from "@zm/forms";
 import { DataTable, notifyError, notifyInfo, StatusPill } from "@zm/ui";
+import { useMemo } from "react";
 import { useSearchParams } from "react-router";
-import { useBlocksApi } from "../../src/api";
+import { fileApi, useBlocksApi } from "../../src/api";
 import { Failed, flowOf, Loading, WithCase, type CaseDetail } from "../../src/cases";
 import type { BlockProps } from "../../src/registry";
 
@@ -22,6 +23,8 @@ function TaskForm({ id, caseLabel }: { id: string; caseLabel: string }) {
       return data;
     },
   });
+  const code = task.data?.case.code;
+  const files = useMemo(() => fileApi(api, { task_id: id }, code), [api, id, code]);
   if (task.isPending) return <Loading />;
   if (task.isError) return <Failed message="Couldn't load this task." onRetry={() => void task.refetch()} />;
 
@@ -59,6 +62,7 @@ function TaskForm({ id, caseLabel }: { id: string; caseLabel: string }) {
       caseLabel={caseLabel}
       caseData={caseData}
       onSubmit={submit}
+      files={files}
     />
   );
 }

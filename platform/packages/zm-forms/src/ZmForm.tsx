@@ -1,6 +1,7 @@
 import { Alert, Box, Button, Fieldset, Grid, Group, Input, NumberInput, Paper, Radio, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title } from "@mantine/core";
 import { useForm, type UseFormReturnType } from "@mantine/form";
 import { useEffect, useId, useRef, useState } from "react";
+import { FileSlot, type DocumentRule, type FileApi } from "./FileSlot";
 import { formErrors, type FieldError, type FieldSchema, type FormSchema, type FormSection } from "./validate";
 
 type Values = Record<string, unknown>;
@@ -17,6 +18,8 @@ export type ZmFormProps = {
   caseData?: Record<string, { label: string; value: unknown }>;
   /** Gets values that passed the schema (unanswered fields left out); resolves with the API's 422 errors, if any. */
   onSubmit: (values: Values) => Promise<FieldError[] | undefined> | Promise<void>;
+  /** How `document` fields upload and list their files (#51); without it they say uploads aren't available. */
+  files?: FileApi;
 };
 
 // ponytail: reject-type by outcome id (the compiler's and both templates' id); flag it in x-zm-options if others appear.
@@ -49,7 +52,7 @@ function Unsupported({ name, label, type }: { name: string; label: string; type:
   );
 }
 
-function Field({ name, field, form, required, readOnly }: { name: string; field: FieldSchema; form: UseFormReturnType<Values>; required: boolean; readOnly: boolean }) {
+function Field({ name, field, form, required, readOnly, files }: { name: string; field: FieldSchema; form: UseFormReturnType<Values>; required: boolean; readOnly: boolean; files?: FileApi }) {
   const { value, onChange, error, onFocus, onBlur } = form.getInputProps(name);
   const type = field["x-zm-type"] ?? "text";
   const common = { label: field.title ?? name, withAsterisk: required, error, readOnly, onFocus, onBlur };
@@ -83,14 +86,26 @@ function Field({ name, field, form, required, readOnly }: { name: string; field:
         </Radio.Group>
       );
     case "document":
-      return <TextInput label={common.label} disabled value={display(value) === "—" ? "" : display(value)} placeholder="No file yet" description="Uploads arrive with Files" />;
+      return (
+        <FileSlot
+          name={name}
+          label={common.label}
+          rule={field["x-zm-document"] as DocumentRule}
+          value={value}
+          onChange={onChange}
+          error={error}
+          withAsterisk={required}
+          readOnly={readOnly}
+          files={files}
+        />
+      );
     default:
       return <Unsupported name={name} label={common.label} type={type} />;
   }
 }
 
 /** A compiled form (#19): sections → rows → a 12-column grid (one column on phones), outcomes as buttons, Ajv checks before `onSubmit`. */
-export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabel = "Case", caseData, onSubmit }: ZmFormProps) {
+export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabel = "Case", caseData, onSubmit, files }: ZmFormProps) {
   const id = useId();
   const root = useRef<HTMLFormElement>(null);
   const form = useForm<Values>({ initialValues: values });
@@ -180,7 +195,7 @@ export function ZmForm({ schema, layout, values = {}, readOnly = false, caseLabe
                     const field = props[cell.field]; // absent when the field is hidden
                     return field ? (
                       <Grid.Col key={cell.field} span={{ base: 12, sm: cell.span ?? 12 }} data-zm-field={cell.field}>
-                        <Field name={cell.field} field={field} form={form} required={required.has(cell.field)} readOnly={readOnly} />
+                        <Field name={cell.field} field={field} form={form} required={required.has(cell.field)} readOnly={readOnly} files={files} />
                       </Grid.Col>
                     ) : null;
                   })}
