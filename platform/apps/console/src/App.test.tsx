@@ -688,3 +688,15 @@ test("the owner invites Ana as client admin and copies her one-time link; a take
   expect(again.getByLabelText<HTMLInputElement>(/^Email/).value).toBe("");
   expect(again.queryByRole("textbox", { name: "Invite link" })).toBeNull();
 });
+
+test("a VITE_WEB_URL ending in / doesn't double the slash in links to the client app", async () => {
+  vi.stubEnv("VITE_WEB_URL", "https://web.zm.test/");
+  vi.resetModules(); // WEB is read when Preview loads
+  try {
+    const { onWeb } = await import("./Preview");
+    expect(onWeb("/invite/matrix-retail.abc123")).toBe("https://web.zm.test/invite/matrix-retail.abc123");
+    expect(onWeb("/preview#p1")).toBe("https://web.zm.test/preview#p1");
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});

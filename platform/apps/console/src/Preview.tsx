@@ -7,8 +7,11 @@ import { useId, useState } from "react";
 import { summary } from "./Publish";
 import { api, must } from "./session";
 
-/** The client app (zm-web): where Preview opens and where invite links (#169) point. */
-export const WEB = import.meta.env.VITE_WEB_URL ?? "http://localhost:5173";
+const WEB = import.meta.env.VITE_WEB_URL ?? "http://localhost:5173";
+
+/** `path` on the client app (zm-web), where Preview opens and invite links (#169) point. A
+ * trailing `/` on VITE_WEB_URL doesn't double the slash. */
+export const onWeb = (path: string) => new URL(path, WEB).href;
 
 type Department = { key: string; name: string; levels: { n: number }[] };
 
@@ -37,7 +40,7 @@ export function PreviewPanel({ clientId, disabled }: { clientId: string; disable
     try {
       const body = { as: { department, level: Number(level) } };
       const { access_token } = await must(api.POST("/owner/clients/{client_id}/preview-token", { ...path, body }));
-      const url = `${WEB}/preview#${access_token}`;
+      const url = onWeb(`/preview#${access_token}`);
       if (tab) {
         tab.opener = null;
         tab.location.replace(url);

@@ -21,7 +21,7 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { Dock } from "./agent/Dock";
 import { ClientCards } from "./ClientCards";
-import { WEB } from "./Preview";
+import { onWeb } from "./Preview";
 import { PublishDialog } from "./Publish";
 import { api, must } from "./session";
 
@@ -306,7 +306,7 @@ function InviteAdminForm({ clientId, onDone }: { clientId: string; onDone: () =>
   if (sent) {
     return (
       <Stack>
-        <InviteLink url={WEB + sent.invite_path} expiresAt={sent.invite_expires_at} />
+        <InviteLink url={onWeb(sent.invite_path)} expiresAt={sent.invite_expires_at} />
         <Group justify="flex-end">
           <Button onClick={onDone}>Done</Button>
         </Group>
