@@ -8,10 +8,14 @@ Registry rows get random slugs; the vault tables and deployments are cleaned bef
 
 import argparse
 import asyncio
+import importlib.util
 import json
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from functools import cache
+from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import httpx
@@ -50,7 +54,20 @@ USERS = {
     "bd2": ("bd", 2),
     "legal1": ("legal", 1),
     "legal2": ("legal", 2),
+    # who the user-field tests (#171) pick, and who does the steps around them
+    "design1": ("design", 1),
+    "design2": ("design", 2),
+    "design3": ("design", 1),
+    "pe1": ("pe", 1),
+    "pe2": ("pe", 2),
+    "project1": ("project", 1),
+    "project2": ("project", 2),
+    "management1": ("management", 1),
+    "leaver": ("bd", 1),
 }
+NAMES = {"design1": "Asha Rao"}  # everyone else is named after their key ("Design2")
+PICKS = {"design_exec": "design1", "pe_exec": "pe1", "project_exec": "project1"}
+DEMO = Path(__file__).parents[3] / "scripts" / "demo_s1.py"
 TABLES = ("app.cases", "app.case_counters", "app.releases", "app.drafts")
 
 
@@ -71,10 +88,19 @@ def env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def workflow() -> dict[str, Any]:
     doc = with_hidden_section(matrix_retail())
+    review = next(t for t in tasks._flow_tasks(doc["flows"][0]) if t["id"] == "design_recce_review")
+    review["show"].append("design_exec")
     doc["fields"]["audit_store"] = {"type": "text", "label": "Store", "required": True}
+    doc["fields"]["audit_owner"] = {"type": "user", "label": "Owner"}  # assigns no step
     doc["fields"]["audit_notes"] = {"type": "textarea", "label": "Notes"}
     doc["forms"]["audit_start"] = {
-        "sections": [{"key": "store", "title": "Store", "rows": [[{"field": "audit_store"}]]}]
+        "sections": [
+            {
+                "key": "store",
+                "title": "Store",
+                "rows": [[{"field": "audit_store"}], [{"field": "audit_owner"}]],
+            }
+        ]
     }
     doc["forms"]["audit_check"] = {
         "sections": [{"key": "notes", "title": "Notes", "rows": [[{"field": "audit_notes"}]]}]
@@ -161,6 +187,9 @@ class World:
         body = {"flow": flow, "values": values}
         return self.http.post("/app/cases", json=body, headers=self.auth(user))
 
+    def people(self, user: str, field: str, **params: str) -> httpx.Response:
+        return self.http.get(f"/app/fields/{field}/people", params=params, headers=self.auth(user))
+
 
 class Stack:
     """A resolver for direct calls, opened and closed in one event loop (see test_publish.py)."""
@@ -217,7 +246,12 @@ def world() -> Iterator[World]:
                 seeded = await seed_users(
                     pilot,
                     [
-                        {"email": f"{u}@tasks.test", "name": u.title(), "department": d, "level": n}
+                        {
+                            "email": f"{u}@tasks.test",
+                            "name": NAMES.get(u, u.title()),
+                            "department": d,
+                            "level": n,
+                        }
                         for u, (d, n) in USERS.items()
                     ],
                 )
@@ -639,3 +673,195 @@ def test_a_case_starts_with_its_flows_routing_variables_null(world: World, mx1: 
             params={"processInstanceIdIn": mx1["process_instance_id"], "variableName": "lic_fssai"},
         ).json()
     assert [(v["name"], v["value"]) for v in found] == [("lic_fssai", None)]
+
+
+# --- user fields (#171): who can be picked, and names instead of ids -------------------------
+
+
+@cache
+def demo_driver() -> ModuleType:
+    """platform/scripts/demo_s1.py, loaded from its path (scripts/ isn't a package)."""
+    spec = importlib.util.spec_from_file_location("demo_s1", DEMO)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def act(world: World, user: str, key: str, code: str) -> None:
+    """`user` submits the case's `key` step: filled the way the demo driver fills forms, each
+    `user` field set to its PICKS person from the API's list, the first outcome taken."""
+    task_id = world.task(user, f"zm:{key}", code)["id"]
+    detail = world.http.get(f"/app/tasks/{task_id}", headers=world.auth(user)).json()
+    schema = detail["form"]["schema"]
+    body: dict[str, Any] = {"values": demo_driver().fill(schema)}
+    for field, prop in schema["properties"].items():
+        if prop.get("x-zm-type") == "user":
+            listed = world.people(user, field, task_id=task_id)
+            assert listed.status_code == 200, listed.text
+            picked = str(world.users[PICKS[field]])
+            assert picked in [p["id"] for p in listed.json()], (field, listed.json())
+            body["values"][field] = picked
+        elif prop.get("x-zm-type") == "outcome":
+            body["outcome"] = prop["x-zm-options"][0]["id"]  # forward, in every Matrix step
+    response = world.submit(user, task_id, **body)
+    assert response.status_code == 200, (key, response.text)
+
+
+def drive(world: World, code: str, until: str) -> None:
+    """Submits the case's open steps one at a time, each by the seeded user who does it (the
+    initiator bd1, the one picked, or `<department><level>`), until the next one is in stage
+    `until`."""
+    doc = workflow()
+    who = {}
+    for t in tasks._flow_tasks(doc["flows"][0]):
+        p = t["performer"]
+        if p.get("initiator"):
+            who[t["id"]] = "bd1"
+        elif "from_field" in p:
+            who[t["id"]] = PICKS[p["from_field"]]
+        else:
+            who[t["id"]] = f"{p['department']}{p['level']}"
+    for _ in range(60):
+        with op("pilot") as client:
+            found = client.post(
+                "task",
+                json={
+                    "processInstanceBusinessKey": code,
+                    "sorting": [{"sortBy": "created", "sortOrder": "asc"}],
+                },
+            ).json()
+        assert found, f"{code} has no open step"
+        key = found[0]["taskDefinitionKey"]
+        if tasks.stage_of(doc, key)["key"] == until:
+            return
+        act(world, who[key], key, code)
+    raise AssertionError(f"{code} didn't reach {until}")
+
+
+@pytest.fixture(scope="module")
+def design3_left(world: World) -> None:
+    sql = "update app.users set status = 'deactivated' where id = %s"
+    vault_sql("pilot", sql, world.users["design3"])
+
+
+@pytest.fixture(scope="module")
+def at_design(world: World, design3_left: None) -> str:
+    """A new Matrix Retail case, driven through BD, Legal and Finance to `design_allocate`."""
+    response = world.start("bd1", "store_launch", START)
+    assert response.status_code == 201, response.text
+    code = response.json()["code"]
+    drive(world, code, until="design")
+    return code
+
+
+def test_the_picker_lists_exactly_the_active_design_members(world: World, at_design: str) -> None:
+    task = world.task("design2", "zm:design_allocate", at_design)
+    found = world.people("design2", "design_exec", task_id=task["id"])
+    assert found.status_code == 200, found.text
+    design = vault_sql(
+        "pilot",
+        "select u.id from app.users u join app.memberships m on m.user_id = u.id"
+        " where m.department = 'design' and u.status = 'active'",
+    )
+    assert {p["id"] for p in found.json()} == {str(r[0]) for r in design}
+    ours = {str(i) for i in world.users.values()}
+    assert [p for p in found.json() if p["id"] in ours] == [  # by name; design3 has left
+        {"id": str(world.users["design1"]), "name": "Asha Rao"},
+        {"id": str(world.users["design2"]), "name": "Design2"},
+    ]
+
+
+def test_someone_outside_the_list_is_422(world: World, at_design: str) -> None:
+    task = world.task("design2", "zm:design_allocate", at_design)
+    for outsider in ("legal1", "design3"):  # another department; deactivated
+        values = {"design_exec": str(world.users[outsider])}
+        response = world.submit("design2", task["id"], values=values)
+        assert response.status_code == 422, response.text
+        assert response.json()["errors"] == [
+            {"path": "/design_exec", "message": "Pick someone from the list"}
+        ]
+
+
+def test_people_for_a_step_the_user_cant_submit_are_404(world: World, at_design: str) -> None:
+    task = world.task("design2", "zm:design_allocate", at_design)
+    for user in ("bd1", "design1"):  # another department; an L2 step for design L1
+        assert world.people(user, "design_exec", task_id=task["id"]).status_code == 404
+    assert world.people("design2", "store_model", task_id=task["id"]).status_code == 404
+    assert world.people("design2", "design_exec", task_id=world.qsr_task).status_code == 404
+    # not on the flow's start form
+    assert world.people("bd1", "design_exec", flow="store_launch").status_code == 404
+
+
+def test_picking_asha_gives_her_the_recce_and_later_steps_read_her_name(
+    world: World, at_design: str
+) -> None:
+    task = world.task("design2", "zm:design_allocate", at_design)
+    asha = str(world.users["design1"])
+    assert world.submit("design2", task["id"], values={"design_exec": asha}).status_code == 200
+    assert [t["form_key"] for t in world.tasks("design1", case=at_design)] == ["zm:design_recce"]
+    assert "zm:design_recce" not in [t["form_key"] for t in world.tasks("design2", case=at_design)]
+
+    act(world, "design1", "design_recce", at_design)
+    review = world.task("design2", "zm:design_recce_review", at_design)
+    detail = world.http.get(f"/app/tasks/{review['id']}", headers=world.auth("design2")).json()
+    assert detail["show"]["design_exec"] == {"id": asha, "name": "Asha Rao"}
+
+
+def test_a_start_form_picker_and_names_in_the_cases_api(
+    world: World, mx1: dict, design3_left: None
+) -> None:
+    """The audit flow's start form has `audit_owner`, which assigns no step: anyone active."""
+    listed = world.people("bd1", "audit_owner", flow="audit")
+    assert listed.status_code == 200, listed.text
+    names = [p["name"] for p in listed.json()]
+    assert "Asha Rao" in names and "Leaver" in names and "Design3" not in names
+    assert world.people("legal1", "audit_owner", flow="audit").status_code == 404  # no starter
+    assert world.people("bd1", "audit_store", flow="audit").status_code == 404  # not a user field
+
+    left = {"audit_store": "Hennur", "audit_owner": str(world.users["design3"])}
+    bad = world.start("bd1", "audit", left)
+    assert bad.status_code == 422, bad.text
+    assert bad.json()["errors"] == [
+        {"path": "/audit_owner", "message": "Pick someone from the list"}
+    ]
+    leaver = str(world.users["leaver"])
+    started = world.start("bd1", "audit", {"audit_store": "Hennur", "audit_owner": leaver})
+    assert started.status_code == 201, started.text
+    code = started.json()["code"]
+
+    def owner() -> list[Any]:
+        case = world.http.get(f"/app/cases/{code}", headers=world.auth("bd1")).json()
+        cases = world.http.get("/app/cases", params={"flow": "audit"}, headers=world.auth("bd1"))
+        row = next(c for c in cases.json() if c["code"] == code)
+        cell = next(f for s in case["sections"] for f in s["fields"] if f["key"] == "audit_owner")
+        return [cell["value"], case["fields"]["audit_owner"], row["fields"]["audit_owner"]]
+
+    assert owner() == [{"id": leaver, "name": "Leaver"}] * 3
+    vault_sql("pilot", "delete from app.users where id = %s", world.users["leaver"])
+    assert owner() == [{"id": leaver, "name": "Unknown person"}] * 3
+
+
+def test_a_case_passes_design_pe_and_project_with_real_people_picked(
+    world: World, at_design: str
+) -> None:
+    drive(world, at_design, until="nso")
+    case = world.http.get(f"/app/cases/{at_design}", headers=world.auth("bd1")).json()
+    stages = {s["key"]: s["state"] for s in case["stages"]}
+    assert [stages[k] for k in ("design", "pe_budget", "project")] == ["done"] * 3
+    assert stages["nso"] == "open"
+    submitted = dict(
+        vault_sql(
+            "pilot",
+            "select s.task_def_key, s.submitted_by from app.submissions s"
+            " join app.cases c on c.id = s.case_id where c.code = %s and s.status = 'committed'",
+            at_design,
+        )
+    )
+    for step, field in (
+        ("design_boq", "design_exec"),
+        ("pe_fill", "pe_exec"),
+        ("prj_accept", "project_exec"),
+        ("prj_complete", "project_exec"),
+    ):
+        assert submitted[step] == world.users[PICKS[field]], step

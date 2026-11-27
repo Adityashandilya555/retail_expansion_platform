@@ -2033,6 +2033,25 @@
         "title": "Page",
         "type": "object"
       },
+      "PersonOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PersonOut",
+        "type": "object"
+      },
       "Preferences": {
         "description": "A user's appearance (#93, D19): only colours; null = no choice yet (scheme: auto, accent:\nthe client's, then the preset's). The shell skips accents it doesn't know, so the accent list\nlives only there.",
         "properties": {
@@ -4066,6 +4085,85 @@
           }
         },
         "summary": "Get Case",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/fields/{field}/people": {
+      "get": {
+        "description": "Who may be picked for a `user` field, by name: on an open task the user may submit\n(`task_id`, by the task's own release) or on the start form of a flow they may start\n(`flow`); send exactly one. The active members of the departments of the stages whose steps\nthe field assigns, or anyone active when it assigns none. Any other task, flow or field: 404.",
+        "operationId": "people_to_pick_app_fields__field__people_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "field",
+            "required": true,
+            "schema": {
+              "title": "Field",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flow",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Flow"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PersonOut"
+                  },
+                  "title": "Response People To Pick App Fields  Field  People Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "People To Pick",
         "tags": [
           "app"
         ]

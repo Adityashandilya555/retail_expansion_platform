@@ -16,7 +16,7 @@ import asyncio
 import logging
 import re
 from collections import Counter
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
@@ -134,6 +134,62 @@ def assignee_fields(flow: Mapping[str, Any]) -> set[str]:
     }
 
 
+def pickable_departments(flow: Mapping[str, Any], field: str) -> set[str]:
+    """The departments of the stages holding the steps a `user` field assigns (`performer:
+    {from_field}`): their members may be picked. Empty when it assigns none: anyone active."""
+    # ponytail: union of the stages' departments; add a per-field constraint if a client needs a
+    # narrower list
+    return {
+        stage["department"]
+        for stage in flow["stages"]
+        for item in stage["tasks"]
+        for t in item.get("parallel", [item])
+        if t["performer"].get("from_field") == field
+    }
+
+
+def user_fields(form: Mapping[str, Any]) -> list[str]:
+    """The `user` fields of a form (`{schema, layout}`), in schema order."""
+    props = form["schema"].get("properties", {})
+    return [k for k, s in props.items() if s.get("x-zm-type") == "user"]
+
+
+def pickable(
+    flow: Mapping[str, Any],
+    fields: Iterable[str],
+    people: Iterable[tuple[UUID, str, Iterable[str]]],
+) -> dict[str, dict[str, str]]:
+    """Each of `fields` → who may be picked for it, id → name: the members of its
+    `pickable_departments`, else everyone. `people` are the active ones as `(id, name,
+    departments)`, by name; each list keeps their order."""
+    found = [(str(i), name, set(departments)) for i, name, departments in people]
+    out: dict[str, dict[str, str]] = {}
+    for field in fields:
+        departments = pickable_departments(flow, field)
+        out[field] = {i: name for i, name, ds in found if not departments or ds & departments}
+    return out
+
+
+async def people_for(
+    ctx: ClientContext, flow: Mapping[str, Any], form: Mapping[str, Any]
+) -> dict[str, dict[str, str]]:
+    """`pickable` for the `user` fields of `form`, from one query; a form without one asks
+    nothing."""
+    fields = user_fields(form)
+    if not fields:
+        return {}
+    async with ctx.db.connect() as conn:
+        rows = await conn.execute(
+            text(
+                "select u.id, u.name, array_remove(array_agg(m.department), null) as departments"
+                " from app.users u left join app.memberships m on m.user_id = u.id"
+                " where u.status = 'active' group by u.id order by u.name, u.id"
+            )
+        )
+        people = [(r.id, r.name, r.departments) for r in rows]
+    return pickable(flow, fields, people)
+
+
 def stage_of(workflow: Mapping[str, Any], task_def_key: str) -> dict[str, Any] | None:
     """The stage holding a task (or one of its approval steps, `<task>__appr_<dept>_L<n>`)."""
     task_id = task_def_key.split("__appr_", 1)[0]
@@ -205,14 +261,24 @@ def field_labels(workflow: Mapping[str, Any], fields: Iterable[str]) -> dict[str
 
 
 def _validate(
-    form: Mapping[str, Any], values: Mapping[str, Any], assignees: Iterable[str] = ()
+    form: Mapping[str, Any],
+    values: Mapping[str, Any],
+    assignees: Iterable[str] = (),
+    *,
+    people: Mapping[str, Container[str]] | None = None,
 ) -> None:
+    """422 for what the schema refuses, an empty field that assigns a later step, and a `user`
+    field naming someone outside `people` (field → the ids it may hold, `people_for`)."""
     errors = submission_errors(form["schema"], dict(values))
     paths = {e["path"] for e in errors}
     for field in sorted(assignees):
         empty = values.get(field) in (None, "")
         if field in form["schema"].get("properties", {}) and empty and f"/{field}" not in paths:
             errors.append({"path": f"/{field}", "message": "Required: it assigns a later step"})
+    for field, allowed in (people or {}).items():
+        value = values.get(field)  # a string, or the schema has already said so
+        if f"/{field}" not in paths and value not in (None, "") and value not in allowed:
+            errors.append({"path": f"/{field}", "message": "Pick someone from the list"})
     if errors:
         errors.sort(key=lambda e: e["path"])
         raise FormInvalid([FieldError(**e) for e in errors])
@@ -307,7 +373,8 @@ async def start_case(
     if not starter_groups(release.workflow, flow) & me.groups:
         raise Forbidden("You can't start this flow")
     key = f"start:{flow_key}"
-    _validate(visible_form(release.forms[key], me.levels), values, assignee_fields(flow))
+    form = visible_form(release.forms[key], me.levels)
+    _validate(form, values, assignee_fields(flow), people=await people_for(ctx, flow, form))
 
     pattern = flow["case_code"]["pattern"]
     code = case_code(pattern, await _next_seq(ctx, counter_key(pattern)))
@@ -544,8 +611,86 @@ async def open_task(ctx: ClientContext, user_id: UUID, task_id: str) -> TaskView
     return TaskView(item, task, case, release, me, editable, key, form)
 
 
-async def shown_values(ctx: ClientContext, case_id: UUID, fields: list[str]) -> dict[str, Any]:
-    """The latest value of each of `fields` recorded for the case (a task's read-only `show`)."""
+async def people_for_task(
+    ctx: ClientContext, user_id: UUID, task_id: str, field: str
+) -> dict[str, str]:
+    """Who may be picked for `field` on an open task the user may submit, by the task's own
+    release (a running v1 case keeps v1's rules); 404 for any other task or field."""
+    view = await open_task(ctx, user_id, task_id)
+    flow = _flow(view.release.workflow, view.case.flow)
+    found = (await people_for(ctx, flow, view.form)).get(field) if view.editable and flow else None
+    if found is None:
+        raise NotFound("No such field")
+    return found
+
+
+async def people_for_start(
+    ctx: ClientContext, user_id: UUID, flow_key: str, field: str
+) -> dict[str, str]:
+    """Who may be picked for `field` on the start form of `flow_key` as the user sees it, on the
+    active release; 404 unless they may start the flow and the form has the field."""
+    async with ctx.db.connect() as conn:
+        me = await person(conn, user_id)
+        release = await releases.active_release(conn)
+    if release is None or flow_key not in release.process_keys:
+        raise NotFound("No such field")
+    flow = _flow(release.workflow, flow_key)
+    found = None
+    if flow is not None and starter_groups(release.workflow, flow) & me.groups:
+        form = visible_form(release.forms[f"start:{flow_key}"], me.levels)
+        found = (await people_for(ctx, flow, form)).get(field)
+    if found is None:
+        raise NotFound("No such field")
+    return found
+
+
+UNKNOWN_PERSON = "Unknown person"
+
+
+def _is_person(defs: Mapping[str, Any], field: str, value: Any) -> bool:
+    return defs.get(field, {}).get("type") == "user" and isinstance(value, str) and value != ""
+
+
+def person_ids(defs: Mapping[str, Any], values: Mapping[str, Any]) -> set[UUID]:
+    """The ids the `user` fields of `values` hold (`defs`: the release's fields)."""
+    out: set[UUID] = set()
+    for field, value in values.items():
+        if _is_person(defs, field, value):
+            try:
+                out.add(UUID(value))
+            except ValueError:
+                continue  # text a form took before #171: nobody's id
+    return out
+
+
+async def names_of(conn: AsyncConnection, ids: Iterable[UUID]) -> dict[str, str]:
+    """id → name of each of `ids` the client has, whatever their status: someone deactivated
+    since is still the one who was picked."""
+    found = sorted(set(ids))
+    if not found:
+        return {}
+    rows = await conn.execute(
+        text("select id, name from app.users where id = any(:ids)"), {"ids": found}
+    )
+    return {str(r.id): r.name for r in rows}
+
+
+def named(
+    defs: Mapping[str, Any], values: Mapping[str, Any], names: Mapping[str, str]
+) -> dict[str, Any]:
+    """`values` for a read-only response: each `user` field's id as `{id, name}` (`names`, from
+    `names_of`); an id nobody has (any more) reads "Unknown person"."""
+    return {
+        f: {"id": v, "name": names.get(v, UNKNOWN_PERSON)} if _is_person(defs, f, v) else v
+        for f, v in values.items()
+    }
+
+
+async def shown_values(
+    ctx: ClientContext, case_id: UUID, fields: list[str], defs: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The latest value of each of `fields` recorded for the case (a task's read-only `show`),
+    people by name (`named`; `defs` are the release's fields)."""
     if not fields:
         return {}
     async with ctx.db.connect() as conn:
@@ -556,7 +701,8 @@ async def shown_values(ctx: ClientContext, case_id: UUID, fields: list[str]) -> 
             ),
             {"c": case_id, "f": fields},
         )
-        return {r.field: r.value for r in rows}
+        values = {r.field: r.value for r in rows}
+        return named(defs, values, await names_of(conn, person_ids(defs, values)))
 
 
 # --- submissions -----------------------------------------------------------------------------
@@ -674,7 +820,12 @@ async def submit(
     if comment is not None:
         merged[f"{key}_comment"] = comment
     flow = _flow(view.release.workflow, view.case.flow)
-    _validate(view.form, merged, assignee_fields(flow) if flow else ())
+    _validate(
+        view.form,
+        merged,
+        assignee_fields(flow) if flow else (),
+        people=await people_for(ctx, flow, view.form) if flow else None,
+    )
     outcome = merged.pop(f"{key}_outcome", None)
     comment = merged.pop(f"{key}_comment", None)
 

@@ -173,6 +173,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/app/fields/{field}/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * People To Pick
+         * @description Who may be picked for a `user` field, by name: on an open task the user may submit
+         *     (`task_id`, by the task's own release) or on the start form of a flow they may start
+         *     (`flow`); send exactly one. The active members of the departments of the stages whose steps
+         *     the field assigns, or anyone active when it assigns none. Any other task, flow or field: 404.
+         */
+        get: operations["people_to_pick_app_fields__field__people_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/app/me": {
         parameters: {
             query?: never;
@@ -1755,6 +1778,16 @@ export interface components {
                 [key: string]: components["schemas"]["BlockRef"][];
             };
         };
+        /** PersonOut */
+        PersonOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
         /**
          * Preferences
          * @description A user's appearance (#93, D19): only colours; null = no choice yet (scheme: auto, accent:
@@ -2685,6 +2718,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    people_to_pick_app_fields__field__people_get: {
+        parameters: {
+            query?: {
+                task_id?: string | null;
+                flow?: string | null;
+            };
+            header?: never;
+            path: {
+                field: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonOut"][];
                 };
             };
             /** @description Problem details (RFC 9457) */

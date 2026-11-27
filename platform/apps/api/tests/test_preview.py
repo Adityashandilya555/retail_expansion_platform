@@ -209,6 +209,22 @@ def test_tasks_are_the_draft_tasks_of_the_role(api: TestClient, state: dict[str,
     assert api.get("/app/tasks/legal_dd_checklist", headers=l2).json()["editable"] is False
 
 
+def test_a_task_assigned_from_a_field_is_mine_in_its_stages_department(
+    api: TestClient, state: dict[str, Any]
+) -> None:
+    """Anyone in the stage's department could be the one picked (#171)."""
+    design_l1 = bearer(preview_token(**{"as": {"department": "design", "level": 1}}))
+    mine = [t["id"] for t in api.get("/app/tasks", headers=design_l1).json()]
+    assert mine == ["design_recce", "design_2d", "design_3d", "design_boq"]
+    task = api.get("/app/tasks/design_recce", headers=design_l1).json()
+    assert task["editable"] is False and "design_exec" not in task["form"]["schema"]["properties"]
+    # fc_actuals is project_exec's, in the management stage
+    management = bearer(preview_token(**{"as": {"department": "management", "level": 1}}))
+    assert "fc_actuals" in {t["id"] for t in api.get("/app/tasks", headers=management).json()}
+    project_l1 = bearer(preview_token(**{"as": {"department": "project", "level": 1}}))
+    assert "fc_actuals" not in {t["id"] for t in api.get("/app/tasks", headers=project_l1).json()}
+
+
 def test_me_is_the_previewed_role(api: TestClient, state: dict[str, Any]) -> None:
     me = api.get("/app/me", headers=bearer(preview_token())).json()
     assert me["preview"] is True and me["name"] == "Legal L1" and not me["is_client_admin"]

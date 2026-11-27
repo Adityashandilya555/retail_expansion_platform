@@ -188,6 +188,74 @@ def test_a_form_that_shows_an_assignee_field_must_fill_it() -> None:
     tasks._validate(form(doc, "start:store_launch"), START, {"design_exec"})  # not on this form
 
 
+def test_who_can_be_picked_comes_from_the_stages_of_the_tasks_a_field_assigns() -> None:
+    flow = matrix_retail()["flows"][0]
+    assert tasks.pickable_departments(flow, "design_exec") == {"design"}
+    assert tasks.pickable_departments(flow, "pe_exec") == {"pe"}
+    # fc_actuals sits in the management stage
+    assert tasks.pickable_departments(flow, "project_exec") == {"project", "management"}
+    assert tasks.pickable_departments(flow, "site_name") == set()  # assigns nothing
+
+
+ASHA, DEV, LENA, MANI, PAT = (uuid.uuid4() for _ in range(5))
+ACTIVE = [  # as the query gives them: active people by name, with their departments
+    (ASHA, "Asha Rao", ["design"]),
+    (DEV, "Dev Menon", ["design", "pe"]),
+    (LENA, "Lena Joseph", ["legal"]),
+    (MANI, "Mani Iyer", ["management"]),
+    (PAT, "Pat Shah", ["project"]),
+]
+
+
+def test_the_people_a_field_lists_are_the_active_members_of_its_departments() -> None:
+    doc = matrix_retail()
+    flow = doc["flows"][0]
+    found = tasks.pickable(flow, ["design_exec", "project_exec", "anyone"], ACTIVE)
+    assert found == {
+        "design_exec": {str(ASHA): "Asha Rao", str(DEV): "Dev Menon"},
+        "project_exec": {str(MANI): "Mani Iyer", str(PAT): "Pat Shah"},
+        "anyone": {str(i): name for i, name, _ in ACTIVE},  # assigns no task: anyone active
+    }
+    assert tasks.user_fields(form(doc, "design_allocate")) == ["design_exec"]
+    assert tasks.user_fields(form(doc, "start:store_launch")) == []
+
+
+def test_a_person_outside_the_list_is_422() -> None:
+    spec = form(matrix_retail(), "design_allocate")
+    people = {"design_exec": {str(ASHA): "Asha Rao"}}
+    for outsider in (str(LENA), "not-an-id"):
+        with pytest.raises(FormInvalid) as e:
+            tasks._validate(spec, {"design_exec": outsider}, {"design_exec"}, people=people)
+        assert [(err.path, err.message) for err in e.value.errors] == [
+            ("/design_exec", "Pick someone from the list")
+        ]
+    tasks._validate(spec, {"design_exec": str(ASHA)}, {"design_exec"}, people=people)
+    with pytest.raises(FormInvalid) as e:  # empty: one error, the schema's
+        tasks._validate(spec, {}, {"design_exec"}, people=people)
+    assert [err.message for err in e.value.errors] == ["Required"]
+
+
+def test_a_person_reads_by_name_and_an_unknown_id_as_unknown_person() -> None:
+    defs = matrix_retail()["fields"]
+    gone = str(uuid.uuid4())
+    values = {
+        "design_exec": str(ASHA),
+        "pe_exec": gone,
+        "project_exec": "not-an-id",  # any text passed before #171
+        "site_name": str(DEV),  # not a user field: left as it is
+        "monthly_rent": 5,
+    }
+    assert tasks.person_ids(defs, values) == {ASHA, uuid.UUID(gone)}
+    assert tasks.named(defs, values, {str(ASHA): "Asha Rao"}) == {
+        "design_exec": {"id": str(ASHA), "name": "Asha Rao"},
+        "pe_exec": {"id": gone, "name": "Unknown person"},
+        "project_exec": {"id": "not-an-id", "name": "Unknown person"},
+        "site_name": str(DEV),
+        "monthly_rent": 5,
+    }
+    assert tasks.named(defs, {"design_exec": None}, {}) == {"design_exec": None}
+
+
 def test_hidden_fields_are_the_ones_no_visible_section_places() -> None:
     doc = with_hidden_section(matrix_retail())
     assert tasks.hidden_fields(doc, {"legal": 1}) == {"dd_partner_notes"}
@@ -397,6 +465,18 @@ def test_routes_need_a_client_token_and_submit_needs_an_idempotency_key(
         assert "Idempotency-Key" in response.json()["detail"]
         long_key = {**user, "Idempotency-Key": "k" * 201}
         assert http.post("/app/tasks/t1/submit", json={}, headers=long_key).status_code == 400
+
+
+def test_people_to_pick_need_exactly_one_of_task_id_and_flow(rows: dict[str, Client]) -> None:
+    with TestClient(create_app(Resolver(FakeRegistry(rows)))) as http:
+        path = "/app/fields/design_exec/people"
+        assert http.get(path, params={"task_id": "t1"}).status_code == 401
+        assert http.get(path, headers=bearer(token("owner", client=None))).status_code == 403
+        user = bearer(token())
+        for params in ({}, {"task_id": "t1", "flow": "store_launch"}):
+            response = http.get(path, params=params, headers=user)
+            assert response.status_code == 400, params
+            assert "task_id or flow" in response.json()["detail"]
 
 
 @respx.mock
