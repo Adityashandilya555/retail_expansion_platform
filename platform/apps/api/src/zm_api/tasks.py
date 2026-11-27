@@ -205,17 +205,65 @@ def field_labels(workflow: Mapping[str, Any], fields: Iterable[str]) -> dict[str
 
 
 def _validate(
-    form: Mapping[str, Any], values: Mapping[str, Any], assignees: Iterable[str] = ()
+    form: Mapping[str, Any],
+    values: Mapping[str, Any],
+    assignees: Iterable[str] = (),
+    documents: Mapping[str, list[dict[str, Any]]] | None = None,
 ) -> None:
+    """422 unless `values` fit the form. `documents` holds each document field's confirmed
+    uploads for this slot (#51), as form values `{key, sha256, name}`: a document value must be
+    one of them, so a key of another case, task or field, or one never confirmed, is refused."""
     errors = submission_errors(form["schema"], dict(values))
     paths = {e["path"] for e in errors}
     for field in sorted(assignees):
         empty = values.get(field) in (None, "")
         if field in form["schema"].get("properties", {}) and empty and f"/{field}" not in paths:
             errors.append({"path": f"/{field}", "message": "Required: it assigns a later step"})
+    for field in document_fields(form):
+        value = values.get(field)
+        failed = any(p == f"/{field}" or p.startswith(f"/{field}/") for p in paths)
+        if value is not None and not failed and value not in (documents or {}).get(field, []):
+            errors.append({"path": f"/{field}", "message": "Not a file uploaded to this field"})
     if errors:
         errors.sort(key=lambda e: e["path"])
         raise FormInvalid([FieldError(**e) for e in errors])
+
+
+def document_fields(form: Mapping[str, Any]) -> list[str]:
+    """The form's `document` fields (#51)."""
+    props = form["schema"].get("properties", {})
+    return [f for f, p in props.items() if p.get("x-zm-type") == "document"]
+
+
+def _document_keys(form: Mapping[str, Any], values: Mapping[str, Any]) -> list[str]:
+    """The storage keys the document values in `values` name."""
+    out = []
+    for field in document_fields(form):
+        value = values.get(field)
+        if isinstance(value, dict) and isinstance(value.get("key"), str):
+            out.append(value["key"])
+    return out
+
+
+async def _documents(
+    ctx: ClientContext, keys: list[str], slot: str, params: Mapping[str, Any]
+) -> dict[str, list[dict[str, Any]]]:
+    """The confirmed uploads among `keys` that belong to the slot (`slot`: the fixed condition
+    of `submit` or of `start_case`), by field, as form values."""
+    if not keys:
+        return {}
+    async with ctx.db.connect() as conn:
+        rows = await conn.execute(
+            text(
+                "select field, key, sha256, name from app.files"
+                f" where status = 'confirmed' and key = any(:keys) and {slot}"
+            ),
+            {"keys": keys, **params},
+        )
+        out: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            out.setdefault(r.field, []).append({"key": r.key, "sha256": r.sha256, "name": r.name})
+        return out
 
 
 def routing_values(names: Iterable[str], values: Mapping[str, Any]) -> dict[str, Any]:
@@ -294,6 +342,26 @@ async def _insert_values(
     )
 
 
+class FileTaken(Exception):
+    """A start upload another case claimed first: the same start form sent twice at once."""
+
+
+async def _claim(conn: AsyncConnection, case_id: UUID, keys: list[str], user_id: UUID) -> None:
+    """Give the user's start uploads to the new case, in its transaction (S3-D3); keys never
+    move."""
+    if not keys:
+        return
+    claimed = await conn.execute(
+        text(
+            "update app.files set case_id = :c where key = any(:k) and case_id is null"
+            " and uploaded_by = :u and status = 'confirmed'"
+        ),
+        {"c": case_id, "k": keys, "u": user_id},
+    )
+    if claimed.rowcount != len(set(keys)):
+        raise FileTaken
+
+
 async def start_case(
     ctx: ClientContext, user_id: UUID, flow_key: str, values: Mapping[str, Any]
 ) -> Case:
@@ -307,7 +375,15 @@ async def start_case(
     if not starter_groups(release.workflow, flow) & me.groups:
         raise Forbidden("You can't start this flow")
     key = f"start:{flow_key}"
-    _validate(visible_form(release.forms[key], me.levels), values, assignee_fields(flow))
+    form = visible_form(release.forms[key], me.levels)
+    uploads = _document_keys(form, values)
+    documents = await _documents(
+        ctx,
+        uploads,
+        "case_id is null and flow_key = :f and task_def_key = 'start' and uploaded_by = :u",
+        {"f": flow_key, "u": user_id},
+    )
+    _validate(form, values, assignee_fields(flow), documents=documents)
 
     pattern = flow["case_code"]["pattern"]
     code = case_code(pattern, await _next_seq(ctx, counter_key(pattern)))
@@ -362,7 +438,8 @@ async def start_case(
                 .one()
             )
             await _insert_values(conn, row["id"], values, release.version, None)
-    except (SQLAlchemyError, OSError) as e:
+            await _claim(conn, row["id"], uploads, user_id)
+    except (SQLAlchemyError, OSError, FileTaken) as e:
         try:  # don't leave a running case nobody can see
             await ctx.operaton.delete_process_instance(instance["id"])
         except ApiError:
@@ -372,6 +449,10 @@ async def start_case(
                 code,
                 extra={"client": ctx.client.slug},
             )
+        if isinstance(e, FileTaken):
+            raise Conflict(
+                "A file on this form went to another case just now; upload it again"
+            ) from e
         raise ServiceUnavailable("Couldn't record the case; start it again") from e
     return Case(**row)
 
@@ -674,7 +755,13 @@ async def submit(
     if comment is not None:
         merged[f"{key}_comment"] = comment
     flow = _flow(view.release.workflow, view.case.flow)
-    _validate(view.form, merged, assignee_fields(flow) if flow else ())
+    documents = await _documents(
+        ctx,
+        _document_keys(view.form, merged),
+        "case_id = :c and task_def_key = :t",
+        {"c": view.case.id, "t": view.task["taskDefinitionKey"]},
+    )
+    _validate(view.form, merged, assignee_fields(flow) if flow else (), documents=documents)
     outcome = merged.pop(f"{key}_outcome", None)
     comment = merged.pop(f"{key}_comment", None)
 

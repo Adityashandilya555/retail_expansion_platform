@@ -31,6 +31,7 @@ from zm_api.errors import Forbidden, ServiceUnavailable, Unauthorized
 from zm_api.logs import client as client_var
 from zm_api.operaton import OperatonClient
 from zm_api.registry import Client, get_client
+from zm_api.storage import Storage
 
 SERVICE_ACCOUNT = "zm-service"  # ZM_ADMIN_USER_ID on every client's Operaton (#25)
 VAULT_POOL = 5  # connections per client vault engine, in each API process
@@ -55,9 +56,13 @@ class ClientContext:
     db: AsyncEngine  # the client's database as role zm_api
     operaton: OperatonClient  # the client's own engine as its service account
     bucket: str | None
+    storage: Storage | None = None
+    """The client's bucket (#51); None for a workspace without Storage (qsr-local, D11)."""
 
     async def aclose(self) -> None:
         await self.operaton.aclose()
+        if self.storage is not None:
+            await self.storage.aclose()
         await self.db.dispose()
 
 
@@ -83,9 +88,23 @@ def _asyncpg(dsn: str) -> URL:
     return make_url(dsn).set(drivername="postgresql+asyncpg")
 
 
-def _resources(row: Client) -> tuple[str | None, bytes | None, str | None]:
+def _resources(row: Client) -> tuple[str | bytes | None, ...]:
     """What a ClientContext is built from; other row changes (name, updated_at) don't rebuild it."""
-    return row.operaton_url, row.secrets, row.bucket
+    return row.operaton_url, row.secrets, row.bucket, row.supabase_ref
+
+
+def _storage(row: Client, sealed: dict[str, Any]) -> Storage | None:
+    """The bucket through Storage, with the sealed service key, at the sealed `storage_url`
+    (local, #51) or the client's Supabase project; None without a key or a URL."""
+    key = sealed.get("service_role_key")
+    url = sealed.get("storage_url") or (
+        f"https://{row.supabase_ref}.supabase.co" if row.supabase_ref else None
+    )
+    if not (key and url and row.bucket):
+        return None
+    return Storage(
+        url, key, row.bucket, client=row.slug, public_url=sealed.get("storage_public_url")
+    )
 
 
 def open_context(row: Client, **pool: Any) -> ClientContext:
@@ -104,6 +123,7 @@ def open_context(row: Client, **pool: Any) -> ClientContext:
             client=row.slug,
         ),
         bucket=row.bucket,
+        storage=_storage(row, sealed),
     )
 
 
