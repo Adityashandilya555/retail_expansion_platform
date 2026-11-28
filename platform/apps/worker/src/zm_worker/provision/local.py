@@ -1,16 +1,18 @@
 """`zm-worker provision-local` (#31): register a client on local resources, for the isolation
 suite and local demos. The same steps as cloud provisioning (S2-02a/b) minus the cloud calls:
 the vault migrations (`vault_migrate.apply`), the registry row (as the `registry` and
-`operaton_health` steps leave it) and seed-draft (`railway.seed`). The vault and the engine
-already run (dev-up.sh), so nothing is created; running it again updates the row and keeps the
-draft.
+`operaton_health` steps leave it) and seed-draft (`railway.seed`), plus the `bucket` step on the
+Supabase CLI's Storage when one is given (pilot-local, #51). The vault and the engine already run
+(dev-up.sh), so nothing else is created; running it again updates the row and keeps the draft.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 import psycopg
+from cryptography.fernet import InvalidToken
 from sqlalchemy.engine import make_url
 
 from zm_api import secrets as sealed
@@ -18,10 +20,25 @@ from zm_api.context import SERVICE_ACCOUNT
 from zm_worker import vault_migrate
 from zm_worker.dsn import libpq
 from zm_worker.provision.railway import seed
-from zm_worker.provision.supabase import BUCKET
+from zm_worker.provision.supabase import BUCKET, ensure_bucket
 
 # local slugs whose template isn't named: the two local clients of .env.example
 DEFAULT_TEMPLATES = {"pilot-local": "matrix-retail", "qsr-local": "qsr"}
+STORAGE_SECRETS = ("storage_url", "storage_public_url", "service_role_key")
+log = logging.getLogger("zm_worker.provision")
+
+
+@dataclass(frozen=True)
+class LocalStorage:
+    """The Supabase CLI stack's Storage (#51), for pilot-local; qsr-local has none (D11)."""
+
+    url: str
+    """Where this host and the browser reach it: `http://127.0.0.1:54321`."""
+    service_key: str
+    """`SERVICE_ROLE_KEY` from `supabase --workdir infra status -o env`."""
+    container_url: str | None = None
+    """Where the zm-api container reaches it (`http://host.docker.internal:54321`), when the API
+    runs there."""
 
 
 @dataclass(frozen=True)
@@ -36,6 +53,7 @@ class LocalClient:
     passwords: dict[str, str]
     """Role → password for zm_api and zm_engine."""
     service_password: str
+    storage: LocalStorage | None = None
 
 
 def api_dsn(dsn: str, password: str) -> str:
@@ -52,6 +70,20 @@ def _template(conn: psycopg.Connection, key: str) -> dict[str, Any]:
     if row is None:
         raise LookupError(f"no template {key!r} in platform.templates: run `zm-api templates sync`")
     return row[0]
+
+
+def _sealed_storage(conn: psycopg.Connection, slug: str) -> dict[str, str]:
+    """The Storage URLs and key an earlier run sealed for `slug` (#51): a run without
+    LOCAL_STORAGE_* keeps them rather than dropping the client's files."""
+    row = conn.execute("select secrets from platform.clients where slug = %s", (slug,)).fetchone()
+    if row is None or row[0] is None:
+        return {}
+    try:
+        earlier = sealed.unseal(row[0])
+    except InvalidToken:  # sealed with another SECRETS_ENCRYPTION_KEY: nothing can be kept
+        log.warning("%s: its earlier secrets can't be opened, so any Storage is dropped", slug)
+        return {}
+    return {k: earlier[k] for k in STORAGE_SECRETS if k in earlier}
 
 
 def check_engine(client: LocalClient, http: httpx.Client | None = None) -> None:
@@ -76,14 +108,30 @@ def check_engine(client: LocalClient, http: httpx.Client | None = None) -> None:
 def provision(
     platform_dsn: str, client: LocalClient, http: httpx.Client | None = None
 ) -> list[str]:
-    """Migrate, register as ready, seed the draft. Returns the migrations applied this run."""
+    """Migrate, register as ready, seed the draft; with `storage`, create the bucket and seal
+    Storage's URLs and key too (#51). Returns the migrations applied this run."""
     with psycopg.connect(libpq(platform_dsn), autocommit=True) as conn:
         workflow = _template(conn, client.template)  # before anything changes
+        files = _sealed_storage(conn, client.slug)
     check_engine(client, http)
+    if client.storage is None and files:
+        log.info("%s keeps the Storage sealed by an earlier run", client.slug)
+    if (store := client.storage) is not None:
+        with httpx.Client(timeout=15) as own:
+            ensure_bucket(http or own, store.url, store.service_key)
+        files = {
+            "storage_url": store.container_url or store.url,
+            "storage_public_url": store.url,
+            "service_role_key": store.service_key,
+        }
     applied = vault_migrate.apply(client.dsn, client.passwords)
     zm_api_dsn = api_dsn(client.dsn, client.passwords["zm_api"])
     box = sealed.seal(
-        {"zm_api_dsn": zm_api_dsn, "service_account_password": client.service_password}
+        {
+            "zm_api_dsn": zm_api_dsn,
+            "service_account_password": client.service_password,
+            **files,
+        }
     )
     with psycopg.connect(libpq(platform_dsn), autocommit=True) as conn:
         conn.execute(

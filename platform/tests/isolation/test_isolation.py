@@ -15,7 +15,7 @@ from zm_api.context import Resolver
 from zm_api.main import create_app
 
 from . import checks
-from .conftest import JWT_SECRET, PILOT, QSR, World, engine_client, token
+from .conftest import JWT_SECRET, PILOT, QSR, World, engine_client, token, vault_sql
 
 pytestmark = pytest.mark.isolation
 
@@ -165,6 +165,30 @@ def test_9_a_preview_token_for_one_client_cant_reach_the_other(world: World) -> 
         headers={**preview, "Idempotency-Key": f"isolation-{uuid.uuid4()}"},
     )
     assert sent.status_code in {401, 403, 404}, sent.text
+
+
+def test_10_another_clients_file_is_404(world: World) -> None:
+    """A file id of qsr-local (#51), confirmed in its vault, is 404 to pilot's token on confirm
+    and download; qsr's own uploader still gets it (no Storage needed to repeat a confirm)."""
+    file_id = uuid.uuid4()
+    vault_sql(
+        QSR,
+        "insert into app.files (id, case_id, flow_key, task_def_key, field, key, name,"
+        " size_bytes, sha256, version, status, uploaded_by) values (%s, %s, 'store_launch',"
+        " 'start', 'fire_noc', %s, 'noc.pdf', 9, %s, 1, 'confirmed', %s)",
+        file_id,
+        world.qsr.case["id"],
+        f"cases/{world.qsr.case['code']}/start/fire_noc/{file_id}-noc.pdf",
+        "0" * 64,
+        world.qsr.users["bd1"],
+    )
+    own = world.http.post(f"/app/files/{file_id}/confirm", headers=world.qsr.auth())
+    assert own.status_code == 200 and own.json()["name"] == "noc.pdf", own.text
+    for method, path in (("POST", "confirm"), ("GET", "download")):
+        response = world.http.request(
+            method, f"/app/files/{file_id}/{path}", headers=world.pilot.auth()
+        )
+        assert response.status_code == 404, (path, response.text)
 
 
 def test_7_one_clients_service_account_cant_use_the_others_engine(world: World) -> None:

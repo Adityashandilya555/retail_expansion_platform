@@ -1,6 +1,7 @@
 """`zm-worker provision-local` (#31) without the stack: the CLI's checks, the DSN it registers,
 and the order of its steps. The isolation suite runs it for real (`pytest -m isolation`)."""
 
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -30,6 +31,8 @@ def full_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "SECRETS_ENCRYPTION_KEY": Fernet.generate_key().decode(),
     }.items():
         monkeypatch.setenv(var, value)
+    for var in ("LOCAL_STORAGE_URL", "LOCAL_STORAGE_SERVICE_KEY", "LOCAL_STORAGE_CONTAINER_URL"):
+        monkeypatch.delenv(var, raising=False)
 
 
 def test_the_cli_needs_its_env(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -87,8 +90,11 @@ def test_the_pilot_client_gets_the_default_credentials(
 
 
 class FakeConn:
-    def __init__(self, calls: list[Any], template: Any) -> None:
-        self.calls, self.template = calls, template
+    """The platform database: `template` answers the template query, `earlier` (sealed) is the
+    client row's secrets from an earlier run."""
+
+    def __init__(self, calls: list[Any], template: Any, earlier: bytes | None = None) -> None:
+        self.calls, self.template, self.earlier, self.query = calls, template, earlier, ""
 
     def __enter__(self) -> "FakeConn":
         return self
@@ -98,9 +104,12 @@ class FakeConn:
 
     def execute(self, query: str, params: Any = None) -> "FakeConn":
         self.calls.append(("sql", query.split()[0], params))
+        self.query = query
         return self
 
     def fetchone(self) -> Any:
+        if "from platform.clients" in self.query:
+            return None if self.earlier is None else (self.earlier,)
         return self.template
 
 
@@ -125,8 +134,9 @@ def test_provision_migrates_registers_then_seeds(
     )
     assert local.provision("postgresql://platform/postgres", client, engine(200, 401)) == ["0004"]
     kinds = [c[0] if c[0] != "sql" else c[1] for c in calls]
-    assert kinds == ["select", "migrate", "insert", "seed"]  # template read before any change
-    insert = calls[2][2]
+    # the template and any earlier secrets are read before any change
+    assert kinds == ["select", "select", "migrate", "insert", "seed"]
+    insert = calls[3][2]
     assert insert[:6] == (
         "qsr-local",
         "QSR Local",
@@ -139,7 +149,109 @@ def test_provision_migrates_registers_then_seeds(
         "zm_api_dsn": "postgresql://zm_api:api@localhost:5434/postgres",
         "service_account_password": "service",
     }
-    assert calls[3] == ("seed", "postgresql://zm_api:api@localhost:5434/postgres", {"v": 1}, "qsr")
+    assert calls[4] == ("seed", "postgresql://zm_api:api@localhost:5434/postgres", {"v": 1}, "qsr")
+
+
+def test_a_run_without_storage_keeps_the_storage_sealed_earlier(
+    full_env: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """pilot-local registered with Storage, then provisioned again without LOCAL_STORAGE_*: its
+    files keep working. Secrets sealed under another key can't be kept: that is logged."""
+    storage = {
+        "storage_url": "http://host.docker.internal:54321",
+        "storage_public_url": "http://127.0.0.1:54321",
+        "service_role_key": "service-jwt",
+    }
+    earlier = secrets.seal({"zm_api_dsn": "old", "service_account_password": "old", **storage})
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        local.psycopg, "connect", lambda *a, **k: FakeConn(calls, ({"v": 1},), earlier)
+    )
+    monkeypatch.setattr(local.vault_migrate, "apply", lambda dsn, pw: [])
+    monkeypatch.setattr(local, "seed", lambda *a: None)
+    caplog.set_level("INFO", logger="zm_worker.provision")
+    client = local.LocalClient(
+        "pilot-local", "postgresql://v", "http://e/engine-rest", "x", "P", "P", {"zm_api": "a"}, "s"
+    )
+    local.provision("postgresql://p", client, engine(200, 401))
+    sealed = secrets.unseal(next(c[2] for c in calls if c[1] == "insert")[6])
+    assert {k: sealed[k] for k in storage} == storage
+    assert sealed["service_account_password"] == "s"  # everything else is this run's
+    assert "keeps the Storage sealed by an earlier run" in caplog.text
+    assert "service-jwt" not in caplog.text
+
+    calls.clear()
+    other_key = Fernet(Fernet.generate_key()).encrypt(b'{"service_role_key": "k"}')
+    monkeypatch.setattr(
+        local.psycopg, "connect", lambda *a, **k: FakeConn(calls, ({"v": 1},), other_key)
+    )
+    local.provision("postgresql://p", client, engine(200, 401))
+    sealed = secrets.unseal(next(c[2] for c in calls if c[1] == "insert")[6])
+    assert "service_role_key" not in sealed
+    assert "any Storage is dropped" in caplog.text
+
+
+def test_the_pilot_client_gets_storage_and_the_isolation_client_never(
+    full_env: None, seen: list[tuple[str, local.LocalClient]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCAL_STORAGE_URL", "http://127.0.0.1:54321")
+    monkeypatch.setenv("LOCAL_STORAGE_SERVICE_KEY", "service-jwt")
+    monkeypatch.setenv("LOCAL_STORAGE_CONTAINER_URL", "http://host.docker.internal:54321")
+    for slug in ("pilot-local", "qsr-local"):
+        worker.main(["provision-local", slug, "--dsn", "postgresql://v", "--operaton-url", "e"])
+    assert seen[0][1].storage == local.LocalStorage(
+        "http://127.0.0.1:54321", "service-jwt", "http://host.docker.internal:54321"
+    )
+    assert seen[1][1].storage is None  # qsr-local has no Storage (D11)
+
+
+def test_storage_needs_its_key(full_env: None, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setenv("LOCAL_STORAGE_URL", "http://127.0.0.1:54321")
+    monkeypatch.delenv("LOCAL_STORAGE_SERVICE_KEY", raising=False)
+    with pytest.raises(SystemExit):
+        worker.main(["provision-local", "pilot-local", "--dsn", "x", "--operaton-url", "e"])
+    assert "LOCAL_STORAGE_SERVICE_KEY" in capsys.readouterr().err
+
+
+def test_provision_with_storage_makes_the_bucket_and_seals_storage(
+    full_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Any] = []
+    monkeypatch.setattr(local.psycopg, "connect", lambda *a, **k: FakeConn(calls, ({"v": 1},)))
+    monkeypatch.setattr(local.vault_migrate, "apply", lambda dsn, pw: [])
+    monkeypatch.setattr(local, "seed", lambda *a: None)
+    buckets: list[tuple[str, str]] = []
+
+    def stack(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/engine-rest/task"):
+            return httpx.Response(200 if "authorization" in request.headers else 401)
+        assert request.url.path == "/storage/v1/bucket"
+        buckets.append((str(request.url.host), request.headers["apikey"]))
+        return httpx.Response(200, json={"name": "files"})
+
+    storage = local.LocalStorage("http://127.0.0.1:54321", "service-jwt")
+    client = local.LocalClient(
+        "pilot-local", "postgresql://v", "http://e/engine-rest", "x", "P", "P", {"zm_api": "a"}, "s"
+    )
+    with_storage = replace(client, storage=storage)
+    local.provision(
+        "postgresql://p", with_storage, httpx.Client(transport=httpx.MockTransport(stack))
+    )
+    assert buckets == [("127.0.0.1", "service-jwt")]
+    sealed = secrets.unseal(next(c[2] for c in calls if c[1] == "insert")[6])
+    assert sealed["storage_url"] == sealed["storage_public_url"] == "http://127.0.0.1:54321"
+    assert sealed["service_role_key"] == "service-jwt"
+
+    calls.clear()  # the API in its container reaches Storage by another name than the browser
+    in_container = replace(storage, container_url="http://host.docker.internal:54321")
+    local.provision(
+        "postgresql://p",
+        replace(client, storage=in_container),
+        httpx.Client(transport=httpx.MockTransport(stack)),
+    )
+    sealed = secrets.unseal(next(c[2] for c in calls if c[1] == "insert")[6])
+    assert sealed["storage_url"] == "http://host.docker.internal:54321"
+    assert sealed["storage_public_url"] == "http://127.0.0.1:54321"
 
 
 def test_provision_stops_before_changing_anything_without_the_template(

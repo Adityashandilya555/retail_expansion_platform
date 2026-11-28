@@ -358,6 +358,63 @@ async def _closed_activities(ctx: ClientContext, closed: list[tasks.Case]) -> di
     return dict(await asyncio.gather(*(read(c) for c in closed)))
 
 
+@dataclass(frozen=True)
+class CaseFile:
+    """One confirmed version of a document field (#51); its key stays with the API."""
+
+    id: UUID
+    field: str
+    version: int
+    name: str
+    size_bytes: int
+    content_type: str | None
+    uploaded_by: UUID
+    uploaded_by_name: str | None
+    uploaded_at: datetime
+
+
+def kept_versions(defs: Mapping[str, Any], files: list[CaseFile]) -> list[CaseFile]:
+    """`files` (newest version first per field) without the older versions of a field whose
+    rule doesn't keep them (S3-D1: hidden, never deleted)."""
+    seen: set[str] = set()
+    out = []
+    for f in files:
+        if f.field in seen and not defs.get(f.field, {}).get("document", {}).get("keep_versions"):
+            continue
+        seen.add(f.field)
+        out.append(f)
+    return out
+
+
+async def case_files(
+    ctx: ClientContext, user_id: UUID, code: str, field: str | None = None
+) -> list[CaseFile]:
+    """A case's committed files (a submission or the start holds them) by field, newest version
+    first, by its own release's rules. Fields hidden from the user's level are left out; asking
+    for one is 404, like an unknown case."""
+    async with ctx.db.connect() as conn:
+        me = await tasks.person(conn, user_id)
+        case = (await tasks._cases_by_code(conn, [code])).get(code)
+        if case is None:
+            raise NotFound("No such case")
+        workflow = (await tasks._workflows(conn, [case.release_version]))[case.release_version]
+        hidden = tasks.hidden_fields(workflow, me.levels)
+        if field in hidden:
+            raise NotFound("No such field")
+        rows = await conn.execute(
+            text(
+                "select f.id, f.field, f.version, f.name, f.size_bytes, f.content_type,"
+                " f.uploaded_by, u.name as uploaded_by_name, f.confirmed_at as uploaded_at"
+                " from app.files f left join app.users u on u.id = f.uploaded_by"
+                " where f.case_id = :c and f.status = 'confirmed' and f.version is not null"
+                " and (cast(:f as text) is null or f.field = :f) order by f.field, f.version desc"
+            ),
+            {"c": case.id, "f": field},
+        )
+        found = [CaseFile(**r) for r in rows.mappings() if r["field"] not in hidden]
+    return kept_versions(workflow.get("fields", {}), found)
+
+
 @dataclass
 class Section:
     key: str

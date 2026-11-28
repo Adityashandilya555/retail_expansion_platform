@@ -84,6 +84,8 @@ services:
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     ports: ["${API_PORT:-8000}:8000"]
+    # the Supabase CLI's Storage for pilot-local's files (#51): LOCAL_STORAGE_CONTAINER_URL
+    extra_hosts: ["host.docker.internal:host-gateway"]
     env_file:
       - path: .env
         required: false

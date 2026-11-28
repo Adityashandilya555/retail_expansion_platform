@@ -1,13 +1,15 @@
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expectNoAxeViolations, renderWithZm } from "@zm/ui/test";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import caEntry from "../../schema/tests/fixtures/fin_ca_entry.schema.json";
 import { sampleApproval as APPR, sampleDdChecklist as DD } from "./samples";
 import type { FormSchema } from "./validate";
 import { ZmForm, type ZmFormProps } from "./ZmForm";
 
 const CA = caEntry as FormSchema;
+
+afterEach(() => vi.unstubAllGlobals());
 const OUTCOME = "qsr_licences__appr_legal_L3_outcome";
 const COMMENT = "qsr_licences__appr_legal_L3_comment";
 
@@ -30,7 +32,7 @@ function columnCss(label: string): { base: string; sm: string } {
 }
 
 describe("legal_dd_checklist", () => {
-  test("renders 6 yes/no fields, the textarea and the disabled document note in the grid", () => {
+  test("renders 6 yes/no fields, the textarea and the document slot in the grid", () => {
     renderForm({ schema: DD });
     const section = screen.getByRole("group", { name: "Fill DD checklist" });
     expect(within(section).getAllByRole("radiogroup")).toHaveLength(6);
@@ -40,8 +42,31 @@ describe("legal_dd_checklist", () => {
       expect(columnCss(label)).toEqual({ base: expect.stringContaining("100%"), sm: expect.stringContaining("100%") });
     }
     expect(within(section).getByLabelText("Notes").tagName).toBe("TEXTAREA");
-    expect((within(section).getByLabelText("DD report") as HTMLInputElement).disabled).toBe(true);
-    expect(within(section).getByText("Uploads arrive with Files")).toBeDefined();
+    // no file API passed (as in /dev/ui): the slot shows its rule and says why it can't upload
+    const slot = within(section).getByRole("group", { name: "DD report" });
+    expect(within(slot).getByText("PDF, JPG, PNG · up to 25 MB")).toBeDefined();
+    expect(within(slot).getByText("Uploads aren't available here")).toBeDefined();
+  });
+
+  test("an uploaded document goes into the submitted values as {key, sha256, name}", async () => {
+    const value = { key: "cases/MX-0001/legal_dd_checklist/dd_report/1-dd.pdf", sha256: "a".repeat(64), name: "dd.pdf" };
+    const files = { upload: vi.fn(async () => ({ file_id: "f1", upload_url: "http://storage.test/put" })), confirm: vi.fn(async () => value), url: vi.fn() };
+    class Xhr {
+      upload = {};
+      onload: (() => void) | null = null;
+      status = 200;
+      open() {}
+      setRequestHeader() {}
+      send() {
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    vi.stubGlobal("XMLHttpRequest", Xhr);
+    const { user, onSubmit, container } = renderForm({ schema: DD, files });
+    await user.upload(container.querySelector("input[type=file]") as HTMLInputElement, new File(["%PDF-"], "dd.pdf", { type: "application/pdf" }));
+    expect(await screen.findByText("Attached: dd.pdf")).toBeDefined();
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(onSubmit).toHaveBeenCalledWith({ dd_report: value });
   });
 
   test("shows the case data panel from x-zm-show, read-only", () => {

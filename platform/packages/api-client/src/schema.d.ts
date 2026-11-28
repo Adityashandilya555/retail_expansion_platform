@@ -177,6 +177,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/app/cases/{code}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Case Files
+         * @description The case's confirmed files by field, newest version first; a field whose rule doesn't
+         *     keep versions lists only its latest. Fields hidden from the user's level are left out.
+         */
+        get: operations["list_case_files_app_cases__code__files_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/files/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload File
+         * @description Start an upload to a document field of a task the user may submit, or of the start form
+         *     of a flow they may start: the type and size must fit the field's rule. PUT the file to
+         *     `upload_url`, then confirm it.
+         */
+        post: operations["upload_file_app_files_upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/files/{file_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm File
+         * @description Check the uploaded file (size, sha256, and the first bytes of a PDF, JPG or PNG) and
+         *     confirm it: the answer is the field's value for the form. A file that fails is deleted (422,
+         *     with the reason).
+         */
+        post: operations["confirm_file_app_files__file_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app/files/{file_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download File
+         * @description A signed URL for the file that works for 60 seconds: inline (a preview) or, with
+         *     `attachment=true`, as a download under the file's name.
+         */
+        get: operations["download_file_app_files__file_id__download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/app/me": {
         parameters: {
             query?: never;
@@ -1450,6 +1536,15 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** DocumentValue */
+        DocumentValue: {
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Sha256 */
+            sha256: string;
+        };
         /**
          * DraftDiff
          * @description What publishing the draft would change; every list empty and both looks null = nothing.
@@ -1552,6 +1647,36 @@ export interface components {
             type: string | null;
             /** Value */
             value: unknown;
+        };
+        /** FileOut */
+        FileOut: {
+            /** Content Type */
+            content_type: string | null;
+            /** Field */
+            field: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Uploaded At
+             * Format: date-time
+             */
+            uploaded_at: string;
+            /**
+             * Uploaded By
+             * Format: uuid
+             */
+            uploaded_by: string;
+            /** Uploaded By Name */
+            uploaded_by_name: string | null;
+            /** Version */
+            version: number;
         };
         /** FlowCases */
         FlowCases: {
@@ -2059,6 +2184,17 @@ export interface components {
             /** Required */
             required: boolean;
         };
+        /** SignedUrl */
+        SignedUrl: {
+            /**
+             * Expires At
+             * Format: date-time
+             * @description 60 seconds after it was made; then Storage refuses it.
+             */
+            expires_at: string;
+            /** Url */
+            url: string;
+        };
         /** StageOut */
         StageOut: {
             /** Department */
@@ -2295,6 +2431,45 @@ export interface components {
             name: string;
             /** Sla Days */
             sla_days?: number | null;
+        };
+        /** UploadIn */
+        UploadIn: {
+            /** Field */
+            field: string;
+            /** Flow */
+            flow?: string | null;
+            /**
+             * Name
+             * @description The file's name; its extension must be one the field accepts.
+             */
+            name: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Task Id
+             * @description The task whose form holds the field; or `flow`, for its start form.
+             */
+            task_id?: string | null;
+        };
+        /** UploadOut */
+        UploadOut: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+            /** Key */
+            key: string;
+            /**
+             * Upload Url
+             * @description PUT the file here, with its Content-Type, before `expires_at`.
+             */
+            upload_url: string;
         };
         /** Usage */
         Usage: {
@@ -2730,6 +2905,136 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_case_files_app_cases__code__files_get: {
+        parameters: {
+            query?: {
+                field?: string | null;
+            };
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileOut"][];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    upload_file_app_files_upload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UploadIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadOut"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    confirm_file_app_files__file_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentValue"];
+                };
+            };
+            /** @description Problem details (RFC 9457) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    download_file_app_files__file_id__download_get: {
+        parameters: {
+            query?: {
+                attachment?: boolean;
+            };
+            header?: never;
+            path: {
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedUrl"];
                 };
             };
             /** @description Problem details (RFC 9457) */

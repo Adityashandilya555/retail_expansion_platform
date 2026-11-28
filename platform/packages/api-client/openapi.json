@@ -1211,6 +1211,29 @@
         "title": "Department",
         "type": "object"
       },
+      "DocumentValue": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "sha256",
+          "name"
+        ],
+        "title": "DocumentValue",
+        "type": "object"
+      },
       "DraftDiff": {
         "description": "What publishing the draft would change; every list empty and both looks null = nothing.",
         "properties": {
@@ -1476,6 +1499,76 @@
           "since"
         ],
         "title": "FieldOut",
+        "type": "object"
+      },
+      "FileOut": {
+        "properties": {
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "uploaded_at": {
+            "format": "date-time",
+            "title": "Uploaded At",
+            "type": "string"
+          },
+          "uploaded_by": {
+            "format": "uuid",
+            "title": "Uploaded By",
+            "type": "string"
+          },
+          "uploaded_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploaded By Name"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "field",
+          "version",
+          "name",
+          "size_bytes",
+          "content_type",
+          "uploaded_by",
+          "uploaded_by_name",
+          "uploaded_at"
+        ],
+        "title": "FileOut",
         "type": "object"
       },
       "FlowCases": {
@@ -2745,6 +2838,26 @@
         "title": "SetRequired",
         "type": "object"
       },
+      "SignedUrl": {
+        "properties": {
+          "expires_at": {
+            "description": "60 seconds after it was made; then Storage refuses it.",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
+        ],
+        "title": "SignedUrl",
+        "type": "object"
+      },
       "StageOut": {
         "properties": {
           "department": {
@@ -3328,6 +3441,87 @@
           "department"
         ],
         "title": "UiStage",
+        "type": "object"
+      },
+      "UploadIn": {
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "flow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flow"
+          },
+          "name": {
+            "description": "The file's name; its extension must be one the field accepts.",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task whose form holds the field; or `flow`, for its start form.",
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "field",
+          "name",
+          "size_bytes"
+        ],
+        "title": "UploadIn",
+        "type": "object"
+      },
+      "UploadOut": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "file_id": {
+            "format": "uuid",
+            "title": "File Id",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "upload_url": {
+            "description": "PUT the file here, with its Content-Type, before `expires_at`.",
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_id",
+          "upload_url",
+          "key",
+          "expires_at"
+        ],
+        "title": "UploadOut",
         "type": "object"
       },
       "Usage": {
@@ -4138,6 +4332,209 @@
           }
         },
         "summary": "Get Case",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/cases/{code}/files": {
+      "get": {
+        "description": "The case's confirmed files by field, newest version first; a field whose rule doesn't\nkeep versions lists only its latest. Fields hidden from the user's level are left out.",
+        "operationId": "list_case_files_app_cases__code__files_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "field",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Field"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FileOut"
+                  },
+                  "title": "Response List Case Files App Cases  Code  Files Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "List Case Files",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/files/upload": {
+      "post": {
+        "description": "Start an upload to a document field of a task the user may submit, or of the start form\nof a flow they may start: the type and size must fit the field's rule. PUT the file to\n`upload_url`, then confirm it.",
+        "operationId": "upload_file_app_files_upload_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Upload File",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/files/{file_id}/confirm": {
+      "post": {
+        "description": "Check the uploaded file (size, sha256, and the first bytes of a PDF, JPG or PNG) and\nconfirm it: the answer is the field's value for the form. A file that fails is deleted (422,\nwith the reason).",
+        "operationId": "confirm_file_app_files__file_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "File Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentValue"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Confirm File",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/app/files/{file_id}/download": {
+      "get": {
+        "description": "A signed URL for the file that works for 60 seconds: inline (a preview) or, with\n`attachment=true`, as a download under the file's name.",
+        "operationId": "download_file_app_files__file_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "File Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "attachment",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Attachment",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignedUrl"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem details (RFC 9457)"
+          }
+        },
+        "summary": "Download File",
         "tags": [
           "app"
         ]

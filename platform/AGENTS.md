@@ -185,4 +185,4 @@ Branch `<issue#>-<slug>` from `main`; one issue per PR; title `#<n> <title>`; bo
 - TypeScript strict, no `any`, API types generated from OpenAPI, components with light/dark previews and visible focus.
 - UI: Mantine first (D19); build our own component only when Mantine lacks it, in `@zm/ui`. No colours outside `packages/zm-ui/src/theme.ts`; preview every component at `/dev/ui` (dev server).
 - Client id comes only from the JWT; cross-client reads return 404.
-- Files: keys `sites/<site>/<task>/<slot>/<uuid>-<name>` + sha256, never URLs.
+- Files: keys `cases/<case code>/<task>/<field>/<uuid>-<name>` (start forms: `start/<flow>/<user>/<field>/…`, #51) + sha256, never URLs.

@@ -108,7 +108,9 @@ def provision_local(argv: list[str]) -> None:
     """`zm-worker provision-local <slug> --dsn … --operaton-url …`: register a client on local
     resources (#31). Passwords come from ZM_API_DB_PASSWORD, ZM_ENGINE_DB_PASSWORD and
     ZM_ADMIN_USER_PASSWORD, or the ZM_ISO_* ones for the isolation client (LOCAL_ISO_CLIENT_SLUG,
-    default qsr-local); needs PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY."""
+    default qsr-local); needs PLATFORM_DATABASE_URL and SECRETS_ENCRYPTION_KEY. Files (#51): with
+    LOCAL_STORAGE_URL and LOCAL_STORAGE_SERVICE_KEY (and LOCAL_STORAGE_CONTAINER_URL when the API
+    runs in its container), any client but the isolation one gets the Supabase CLI's Storage."""
     from zm_worker.provision import local
 
     parser = argparse.ArgumentParser(prog="zm-worker provision-local")
@@ -132,6 +134,14 @@ def provision_local(argv: list[str]) -> None:
     }
     service_var = f"{prefix}ADMIN_USER_PASSWORD"
     needed = [*env.values(), service_var, "PLATFORM_DATABASE_URL", "SECRETS_ENCRYPTION_KEY"]
+    storage = None
+    if prefix == "ZM_" and os.environ.get("LOCAL_STORAGE_URL"):  # qsr-local has no Storage (D11)
+        needed.append("LOCAL_STORAGE_SERVICE_KEY")
+        storage = local.LocalStorage(
+            os.environ["LOCAL_STORAGE_URL"],
+            os.environ.get("LOCAL_STORAGE_SERVICE_KEY", ""),
+            os.environ.get("LOCAL_STORAGE_CONTAINER_URL") or None,
+        )
     missing = [var for var in needed if not os.environ.get(var)]
     if missing:
         parser.error(f"set {', '.join(missing)}")
@@ -144,6 +154,7 @@ def provision_local(argv: list[str]) -> None:
         workspace_code=args.workspace_code or args.slug.upper(),
         passwords={role: os.environ[var] for role, var in env.items()},
         service_password=os.environ[service_var],
+        storage=storage,
     )
     applied = local.provision(os.environ["PLATFORM_DATABASE_URL"], client)
     log.info(

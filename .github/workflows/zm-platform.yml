@@ -164,11 +164,12 @@ jobs:
         with:
           version: 2.120.0
       - run: uv sync --all-packages --frozen
-      # Only Postgres is needed here; the other Supabase services stay off to save minutes.
-      - name: Start the Supabase CLI vault (db only)
+      # Postgres, plus Storage behind Kong for the files tests (#51), and Auth: `supabase status`
+      # prints the service key only while Auth runs. The other services stay off to save minutes.
+      - name: Start the Supabase CLI vault (db + Storage)
         run: >-
           supabase --workdir infra start
-          -x gotrue,realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+          -x realtime,imgproxy,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
       - name: Migrate the client vaults
         run: |
           docker compose up -d --wait pg-iso
@@ -179,8 +180,13 @@ jobs:
             uv run zm-worker vault-migrate --dsn postgresql://postgres:postgres@localhost:5434/postgres
       - name: Start the compose stack
         run: docker compose up -d --build --wait
+      # The files tests (#51) use the CLI stack's own local service key (not a secret).
       - name: Integration tests
-        run: uv run pytest -m integration -v --cov --cov-report=xml:coverage-integration.xml
+        run: |
+          LOCAL_STORAGE_SERVICE_KEY="$(supabase --workdir infra status -o env | sed -n 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/p')"
+          [ -n "$LOCAL_STORAGE_SERVICE_KEY" ] || { echo "::error::supabase status printed no SERVICE_ROLE_KEY"; exit 1; }
+          export LOCAL_STORAGE_SERVICE_KEY
+          uv run pytest -m integration -v --cov --cov-report=xml:coverage-integration.xml
       # Code that needs a real database (vault migrations, registry) is only covered here.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

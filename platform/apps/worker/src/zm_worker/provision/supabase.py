@@ -7,6 +7,7 @@ before the call that uses it, so a kill between the two can't lose it.
 
 import httpx
 
+from zm_api.storage import answer_status, auth_headers
 from zm_worker import vault_migrate
 from zm_worker.provision.runner import (
     POLL_SECONDS,
@@ -19,6 +20,9 @@ from zm_worker.provision.runner import (
 
 API = "https://api.supabase.com"
 BUCKET = "files"
+FILE_SIZE_LIMIT = 100 * 1024 * 1024
+"""The bucket's backstop in bytes: the schema's `max_mb` ceiling (DocumentRule); the API holds
+each document field to its own rule (#51)."""
 HEALTHY = "ACTIVE_HEALTHY"
 BROKEN = {"INACTIVE", "INIT_FAILED", "RESTORE_FAILED", "PAUSE_FAILED"}
 GONE = {"REMOVED", "GOING_DOWN"}
@@ -156,29 +160,31 @@ def data_api_off(ctx: Context) -> None:
     raise NeedsHuman(f"The Data API still answers {url} ({status}). {click}")
 
 
-def _exists(response: httpx.Response) -> bool:
-    if response.status_code == 409:
-        return True
-    try:  # older Storage versions answer a duplicate with 400 and statusCode "409" in the body
-        return response.status_code == 400 and response.json().get("statusCode") == "409"
-    except ValueError:
-        return False
+def ensure_bucket(http: httpx.Client, project_url: str, service_key: str) -> None:
+    """Private bucket `files`, created or updated through the project's Storage API, holding no
+    object over FILE_SIZE_LIMIT. A project whose own upload limit is lower refuses that bucket
+    limit (Storage answers 413, `parseMaxSizeLimit` in supabase/storage `src/storage/storage.ts`);
+    its own limit is then the backstop."""
+    headers = auth_headers(service_key)
+    url = f"{project_url.rstrip('/')}/storage/v1/bucket"
+
+    def save(limit: dict[str, int]) -> httpx.Response:
+        body = {"public": False, **limit}
+        created = http.post(url, json={"id": BUCKET, "name": BUCKET, **body}, headers=headers)
+        if answer_status(created) != 409:
+            return created
+        return http.put(f"{url}/{BUCKET}", json=body, headers=headers)  # keep it, but private
+
+    saved = save({"file_size_limit": FILE_SIZE_LIMIT})
+    if answer_status(saved) == 413:
+        saved = save({})
+    saved.raise_for_status()
 
 
 def bucket(ctx: Context) -> None:
     """Private bucket `files` through the project's Storage API."""
-    key = ctx.secrets["service_role_key"]
-    headers = {"apikey": key}
-    if not key.startswith("sb_secret_"):  # legacy JWT; new secret keys go only in apikey
-        headers["Authorization"] = f"Bearer {key}"
-    url = f"{_project_url(ctx.secrets['supabase_ref'])}/storage/v1/bucket"
-    created = ctx.http.post(
-        url, json={"id": BUCKET, "name": BUCKET, "public": False}, headers=headers
-    )
-    if _exists(created):  # keep it, but make sure it is private
-        ctx.http.put(f"{url}/{BUCKET}", json={"public": False}, headers=headers).raise_for_status()
-    else:
-        created.raise_for_status()
+    ref = ctx.secrets["supabase_ref"]
+    ensure_bucket(ctx.http, _project_url(ref), ctx.secrets["service_role_key"])
 
 
 def registry(ctx: Context) -> None:
