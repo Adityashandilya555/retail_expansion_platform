@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expectNoAxeViolations, renderWithZm } from "@zm/ui/test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -148,8 +148,60 @@ test("storage refusing the PUT is an error, and the slot can try again", async (
   expect(screen.getByRole("button", { name: "Choose file" }).hasAttribute("disabled")).toBe(false);
 });
 
-test("versions list newest first; each downloads and previews from a signed URL", async () => {
+test.each([403, 503])("a %i from Storage on the PUT is an upload error, never 'off in preview', and can be retried", async (status) => {
+  const files = api();
+  const { user, input } = renderSlot({ files });
+  await user.upload(input(), pdf());
+  await waitFor(() => expect(FakeXhr.last).toBeDefined());
+  sent().answer(status); // e.g. the signed URL ran out, or Storage was briefly down
+  expect((await screen.findByRole("alert")).textContent).toBe("The upload didn't go through; try again");
+  expect(screen.queryByText("Uploads are off in preview")).toBeNull();
+  expect(screen.queryByText("Uploads aren't available in this workspace")).toBeNull();
+  expect(screen.getByRole("button", { name: "Choose file" }).hasAttribute("disabled")).toBe(false);
+
+  FakeXhr.last = undefined; // the retry goes through
+  await user.upload(input(), pdf());
+  await waitFor(() => expect(FakeXhr.last).toBeDefined());
+  sent().answer(200);
+  await waitFor(() => expect(files.confirm).toHaveBeenCalledTimes(1));
+  expect(files.upload).toHaveBeenCalledTimes(2);
+});
+
+test("a pdf / png / jpg is PUT as its own type, whatever the OS reported", async () => {
+  const { user, input } = renderSlot({ files: api() });
+  await user.upload(input(), new File(["\u0089PNG"], "Plan.PNG", { type: "" }));
+  await waitFor(() => expect(FakeXhr.last).toBeDefined());
+  expect(sent().headers["Content-Type"]).toBe("image/png");
+});
+
+test("two files dropped at once start one upload", async () => {
+  const files = api();
+  const { container } = renderSlot({ files });
+  const zone = container.querySelector("[data-zm-drop]") as HTMLElement;
+  act(() => {
+    fireEvent.drop(zone, { dataTransfer: { files: [pdf("a.pdf")] } });
+    fireEvent.drop(zone, { dataTransfer: { files: [pdf("b.pdf")] } });
+  });
+  await waitFor(() => expect(FakeXhr.last).toBeDefined());
+  expect(files.upload).toHaveBeenCalledTimes(1);
+  expect(files.upload).toHaveBeenCalledWith("dd_report", expect.objectContaining({ name: "a.pdf" }));
+});
+
+/** The signed URL's bytes, as Storage serves them, whatever type it says. */
+function stubPreviewFetch() {
+  const objectUrls = { made: [] as Blob[], revoked: [] as string[] };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("<script>alert(1)</script>", { headers: { "content-type": "text/html" } })));
+  // jsdom has no object URLs
+  Object.assign(URL, {
+    createObjectURL: (blob: Blob) => `blob:preview-${objectUrls.made.push(blob)}`,
+    revokeObjectURL: (url: string) => void objectUrls.revoked.push(url),
+  });
+  return objectUrls;
+}
+
+test("versions list newest first; each downloads, and previews from a blob of its own type", async () => {
   const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  const objectUrls = stubPreviewFetch();
   const files = api({ versions: vi.fn(async () => [V2, V1]) });
   const { user } = renderSlot({ files, value: VALUE });
   const list = await screen.findByRole("list", { name: "DD report versions" });
@@ -162,15 +214,22 @@ test("versions list newest first; each downloads and previews from a signed URL"
   expect(files.url).toHaveBeenCalledWith("f1", true);
   expect((click.mock.contexts[0] as HTMLAnchorElement).href).toBe("http://storage.test/f1?token=t&download=x");
 
+  // the preview is a local blob typed as the file's own type: the browser renders it only as a
+  // PDF (or an image) whatever Storage says, and it outlives the 60-second signed URL
   await user.click(screen.getByRole("button", { name: "Preview dd-v1.pdf v1" }));
   const frame = await screen.findByTitle("Preview of dd-v1.pdf");
   expect(frame.tagName).toBe("IFRAME");
-  expect(frame.getAttribute("src")).toBe("http://storage.test/f1?token=t");
+  expect(frame.getAttribute("src")).toBe("blob:preview-1");
+  expect(fetch).toHaveBeenCalledWith("http://storage.test/f1?token=t");
+  expect(objectUrls.made[0]?.type).toBe("application/pdf");
   await user.click(screen.getByRole("button", { name: "Preview site.png v2" }));
-  expect((await screen.findByRole("img", { name: "site.png" })).getAttribute("src")).toBe("http://storage.test/f2?token=t");
+  expect((await screen.findByRole("img", { name: "site.png" })).getAttribute("src")).toBe("blob:preview-2");
+  expect(objectUrls.made[1]?.type).toBe("image/png");
   expect(screen.queryByTitle("Preview of dd-v1.pdf")).toBeNull();
+  expect(objectUrls.revoked).toEqual(["blob:preview-1"]);
   await user.click(screen.getByRole("button", { name: "Close preview" }));
   expect(screen.queryByRole("img", { name: "site.png" })).toBeNull();
+  expect(objectUrls.revoked).toEqual(["blob:preview-1", "blob:preview-2"]);
 });
 
 test("read-only: the versions show, nothing can be uploaded", async () => {

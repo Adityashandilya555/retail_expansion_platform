@@ -1,5 +1,5 @@
 import { Button, CloseButton, FileButton, Group, Input, Paper, Progress, Stack, Text, VisuallyHidden } from "@mantine/core";
-import { useEffect, useId, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from "react";
 
 /** A `document` field's value: what `POST /app/files/{id}/confirm` answers (#51). */
 export type DocumentValue = { key: string; sha256: string; name: string };
@@ -56,8 +56,14 @@ const extension = (name: string) => (name.includes(".") ? (name.split(".").pop()
 const accepted = (rule: DocumentRule) => rule.accept.map((a) => a.toLowerCase().replace(/^\./, ""));
 const isDocument = (v: unknown): v is DocumentValue => typeof v === "object" && v !== null && "name" in v && "key" in v;
 const PREVIEWS: Record<string, "pdf" | "image"> = { "application/pdf": "pdf", "image/png": "image", "image/jpeg": "image" };
+/** The one type each previewable extension is stored as (`zm_api.files.INLINE`). */
+const OWN_TYPES: Record<string, string> = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg" };
 const AGAIN = "Something went wrong. Check your connection and try again.";
-const messageOf = (e: unknown) => (e instanceof FileApiError ? e.message : AGAIN);
+
+/** Storage refusing the PUT itself (an expired signed URL, a hiccup): never an API answer, so never "uploads are off". */
+class UploadFailed extends Error {}
+
+const messageOf = (e: unknown) => (e instanceof FileApiError || e instanceof UploadFailed ? e.message : AGAIN);
 
 /** Why a file breaks the slot's rule, or null; the API checks the same (`zm_api.files.rule_error`). */
 export function ruleError(rule: DocumentRule, file: File): string | null {
@@ -81,15 +87,16 @@ function put(url: string, file: File, onProgress: (fraction: number) => void): P
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", url);
-    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    // the type Storage keeps and serves: a pdf / png / jpg as its own (the API checks it), whatever the OS reported
+    xhr.setRequestHeader("Content-Type", OWN_TYPES[extension(file.name)] ?? (file.type || "application/octet-stream"));
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total);
     };
     xhr.onload = () =>
       xhr.status < 300
         ? resolve()
-        : reject(new FileApiError(xhr.status, xhr.status === 413 ? "The file is larger than storage allows" : "The upload didn't go through; try again"));
-    xhr.onerror = () => reject(new FileApiError(0, AGAIN));
+        : reject(new UploadFailed(xhr.status === 413 ? "The file is larger than storage allows" : "The upload didn't go through; try again"));
+    xhr.onerror = () => reject(new UploadFailed(AGAIN));
     xhr.send(file);
   });
 }
@@ -105,6 +112,12 @@ export function FileSlot({ name, label, rule, value, onChange, error, withAsteri
   const [problem, setProblem] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ id: string; url: string; name: string; kind: "pdf" | "image" } | null>(null);
   const [uploads, setUploads] = useState(0); // each confirmed upload lists the versions again
+  const busy = useRef(false); // set at once: two files dropped together start one upload
+
+  useEffect(() => {
+    if (!preview) return;
+    return () => URL.revokeObjectURL(preview.url); // on the next preview, close or unmount
+  }, [preview]);
 
   useEffect(() => {
     if (!files?.versions) return;
@@ -124,10 +137,11 @@ export function FileSlot({ name, label, rule, value, onChange, error, withAsteri
   }, [files, name, uploads]);
 
   async function pick(file: File | null) {
-    if (!file || !files || progress !== null) return;
+    if (!file || !files || busy.current) return;
     setProblem(null);
     const refused = ruleError(rule, file);
     if (refused) return setProblem(refused);
+    busy.current = true;
     setProgress(0);
     setStatus(`Uploading ${file.name}`);
     try {
@@ -141,9 +155,10 @@ export function FileSlot({ name, label, rule, value, onChange, error, withAsteri
       setUploads((n) => n + 1);
     } catch (e) {
       setStatus("");
-      setUnavailable(unavailableFor(e));
+      setUnavailable(unavailableFor(e)); // API answers only: a failed PUT leaves the picker for a retry
       setProblem(messageOf(e));
     } finally {
+      busy.current = false;
       setProgress(null);
     }
   }
@@ -152,8 +167,16 @@ export function FileSlot({ name, label, rule, value, onChange, error, withAsteri
     if (!files) return;
     try {
       const url = await files.url(v.id, attachment);
-      const kind = PREVIEWS[v.content_type ?? ""];
-      if (!attachment && kind) return setPreview({ id: v.id, url, name: v.name, kind });
+      const type = v.content_type ?? "";
+      const kind = PREVIEWS[type];
+      if (!attachment && kind) {
+        // a local copy typed as the file's own type: the browser renders it only as a PDF or an image, whatever Storage
+        // answers, and it keeps working after the 60-second URL ends (an iframe `sandbox` would block Chrome's PDF viewer)
+        const got = await fetch(url);
+        if (!got.ok) throw new UploadFailed("Couldn't load the preview; try again");
+        const blob = new Blob([await got.arrayBuffer()], { type });
+        return setPreview({ id: v.id, url: URL.createObjectURL(blob), name: v.name, kind });
+      }
       // Storage answers with `Content-Disposition: attachment`, so this downloads and the page stays
       const a = document.createElement("a");
       a.href = url;
@@ -190,7 +213,7 @@ export function FileSlot({ name, label, rule, value, onChange, error, withAsteri
         </Text>
       ) : (
         !readOnly && (
-          <Paper withBorder p="sm" style={{ borderStyle: "dashed" }} onDragOver={(e) => e.preventDefault()} onDrop={drop}>
+          <Paper withBorder p="sm" style={{ borderStyle: "dashed" }} onDragOver={(e) => e.preventDefault()} onDrop={drop} data-zm-drop>
             <Group gap="sm">
               <FileButton onChange={(f) => void pick(f)} accept={types.map((a) => `.${a}`).join(",")} disabled={progress !== null}>
                 {(props) => (
