@@ -347,14 +347,14 @@ class FileTaken(Exception):
 
 
 async def _claim(conn: AsyncConnection, case_id: UUID, keys: list[str], user_id: UUID) -> None:
-    """Give the user's start uploads to the new case, in its transaction (S3-D3); keys never
-    move."""
+    """Give the user's start uploads to the new case, in its transaction (S3-D3), each as version
+    1 of its field; keys never move."""
     if not keys:
         return
     claimed = await conn.execute(
         text(
-            "update app.files set case_id = :c where key = any(:k) and case_id is null"
-            " and uploaded_by = :u and status = 'confirmed'"
+            "update app.files set case_id = :c, version = 1 where key = any(:k)"
+            " and case_id is null and uploaded_by = :u and status = 'confirmed'"
         ),
         {"c": case_id, "k": keys, "u": user_id},
     )
@@ -702,6 +702,29 @@ async def _set_status(
         )
 
 
+async def _version_files(conn: AsyncConnection, case_id: UUID, values: Mapping[str, Any]) -> None:
+    """The uploads a committed submission holds become the next version of their (case, field)
+    (#51); uploads nobody submitted get none and stay off the case's list. Under the case's row
+    lock, so two submissions can't take the same number."""
+    keys = [
+        v["key"] for v in values.values() if isinstance(v, dict) and isinstance(v.get("key"), str)
+    ]
+    if not keys:
+        return
+    await conn.execute(
+        text("select 1 from app.cases where id = :c for no key update"), {"c": case_id}
+    )
+    for key in keys:
+        await conn.execute(
+            text(
+                "update app.files set version = 1 + coalesce((select max(f.version)"
+                " from app.files f where f.case_id = :c and f.field = app.files.field), 0)"
+                " where key = :k and case_id = :c and status = 'confirmed' and version is null"
+            ),
+            {"c": case_id, "k": key},
+        )
+
+
 async def commit(ctx: ClientContext, submission_id: UUID) -> Submission:
     """Write a completed submission's values to the case and mark it committed. Safe to repeat:
     values are unique per (submission, field)."""
@@ -710,6 +733,7 @@ async def commit(ctx: ClientContext, submission_id: UUID) -> Submission:
         assert sub is not None
         if sub.status != "committed":
             await _insert_values(conn, sub.case_id, sub.values, sub.release_version, sub.id)
+            await _version_files(conn, sub.case_id, sub.values)
             await conn.execute(
                 text(
                     "update app.submissions set status = 'committed', updated_at = now()"

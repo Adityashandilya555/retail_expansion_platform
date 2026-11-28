@@ -389,9 +389,9 @@ def kept_versions(defs: Mapping[str, Any], files: list[CaseFile]) -> list[CaseFi
 async def case_files(
     ctx: ClientContext, user_id: UUID, code: str, field: str | None = None
 ) -> list[CaseFile]:
-    """A case's confirmed files by field, newest version first, by its own release's rules.
-    Fields hidden from the user's level are left out; asking for one is 404, like an unknown
-    case."""
+    """A case's committed files (a submission or the start holds them) by field, newest version
+    first, by its own release's rules. Fields hidden from the user's level are left out; asking
+    for one is 404, like an unknown case."""
     async with ctx.db.connect() as conn:
         me = await tasks.person(conn, user_id)
         case = (await tasks._cases_by_code(conn, [code])).get(code)
@@ -406,7 +406,7 @@ async def case_files(
                 "select f.id, f.field, f.version, f.name, f.size_bytes, f.content_type,"
                 " f.uploaded_by, u.name as uploaded_by_name, f.confirmed_at as uploaded_at"
                 " from app.files f left join app.users u on u.id = f.uploaded_by"
-                " where f.case_id = :c and f.status = 'confirmed'"
+                " where f.case_id = :c and f.status = 'confirmed' and f.version is not null"
                 " and (cast(:f as text) is null or f.field = :f) order by f.field, f.version desc"
             ),
             {"c": case.id, "f": field},

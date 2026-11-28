@@ -7,14 +7,16 @@ private bucket.
    a signed upload URL;
 2. the browser PUTs the file to Storage;
 3. `POST /app/files/{id}/confirm` streams the object back, measures and hashes it, and checks the
-   magic bytes of pdf / jpg / png (S3-D2; other types by name only). A file that fails is deleted
-   and `rejected` (422 with the reason); one that passes is `confirmed` as the next version of its
-   (case, field) and gives the form its value `{key, sha256, name}`.
+   magic bytes and the stored type of pdf / jpg / png (S3-D2; other types by name only). A file
+   that fails is deleted and `rejected` (422 with the reason); one that passes is `confirmed` and
+   gives the form its value `{key, sha256, name}`.
 
 Submit and start then take a document value only for a confirmed upload of that slot
-(`tasks._validate`), and starting a case claims its start uploads (S3-D3). `GET
-/app/files/{id}/download` gives a 60 s signed URL to whoever may see the case and the field;
-`GET /app/cases/{code}/files` lists a case's versions (`cases.case_files`).
+(`tasks._validate`). Committing the submission, or the start claiming its uploads (S3-D3), makes
+the file the next version of its (case, field), so an upload nobody submits never becomes the
+case's document. `GET /app/files/{id}/download` gives a 60 s signed URL to whoever may see the
+case and the field, inline only for pdf / png / jpg; `GET /app/cases/{code}/files` lists a case's
+versions (`cases.case_files`).
 
 Keys (§09, S3-D3): `cases/<case code>/<task>/<field>/<uuid>-<safe name>`, and for a start form
 `start/<flow>/<user id>/<field>/<uuid>-<safe name>`. The database holds keys and checksums, never
@@ -22,7 +24,6 @@ URLs. A workspace without Storage (qsr-local, D11) answers 503; another client's
 """
 
 import hashlib
-import mimetypes
 import re
 import uuid
 from collections.abc import AsyncIterator, Mapping
@@ -48,14 +49,16 @@ from zm_api.storage import Storage
 
 MB = 1024 * 1024
 START = "start"  # the task_def_key of a start form's uploads
-# S3-D2: the first bytes of each type the API checks; other extensions are checked by name only
-MAGIC = {
-    "pdf": b"%PDF-",
-    "png": b"\x89PNG\r\n\x1a\n",
-    "jpg": b"\xff\xd8\xff",
-    "jpeg": b"\xff\xd8\xff",
+# S3-D2: the types the API checks by their first bytes, each with the one Content-Type Storage may
+# keep for it (it serves what the uploader's PUT said). Only these are ever served inline, as a
+# preview; every other type only as a download. Other extensions are checked by name only.
+INLINE = {
+    "pdf": ("application/pdf", b"%PDF-"),
+    "png": ("image/png", b"\x89PNG\r\n\x1a\n"),
+    "jpg": ("image/jpeg", b"\xff\xd8\xff"),
+    "jpeg": ("image/jpeg", b"\xff\xd8\xff"),
 }
-HEAD = max(len(m) for m in MAGIC.values())
+HEAD = max(len(magic) for _, magic in INLINE.values())
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -104,14 +107,19 @@ async def measure(chunks: AsyncIterator[bytes], limit: int) -> Measured | None:
     return Measured(size, digest.hexdigest(), head)
 
 
-def content_error(name: str, declared: int, found: Measured | None) -> str | None:
+def content_error(name: str, declared: int, found: Measured | None, stored_type: str) -> str | None:
     """Why a stored file isn't the one announced at upload, or None. Its size must be the
-    declared one, which passed the slot's `max_mb`."""
+    declared one, which passed the slot's `max_mb`; a pdf / png / jpg must start like one and be
+    kept as its own type, so Storage never serves it as anything a browser would run."""
     if found is None or found.size != declared:
         return "The file isn't the size announced at upload; upload it again"
     ext = extension(name)
-    if ext in MAGIC and not found.head.startswith(MAGIC[ext]):
-        return f"This isn't a real {ext.upper()} file"
+    if ext in INLINE:
+        mime, magic = INLINE[ext]
+        if not found.head.startswith(magic):
+            return f"This isn't a real {ext.upper()} file"
+        if stored_type != mime:
+            return f"The file wasn't sent as a {ext.upper()} file; upload it again"
     return None
 
 
@@ -238,46 +246,39 @@ async def _own(ctx: ClientContext, user_id: UUID, file_id: UUID) -> Any:
 
 
 async def confirm(ctx: ClientContext, user_id: UUID, file_id: UUID) -> dict[str, str]:
-    """Check the stored object and confirm it as the next version of its slot; a file that fails
-    is deleted and rejected (422). Repeating a confirmed one answers the same value."""
+    """Check the stored object and confirm it; a file that fails is deleted and rejected (422).
+    One not stored yet (a confirm sent before its upload finished) is 409 and stays pending.
+    Repeating a confirmed one answers the same value."""
     row = await _own(ctx, user_id, file_id)
     if row.status == "confirmed":
         return _value(row)
     if row.status == "rejected":
         raise Conflict("This upload was refused; upload the file again")
     storage = storage_of(ctx)
-    async with storage.read(row.key) as chunks:
-        found = None if chunks is None else await measure(chunks, row.size_bytes)
-    reason = (
-        "The file never arrived; upload it again"
-        if chunks is None
-        else content_error(row.name, row.size_bytes, found)
-    )
-    if reason:
-        if chunks is not None:
-            await storage.delete(row.key)
+    async with storage.read(row.key) as stored:
+        found = None if stored is None else await measure(stored.chunks, row.size_bytes)
+    if stored is None:
+        raise Conflict("The file hasn't arrived yet; confirm it once its upload has finished")
+    if reason := content_error(row.name, row.size_bytes, found, stored.content_type):
+        await storage.delete(row.key)
         async with ctx.db.begin() as conn:
             await conn.execute(
-                text("update app.files set status = 'rejected' where id = :id"), {"id": file_id}
+                text(
+                    "update app.files set status = 'rejected' where id = :id and status = 'pending'"
+                ),
+                {"id": file_id},
             )
         raise UnprocessableContent(reason)
     assert found is not None
     async with ctx.db.begin() as conn:
-        if row.case_id is not None:  # one confirm per case at a time picks the next version
-            await conn.execute(
-                text("select 1 from app.cases where id = :c for no key update"), {"c": row.case_id}
-            )
         done = (
             await conn.execute(
                 text(
                     "update app.files set status = 'confirmed', sha256 = :sha,"
-                    " content_type = :type, confirmed_at = now(), version = case"
-                    " when case_id is null then 1 else 1 + coalesce((select max(f.version)"
-                    " from app.files f where f.case_id = app.files.case_id"
-                    " and f.field = app.files.field and f.status = 'confirmed'), 0) end"
+                    " content_type = :type, confirmed_at = now()"
                     f" where id = :id and status = 'pending' returning {_FILE_COLUMNS}"
                 ),
-                {"id": file_id, "sha": found.sha256, "type": mimetypes.guess_type(row.name)[0]},
+                {"id": file_id, "sha": found.sha256, "type": stored.content_type or None},
             )
         ).one_or_none()
     if done is None:  # a confirm running alongside settled it first
@@ -290,14 +291,15 @@ async def download(
 ) -> tuple[str, datetime]:
     """A signed URL for a confirmed file, if the user may see its case and its field: anyone in
     the client sees every case (visibility v1), and a field every section of which is hidden
-    below the user's level is 404. A start upload no case has claimed yet is its uploader's."""
+    below the user's level is 404. A file nothing has committed yet (no version) is only its
+    uploader's. Only a pdf / png / jpg is served inline; anything else always downloads."""
     async with ctx.db.connect() as conn:
         me = await tasks.person(conn, user_id)
         row = (
             await conn.execute(
                 text(
-                    "select f.key, f.name, f.field, f.case_id, f.uploaded_by, r.workflow"
-                    " from app.files f left join app.cases c on c.id = f.case_id"
+                    "select f.key, f.name, f.field, f.case_id, f.version, f.uploaded_by,"
+                    " r.workflow from app.files f left join app.cases c on c.id = f.case_id"
                     " left join app.releases r on r.version = c.release_version"
                     " where f.id = :id and f.status = 'confirmed'"
                 ),
@@ -306,11 +308,12 @@ async def download(
         ).one_or_none()
     if (
         row is None
-        or (row.case_id is None and row.uploaded_by != user_id)
+        or (row.version is None and row.uploaded_by != user_id)
         or (row.case_id is not None and row.field in tasks.hidden_fields(row.workflow, me.levels))
     ):
         raise NotFound("No such file")
-    return await storage_of(ctx).signed_download(row.key, row.name if attachment else None)
+    inline = not attachment and extension(row.name) in INLINE
+    return await storage_of(ctx).signed_download(row.key, None if inline else row.name)
 
 
 # --- routes ----------------------------------------------------------------------------------

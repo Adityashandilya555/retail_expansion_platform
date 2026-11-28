@@ -25,7 +25,7 @@ from alembic.config import Config
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
-from zm_api import secrets
+from zm_api import secrets, tasks
 from zm_api.main import create_app
 from zm_api.publish import publish
 from zm_api.releases import cache_clear
@@ -104,6 +104,18 @@ def workflow() -> dict[str, Any]:
         }
     )
     forms["start"]["sections"][0]["rows"].append([{"field": "site_plan"}])
+    # the verdict (Legal L2) takes the annexure and the photo again: their second versions
+    forms["dd_verdict"] = {
+        "sections": [
+            {
+                "key": "docs",
+                "title": "Documents",
+                "rows": [[{"field": "dd_annexure"}], [{"field": "dd_photo"}]],
+            }
+        ]
+    }
+    verdict = next(t for t in tasks._flow_tasks(doc["flows"][0]) if t["id"] == "legal_dd_verdict")
+    verdict["form"] = "dd_verdict"
     return doc
 
 
@@ -203,13 +215,15 @@ def begin(w: World, user: str, name: str, size: int, **slot: str) -> httpx.Respo
     return w.http.post("/app/files/upload", json=body, headers=w.auth(user))
 
 
-def upload(w: World, user: str, name: str, data: bytes, **slot: str) -> tuple[str, httpx.Response]:
-    """Upload as the browser does: the API's signed URL, a PUT to Storage, then confirm."""
+def upload(
+    w: World, user: str, name: str, data: bytes, content_type: str | None = None, **slot: str
+) -> tuple[str, httpx.Response]:
+    """Upload as the browser does: the API's signed URL, a PUT to Storage with the file's type
+    (by default its extension's), then confirm."""
     started = begin(w, user, name, len(data), **slot)
     assert started.status_code == 201, started.text
-    sent = httpx.put(
-        started.json()["upload_url"], content=data, headers={"Content-Type": "application/pdf"}
-    )
+    kind = content_type or {"pdf": "application/pdf", "png": "image/png"}[name.rpartition(".")[2]]
+    sent = httpx.put(started.json()["upload_url"], content=data, headers={"Content-Type": kind})
     assert sent.status_code == 200, sent.text
     file_id = started.json()["file_id"]
     return file_id, w.http.post(f"/app/files/{file_id}/confirm", headers=w.auth(user))
@@ -276,38 +290,19 @@ def test_a_renamed_exe_is_refused_and_deleted_and_a_30_mb_pdf_never_uploads(
     )
     assert status == "rejected"
     assert storage("GET", f"object/authenticated/files/{key}").status_code in {400, 404}
+    # a real PDF PUT as text/html would be served as a page on its preview URL
+    file_id, as_html = upload(
+        world, "legal1", "noc.pdf", pdf(2048), "text/html", task_id=case["task"], field="dd_report"
+    )
+    assert as_html.status_code == 422, as_html.text
+    assert as_html.json()["detail"] == "The file wasn't sent as a PDF file; upload it again"
+    ((key,),) = vault_sql("pilot", "select key from app.files where id = %s", file_id)
+    assert storage("GET", f"object/authenticated/files/{key}").status_code in {400, 404}
 
     big = begin(world, "legal1", "noc.pdf", 30 * MB, task_id=case["task"], field="dd_report")
     assert big.status_code == 422 and big.json()["detail"] == "The file is larger than 25 MB"
     wrong = begin(world, "legal1", "noc.exe", 1024, task_id=case["task"], field="dd_report")
     assert wrong.status_code == 422 and wrong.json()["detail"] == "Only PDF files go here"
-
-
-def test_kept_versions_list_newest_first_each_downloadable_else_only_the_latest(
-    world: World, case: dict
-) -> None:
-    sent = {}
-    for n in (1, 2):
-        data = pdf(1024 * n)
-        _, confirmed = upload(
-            world, "legal1", f"annex-{n}.pdf", data, task_id=case["task"], field="dd_annexure"
-        )
-        assert confirmed.status_code == 200, confirmed.text
-        sent[f"annex-{n}.pdf"] = data
-        _, photo = upload(
-            world, "legal1", f"photo-{n}.png", PNG, task_id=case["task"], field="dd_photo"
-        )
-        assert photo.status_code == 200, photo.text
-    path = f"/app/cases/{case['code']}/files"
-    annex = world.get("legal2", path, field="dd_annexure")
-    assert [(f["version"], f["name"]) for f in annex] == [(2, "annex-2.pdf"), (1, "annex-1.pdf")]
-    for f in annex:
-        signed = world.get("legal2", f"/app/files/{f['id']}/download", attachment="true")
-        got = httpx.get(signed["url"])
-        assert got.status_code == 200 and got.content == sent[f["name"]]
-        assert f["name"] in got.headers["content-disposition"]
-    photos = world.get("legal2", path, field="dd_photo")
-    assert [(f["version"], f["name"]) for f in photos] == [(2, "photo-2.png")]
 
 
 def test_a_document_key_of_another_field_or_never_confirmed_is_refused(
@@ -364,21 +359,26 @@ def test_a_slot_hidden_from_the_users_level_issues_no_url(world: World, case: di
     assert world.get("legal2", f"/app/files/{file_id}/download")["url"]  # positive control
 
 
-def test_a_signed_download_url_stops_working_after_60_seconds(world: World, case: dict) -> None:
-    newest = world.get("legal1", f"/app/cases/{case['code']}/files", field="dd_annexure")[0]
-    signed = world.get("legal1", f"/app/files/{newest['id']}/download")
-    assert httpx.get(signed["url"]).status_code == 200
-    time.sleep(61)
-    assert httpx.get(signed["url"]).status_code != 200
+def confirmed_value(w: World, user: str, name: str, data: bytes, **slot: str) -> dict[str, Any]:
+    _, confirmed = upload(w, user, name, data, **slot)
+    assert confirmed.status_code == 200, confirmed.text
+    return confirmed.json()
 
 
 def test_a_pdf_uploads_confirms_and_submits_as_its_value(world: World, case: dict) -> None:
     """Fire NOC's rule: a 2 MB PDF; the stored value is `{key, sha256, name}`, app.files has the
-    key, size and sha256 and no URL, and the case lists version 1."""
+    key, size and sha256 and no URL, and the case lists version 1. An upload replaced before the
+    submit (confirmed, never submitted) gets no version and lists nowhere."""
+    slot = {"task_id": case["task"]}
+    draft_id, draft = upload(world, "legal1", "draft.pdf", pdf(4096), field="dd_report", **slot)
+    assert draft.status_code == 200, draft.text
+    # not the case's until submitted: only its uploader can open it
+    assert world.get("legal1", f"/app/files/{draft_id}/download")["url"]
+    other = world.http.get(f"/app/files/{draft_id}/download", headers=world.auth("legal2"))
+    assert other.status_code == 404
+
     data = pdf(2 * MB)
-    file_id, confirmed = upload(
-        world, "legal1", "Fire NOC.pdf", data, task_id=case["task"], field="dd_report"
-    )
+    file_id, confirmed = upload(world, "legal1", "Fire NOC.pdf", data, field="dd_report", **slot)
     assert confirmed.status_code == 200, confirmed.text
     value = confirmed.json()
     assert set(value) == {"key", "sha256", "name"} and value["name"] == "Fire NOC.pdf"
@@ -386,14 +386,58 @@ def test_a_pdf_uploads_confirms_and_submits_as_its_value(world: World, case: dic
     row = vault_sql("pilot", "select to_jsonb(f) from app.files f where id = %s", file_id)[0][0]
     assert (row["key"], row["size_bytes"], row["status"]) == (value["key"], 2 * MB, "confirmed")
     assert row["sha256"] == value["sha256"] and row["content_type"] == "application/pdf"
+    assert row["version"] is None  # until the submit
     assert not any("http" in str(v) for v in row.values())
+    annex = confirmed_value(world, "legal1", "annex-1.pdf", pdf(1024), field="dd_annexure", **slot)
+    photo = confirmed_value(world, "legal1", "photo-1.png", PNG, field="dd_photo", **slot)
 
-    world.do("legal1", "legal_dd_checklist", case["code"], values={"dd_report": value})
+    values = {"dd_report": value, "dd_annexure": annex, "dd_photo": photo}
+    world.do("legal1", "legal_dd_checklist", case["code"], values=values)
     ((stored,),) = vault_sql(
         "pilot",
         "select value from app.case_values where case_id = %s and field = 'dd_report'",
         case["id"],
     )
     assert stored == value
-    listed = world.get("legal1", f"/app/cases/{case['code']}/files", field="dd_report")
+    path = f"/app/cases/{case['code']}/files"
+    listed = world.get("legal1", path, field="dd_report")
     assert [(f["version"], f["name"]) for f in listed] == [(1, "Fire NOC.pdf")]
+    photos = world.get("legal1", path, field="dd_photo")  # p.png, never submitted, isn't there
+    assert [(f["version"], f["name"]) for f in photos] == [(1, "photo-1.png")]
+
+
+def test_kept_versions_list_newest_first_each_downloadable_else_only_the_latest(
+    world: World, case: dict
+) -> None:
+    """The verdict (Legal L2) submits the annexure and the photo again: the annexure keeps both
+    versions, the photo's rule shows only the latest."""
+    verdict = {"task_id": task_id(world, "legal2", case["code"], "legal_dd_verdict")}
+    data = pdf(2048)
+    values = {
+        "dd_annexure": confirmed_value(
+            world, "legal2", "annex-2.pdf", data, field="dd_annexure", **verdict
+        ),
+        "dd_photo": confirmed_value(
+            world, "legal2", "photo-2.png", PNG, field="dd_photo", **verdict
+        ),
+    }
+    world.do("legal2", "legal_dd_verdict", case["code"], values=values, outcome="positive")
+    path = f"/app/cases/{case['code']}/files"
+    annex = world.get("legal1", path, field="dd_annexure")
+    assert [(f["version"], f["name"]) for f in annex] == [(2, "annex-2.pdf"), (1, "annex-1.pdf")]
+    sent = {"annex-1.pdf": pdf(1024), "annex-2.pdf": data}
+    for f in annex:
+        signed = world.get("legal1", f"/app/files/{f['id']}/download", attachment="true")
+        got = httpx.get(signed["url"])
+        assert got.status_code == 200 and got.content == sent[f["name"]]
+        assert f["name"] in got.headers["content-disposition"]
+    photos = world.get("legal1", path, field="dd_photo")
+    assert [(f["version"], f["name"]) for f in photos] == [(2, "photo-2.png")]
+
+
+def test_a_signed_download_url_stops_working_after_60_seconds(world: World, case: dict) -> None:
+    newest = world.get("legal1", f"/app/cases/{case['code']}/files", field="dd_annexure")[0]
+    signed = world.get("legal1", f"/app/files/{newest['id']}/download")
+    assert httpx.get(signed["url"]).status_code == 200
+    time.sleep(61)
+    assert httpx.get(signed["url"]).status_code != 200

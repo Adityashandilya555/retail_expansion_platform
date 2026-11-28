@@ -15,6 +15,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -57,6 +58,14 @@ def answer_status(response: httpx.Response) -> int:
         except (ValueError, TypeError, KeyError):
             pass
     return response.status_code
+
+
+@dataclass(frozen=True)
+class Stored:
+    chunks: AsyncIterator[bytes]
+    content_type: str
+    """The type Storage keeps for the object and serves it as: whatever the uploader's PUT said,
+    lower case, without parameters."""
 
 
 class Storage:
@@ -145,9 +154,9 @@ class Storage:
         await self._call("delete", "DELETE", self._object("", key), missing_ok=True)
 
     @asynccontextmanager
-    async def read(self, key: str) -> AsyncIterator[AsyncIterator[bytes] | None]:
-        """The object's bytes a chunk at a time, never the whole object in memory; None when
-        there is no such object (nothing was uploaded)."""
+    async def read(self, key: str) -> AsyncIterator[Stored | None]:
+        """The object, its bytes a chunk at a time (never the whole object in memory); None when
+        there is no such object (nothing was uploaded yet)."""
         async with (
             self._logged("read") as seen,
             self.http.stream("GET", self._object("authenticated/", key)) as response,
@@ -160,4 +169,5 @@ class Storage:
             elif response.is_error:
                 raise StorageError()
             else:
-                yield response.aiter_bytes()
+                kept = response.headers.get("content-type", "").partition(";")[0].strip().lower()
+                yield Stored(response.aiter_bytes(), kept)

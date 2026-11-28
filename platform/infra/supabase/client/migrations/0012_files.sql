@@ -3,7 +3,9 @@
 -- zm_api gets read + write through 0001's default privileges in schema app.
 
 -- one row per upload: pending (signed upload URL issued) → confirmed (streamed back, size, sha256
--- and type checked) or rejected (the object was deleted). Old versions are never deleted (S3-D1).
+-- and type checked) or rejected (the object was deleted). A confirmed upload gets its version when
+-- a submission or the case's start commits it, so one nobody submits never lists as the case's.
+-- Old versions are never deleted (S3-D1).
 create table app.files (
   id           uuid primary key default gen_random_uuid(),
   -- null until the case started from a start form claims it (S3-D3)
@@ -16,12 +18,13 @@ create table app.files (
   size_bytes   bigint not null,                 -- declared at upload, measured at confirm
   sha256       text,
   content_type text,
-  version      int,                             -- per (case, field), set at confirm
+  version      int,                             -- per (case, field), set when committed
   status       text not null default 'pending'
                check (status in ('pending', 'confirmed', 'rejected')),
   uploaded_by  uuid not null,
   created_at   timestamptz not null default now(),
   confirmed_at timestamptz,
-  check (status <> 'confirmed' or (sha256 is not null and version is not null))
+  check (status = 'confirmed' or version is null),
+  check (status <> 'confirmed' or sha256 is not null)
 );
 create unique index files_versions on app.files (case_id, field, version) where status = 'confirmed';

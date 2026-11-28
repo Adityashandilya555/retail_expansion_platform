@@ -76,17 +76,31 @@ def test_measuring_a_stream_hashes_it_and_stops_past_the_limit() -> None:
 
 
 def test_magic_bytes_refuse_a_renamed_exe_and_pass_real_files() -> None:
-    def error(name: str, data: bytes) -> str | None:
-        return files.content_error(name, len(data), measured(data))
+    def error(name: str, data: bytes, kept: str) -> str | None:
+        return files.content_error(name, len(data), measured(data), kept)
 
-    assert error("noc.pdf", EXE) == "This isn't a real PDF file"
-    assert error("noc.pdf", PDF) is None
-    assert error("plan.png", PNG) is None and error("plan.png", JPG) == "This isn't a real PNG file"
-    assert error("photo.jpg", JPG) is None and error("photo.JPEG", JPG) is None
-    assert error("sheet.xlsx", EXE) is None  # other types by name only (S3-D2)
+    assert error("noc.pdf", EXE, "application/pdf") == "This isn't a real PDF file"
+    assert error("noc.pdf", PDF, "application/pdf") is None
+    assert error("plan.png", PNG, "image/png") is None
+    assert error("plan.png", JPG, "image/png") == "This isn't a real PNG file"
+    assert error("photo.jpg", JPG, "image/jpeg") is None
+    assert error("photo.JPEG", JPG, "image/jpeg") is None
+    # other types by name only (S3-D2): they are never served inline
+    assert error("sheet.xlsx", EXE, "application/octet-stream") is None
     # the size announced at upload, which passed max_mb, is the size stored
-    assert files.content_error("noc.pdf", 10, measured(PDF)) is not None
-    assert files.content_error("noc.pdf", len(PDF), None) is not None
+    assert files.content_error("noc.pdf", 10, measured(PDF), "application/pdf") is not None
+    assert files.content_error("noc.pdf", len(PDF), None, "application/pdf") is not None
+
+
+def test_a_real_pdf_kept_as_another_type_is_refused() -> None:
+    """Storage serves an object as the type its PUT said: a PDF sent as text/html would render as
+    a page on the inline (preview) URL, so it is refused, whatever its first bytes."""
+    for kept in ("text/html", "image/svg+xml", "application/octet-stream", ""):
+        assert (
+            files.content_error("noc.pdf", len(PDF), measured(PDF), kept)
+            == "The file wasn't sent as a PDF file; upload it again"
+        )
+    assert files.content_error("p.png", len(PNG), measured(PNG), "image/jpeg") is not None
 
 
 # --- Storage ---------------------------------------------------------------------------------
@@ -105,8 +119,15 @@ class FakeStorage:
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
+        self.types: dict[str, str] = {}
+        """The Content-Type each object was PUT with (default: its own, by extension)."""
         self.requests: list[httpx.Request] = []
         self.fail = False
+
+    def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+        self.objects[key] = data
+        kind = files.INLINE.get(files.extension(key), ("application/octet-stream", b""))[0]
+        self.types[key] = content_type or kind
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -124,7 +145,8 @@ class FakeStorage:
         if key not in self.objects:  # older Storage: 400 with the real code in the body
             return httpx.Response(400, json={"statusCode": "404", "error": "not_found"})
         if request.method == "GET" and route == "authenticated/":
-            return httpx.Response(200, content=self.objects[key])
+            headers = {"content-type": f"{self.types[key]}; charset=utf-8"}
+            return httpx.Response(200, content=self.objects[key], headers=headers)
         if request.method == "DELETE" and route == "":
             del self.objects[key]
             return httpx.Response(200, json={"message": "Successfully deleted"})
@@ -169,14 +191,17 @@ def test_a_signed_download_works_60_seconds_inline_or_as_an_attachment() -> None
 
 def test_reading_streams_the_object_and_a_missing_one_is_none() -> None:
     fake = FakeStorage()
-    fake.objects["k/noc.pdf"] = PDF
+    fake.put("k/noc.pdf", PDF, "Application/PDF")
     storage = fake.client()
 
-    async def read(key: str) -> bytes | None:
-        async with storage.read(key) as stream:
-            return None if stream is None else b"".join([c async for c in stream])
+    async def read(key: str) -> tuple[bytes, str] | None:
+        async with storage.read(key) as stored:
+            if stored is None:
+                return None
+            return b"".join([c async for c in stored.chunks]), stored.content_type
 
-    assert asyncio.run(read("k/noc.pdf")) == PDF
+    # the type it was stored as, lower case and without parameters
+    assert asyncio.run(read("k/noc.pdf")) == (PDF, "application/pdf")
     assert asyncio.run(read("k/never.pdf")) is None
     asyncio.run(storage.delete("k/noc.pdf"))
     asyncio.run(storage.delete("k/noc.pdf"))  # already gone: fine
@@ -347,10 +372,26 @@ def test_a_start_upload_claimed_by_another_case_first_fails_the_start() -> None:
     db = FakeDb(FakeResult(rowcount=1))
     with pytest.raises(tasks.FileTaken):
         asyncio.run(tasks._claim(db, uuid.uuid4(), ["k1", "k2"], uuid.uuid4()))  # type: ignore[arg-type]
-    assert db.statements[0].startswith("update app.files set case_id = :c")
+    # claimed files are version 1 of their fields in the new case
+    assert db.statements[0].startswith("update app.files set case_id = :c, version = 1")
     asyncio.run(
         tasks._claim(FakeDb(FakeResult(rowcount=2)), uuid.uuid4(), ["a", "b"], uuid.uuid4())
     )  # type: ignore[arg-type]
+
+
+def test_committing_a_submission_versions_only_the_uploads_it_holds() -> None:
+    """An upload gets its version when the submission holding it commits, under the case's row
+    lock: one confirmed and then replaced, or never submitted, gets none (it isn't the case's)."""
+    db, case_id = FakeDb(), uuid.uuid4()
+    values = {"dd_report": VALUE, "dd_notes": "fine", "dd_title_doc": True, "items": [1]}
+    asyncio.run(tasks._version_files(db, case_id, values))  # type: ignore[arg-type]
+    lock, update = db.statements
+    assert lock == "select 1 from app.cases where id = :c for no key update"
+    assert update.startswith("update app.files set version = 1 + coalesce((select max(f.version)")
+    assert update.endswith("and status = 'confirmed' and version is null")
+    empty = FakeDb()
+    asyncio.run(tasks._version_files(empty, case_id, {"dd_notes": "x"}))  # type: ignore[arg-type]
+    assert empty.statements == []
 
 
 # --- confirm ---------------------------------------------------------------------------------
@@ -376,9 +417,15 @@ def confirming(monkeypatch: pytest.MonkeyPatch):
     """Confirm `row` (its `_own` lookup answered from it) against a FakeStorage holding `data`,
     with `db` for the writes."""
 
-    def run(row: SimpleNamespace, data: bytes | None, db: FakeDb, fake: FakeStorage) -> Any:
+    def run(
+        row: SimpleNamespace,
+        data: bytes | None,
+        db: FakeDb,
+        fake: FakeStorage,
+        content_type: str | None = None,
+    ) -> Any:
         if data is not None:
-            fake.objects[row.key] = data
+            fake.put(row.key, data, content_type)
 
         async def own(*_: Any) -> SimpleNamespace:
             return row
@@ -396,31 +443,47 @@ def test_a_renamed_exe_is_deleted_and_rejected_with_the_reason(confirming: Any) 
         confirming(row, EXE, db, fake)
     assert e.value.status == 422 and e.value.detail == "This isn't a real PDF file"
     assert fake.objects == {}  # deleted
-    assert db.statements == ["update app.files set status = 'rejected' where id = :id"]
+    # only a pending row is rejected: a confirm alongside may have settled it already
+    assert db.statements == [REJECT]
 
 
-def test_a_file_that_isnt_the_announced_size_or_never_came_is_rejected(confirming: Any) -> None:
-    fake = FakeStorage()
+REJECT = "update app.files set status = 'rejected' where id = :id and status = 'pending'"
+
+
+def test_a_pdf_stored_as_html_is_deleted_and_rejected(confirming: Any) -> None:
+    row, db, fake = pending(PDF), FakeDb(), FakeStorage()
+    with pytest.raises(UnprocessableContent, match="wasn't sent as a PDF"):
+        confirming(row, PDF, db, fake, "text/html")
+    assert fake.objects == {} and db.statements == [REJECT]
+
+
+def test_a_file_that_isnt_the_announced_size_is_rejected(confirming: Any) -> None:
+    fake, db = FakeStorage(), FakeDb()
     with pytest.raises(UnprocessableContent, match="size announced"):
-        confirming(pending(PDF, size_bytes=len(PDF) - 1), PDF, FakeDb(), fake)
-    assert fake.objects == {}
+        confirming(pending(PDF, size_bytes=len(PDF) - 1), PDF, db, fake)
+    assert fake.objects == {} and db.statements == [REJECT]
+
+
+def test_a_confirm_before_the_upload_arrived_is_409_and_stays_pending(confirming: Any) -> None:
     db = FakeDb()
-    with pytest.raises(UnprocessableContent, match="never arrived"):
+    with pytest.raises(Conflict, match="hasn't arrived yet"):
         confirming(pending(PDF), None, db, FakeStorage())
-    assert db.statements == ["update app.files set status = 'rejected' where id = :id"]
+    assert db.statements == []  # still pending: the same upload can be confirmed once it lands
 
 
-def test_a_real_pdf_is_confirmed_as_the_next_version_of_its_slot(confirming: Any) -> None:
+def test_a_real_pdf_is_confirmed_with_its_stored_type_and_no_version_yet(
+    confirming: Any,
+) -> None:
     row, fake = pending(PDF), FakeStorage()
     sha = hashlib.sha256(PDF).hexdigest()
     done = SimpleNamespace(**{**row.__dict__, "status": "confirmed", "sha256": sha})
-    db = FakeDb(FakeResult(), FakeResult(done))
+    db = FakeDb(FakeResult(done))
     value = confirming(row, PDF, db, fake)
     assert value == {"key": row.key, "sha256": sha, "name": "noc.pdf"}
     assert fake.objects == {row.key: PDF}  # kept
-    lock, update = db.statements
-    assert lock == "select 1 from app.cases where id = :c for no key update"
-    assert "max(f.version)" in update and "status = 'pending'" in update
+    (update,) = db.statements
+    assert "content_type = :type" in update and "status = 'pending'" in update
+    assert "version" not in update  # the submission that holds it gives it one
 
 
 def test_confirming_again_answers_the_same_value_and_a_rejected_one_is_409(
@@ -431,6 +494,62 @@ def test_confirming_again_answers_the_same_value_and_a_rejected_one_is_409(
     assert confirming(done, None, FakeDb(), FakeStorage())["sha256"] == sha
     with pytest.raises(Conflict):
         confirming(pending(PDF, status="rejected"), None, FakeDb(), FakeStorage())
+
+
+# --- download --------------------------------------------------------------------------------
+
+
+def stored(name: str, **changes: Any) -> SimpleNamespace:
+    """A confirmed file of a case, as download reads it (with its case's release workflow)."""
+    row = {
+        "key": f"cases/MX-0001/legal_dd_checklist/dd_report/1-{name}",
+        "name": name,
+        "field": "dd_report",
+        "case_id": uuid.uuid4(),
+        "version": 1,
+        "uploaded_by": uuid.uuid4(),
+        "workflow": matrix_retail(),
+    }
+    return SimpleNamespace(**{**row, **changes})
+
+
+@pytest.fixture
+def downloading(monkeypatch: pytest.MonkeyPatch):
+    """`files.download` for Legal L1 on `row`, against a FakeStorage; the signed URL's query."""
+
+    async def legal_l1(_: Any, user_id: uuid.UUID) -> tasks.Person:
+        return tasks.Person(user_id, {"legal": 1})
+
+    monkeypatch.setattr(tasks, "person", legal_l1)
+
+    def run(row: SimpleNamespace, user: uuid.UUID, attachment: bool = False) -> dict[str, list]:
+        ctx = SimpleNamespace(db=FakeDb(FakeResult(row)), storage=FakeStorage().client())
+        url, _ = asyncio.run(files.download(ctx, user, uuid.uuid4(), attachment))  # type: ignore[arg-type]
+        return parse_qs(urlsplit(url).query)
+
+    return run
+
+
+def test_only_a_pdf_png_or_jpg_is_served_inline(downloading: Any) -> None:
+    someone = uuid.uuid4()
+    assert "download" not in downloading(stored("noc.pdf"), someone)  # the preview
+    assert downloading(stored("noc.pdf"), someone, attachment=True)["download"] == ["noc.pdf"]
+    assert "download" not in downloading(stored("site.JPG"), someone)
+    for name in ("notes.html", "drawing.svg", "sheet.xlsx", "noextension"):
+        assert downloading(stored(name), someone)["download"] == [name]
+
+
+def test_an_upload_nothing_has_committed_is_only_its_uploaders(downloading: Any) -> None:
+    """Confirmed but not (yet) in a submission, or a start upload no case has claimed: no version,
+    so not the case's document; only the person who uploaded it can open it."""
+    mine = stored("draft.pdf", version=None)
+    assert "token" in downloading(mine, mine.uploaded_by)
+    with pytest.raises(NotFound):
+        downloading(mine, uuid.uuid4())
+    unclaimed = stored("plan.pdf", version=None, case_id=None, workflow=None)
+    assert "token" in downloading(unclaimed, unclaimed.uploaded_by)
+    with pytest.raises(NotFound):
+        downloading(unclaimed, uuid.uuid4())
 
 
 # --- routes ----------------------------------------------------------------------------------
