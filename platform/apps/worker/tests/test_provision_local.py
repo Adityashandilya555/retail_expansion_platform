@@ -90,8 +90,11 @@ def test_the_pilot_client_gets_the_default_credentials(
 
 
 class FakeConn:
-    def __init__(self, calls: list[Any], template: Any) -> None:
-        self.calls, self.template = calls, template
+    """The platform database: `template` answers the template query, `earlier` (sealed) is the
+    client row's secrets from an earlier run."""
+
+    def __init__(self, calls: list[Any], template: Any, earlier: bytes | None = None) -> None:
+        self.calls, self.template, self.earlier, self.query = calls, template, earlier, ""
 
     def __enter__(self) -> "FakeConn":
         return self
@@ -101,9 +104,12 @@ class FakeConn:
 
     def execute(self, query: str, params: Any = None) -> "FakeConn":
         self.calls.append(("sql", query.split()[0], params))
+        self.query = query
         return self
 
     def fetchone(self) -> Any:
+        if "from platform.clients" in self.query:
+            return None if self.earlier is None else (self.earlier,)
         return self.template
 
 
@@ -128,8 +134,9 @@ def test_provision_migrates_registers_then_seeds(
     )
     assert local.provision("postgresql://platform/postgres", client, engine(200, 401)) == ["0004"]
     kinds = [c[0] if c[0] != "sql" else c[1] for c in calls]
-    assert kinds == ["select", "migrate", "insert", "seed"]  # template read before any change
-    insert = calls[2][2]
+    # the template and any earlier secrets are read before any change
+    assert kinds == ["select", "select", "migrate", "insert", "seed"]
+    insert = calls[3][2]
     assert insert[:6] == (
         "qsr-local",
         "QSR Local",
@@ -142,7 +149,46 @@ def test_provision_migrates_registers_then_seeds(
         "zm_api_dsn": "postgresql://zm_api:api@localhost:5434/postgres",
         "service_account_password": "service",
     }
-    assert calls[3] == ("seed", "postgresql://zm_api:api@localhost:5434/postgres", {"v": 1}, "qsr")
+    assert calls[4] == ("seed", "postgresql://zm_api:api@localhost:5434/postgres", {"v": 1}, "qsr")
+
+
+def test_a_run_without_storage_keeps_the_storage_sealed_earlier(
+    full_env: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """pilot-local registered with Storage, then provisioned again without LOCAL_STORAGE_*: its
+    files keep working. Secrets sealed under another key can't be kept: that is logged."""
+    storage = {
+        "storage_url": "http://host.docker.internal:54321",
+        "storage_public_url": "http://127.0.0.1:54321",
+        "service_role_key": "service-jwt",
+    }
+    earlier = secrets.seal({"zm_api_dsn": "old", "service_account_password": "old", **storage})
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        local.psycopg, "connect", lambda *a, **k: FakeConn(calls, ({"v": 1},), earlier)
+    )
+    monkeypatch.setattr(local.vault_migrate, "apply", lambda dsn, pw: [])
+    monkeypatch.setattr(local, "seed", lambda *a: None)
+    caplog.set_level("INFO", logger="zm_worker.provision")
+    client = local.LocalClient(
+        "pilot-local", "postgresql://v", "http://e/engine-rest", "x", "P", "P", {"zm_api": "a"}, "s"
+    )
+    local.provision("postgresql://p", client, engine(200, 401))
+    sealed = secrets.unseal(next(c[2] for c in calls if c[1] == "insert")[6])
+    assert {k: sealed[k] for k in storage} == storage
+    assert sealed["service_account_password"] == "s"  # everything else is this run's
+    assert "keeps the Storage sealed by an earlier run" in caplog.text
+    assert "service-jwt" not in caplog.text
+
+    calls.clear()
+    other_key = Fernet(Fernet.generate_key()).encrypt(b'{"service_role_key": "k"}')
+    monkeypatch.setattr(
+        local.psycopg, "connect", lambda *a, **k: FakeConn(calls, ({"v": 1},), other_key)
+    )
+    local.provision("postgresql://p", client, engine(200, 401))
+    sealed = secrets.unseal(next(c[2] for c in calls if c[1] == "insert")[6])
+    assert "service_role_key" not in sealed
+    assert "any Storage is dropped" in caplog.text
 
 
 def test_the_pilot_client_gets_storage_and_the_isolation_client_never(
